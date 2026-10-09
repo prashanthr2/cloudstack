@@ -57,6 +57,7 @@ public class Hypervisor {
         public static final HypervisorType LXC = new HypervisorType("LXC");
         public static final HypervisorType Custom = new HypervisorType("Custom", null, EnumSet.of(RootDiskSizeOverride));
         public static final HypervisorType External = new HypervisorType("External", null, EnumSet.of(RootDiskSizeOverride));
+        public static final HypervisorType Proxmox = new HypervisorType("Proxmox", ImageFormat.QCOW2, EnumSet.of(RootDiskSizeOverride));
         public static final HypervisorType Any = new HypervisorType("Any"); /*If you don't care about the hypervisor type*/
         private final String name;
         private final ImageFormat imageFormat;

@@ -89,6 +89,7 @@
         <module>hypervisors/external</module>
         <module>hypervisors/hyperv</module>
         <module>hypervisors/kvm</module>
+        <module>hypervisors/proxmox</module>
         <module>hypervisors/ucs</module>
         <module>hypervisors/xenserver</module>
 
