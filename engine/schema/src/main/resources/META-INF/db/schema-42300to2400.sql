@@ -100,3 +100,6 @@ CREATE TABLE IF NOT EXISTS `cloud`.`instance_boot_group_details` (
     PRIMARY KEY (`id`),
     CONSTRAINT `fk_instance_boot_group_details__group_id` FOREIGN KEY (`boot_group_id`) REFERENCES `instance_boot_group` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Add Proxmox to the list of hypervisors
+UPDATE `cloud`.`configuration` SET value = CONCAT(value, ',Proxmox') WHERE name = 'hypervisor.list' AND value NOT LIKE '%Proxmox%';
