@@ -19,8 +19,10 @@ package org.apache.cloudstack.hypervisor.proxmox.discoverer;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import javax.naming.ConfigurationException;
@@ -104,6 +106,18 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             throw new DiscoveryException("Unable to connect to the Proxmox API at " + endpoint + ": " + e.getMessage(), e);
         }
 
+        // Any node answers for the whole cluster, so remember every node's address: the one given first, then the
+        // others, to carry on when the node used for the API goes down.
+        Set<String> endpointSet = new LinkedHashSet<>();
+        endpointSet.add(endpoint);
+        int apiPort = URI.create(endpoint).getPort();
+        for (ProxmoxApiClient.NodeInfo nodeInfo : nodes) {
+            if (nodeInfo.isOnline() && nodeInfo.getIp() != null) {
+                endpointSet.add("https://" + nodeInfo.getIp() + ":" + apiPort);
+            }
+        }
+        String endpoints = String.join(",", endpointSet);
+
         Map<ProxmoxResource, Map<String, String>> resources = new LinkedHashMap<>();
         for (ProxmoxApiClient.NodeInfo nodeInfo : nodes) {
             if (!nodeInfo.isOnline()) {
@@ -122,6 +136,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             params.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             params.put(ProxmoxResource.DETAIL_VERIFY_TLS, Boolean.toString(verifyTls));
             params.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
+            params.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
 
             ProxmoxResource resource = new ProxmoxResource();
             try {
@@ -141,6 +156,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             details.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             details.put(ProxmoxResource.DETAIL_VERIFY_TLS, Boolean.toString(verifyTls));
             details.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
+            details.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
             resources.put(resource, details);
         }
         if (resources.isEmpty()) {

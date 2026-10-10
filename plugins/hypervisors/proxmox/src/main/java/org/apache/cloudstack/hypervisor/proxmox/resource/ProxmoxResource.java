@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +65,7 @@ public class ProxmoxResource implements ServerResource {
     public static final String DETAIL_NODE_IP = "nodeip";
     public static final String DETAIL_VERIFY_TLS = "verifytls";
     public static final String DETAIL_ENDPOINT = "endpoint";
+    public static final String DETAIL_ENDPOINTS = "endpoints";
     protected static final String CAPABILITIES = "hvm";
 
     protected Logger logger = LogManager.getLogger(getClass());
@@ -77,6 +79,7 @@ public class ProxmoxResource implements ServerResource {
     protected String node;
     protected String nodeIp;
     protected String endpoint;
+    protected List<String> endpoints = new ArrayList<>();
     protected String tokenId;
     protected String tokenSecret;
     protected boolean verifyTls = true;
@@ -106,6 +109,16 @@ public class ProxmoxResource implements ServerResource {
             }
             endpoint = ProxmoxApiClient.endpointOf(URI.create(url.contains("://") ? url : "https://" + url));
         }
+        endpoints = new ArrayList<>();
+        endpoints.add(endpoint);
+        String extra = (String) params.get(DETAIL_ENDPOINTS);
+        if (StringUtils.isNotBlank(extra)) {
+            for (String candidate : extra.split(",")) {
+                if (StringUtils.isNotBlank(candidate) && !endpoints.contains(candidate.trim())) {
+                    endpoints.add(candidate.trim());
+                }
+            }
+        }
         if (StringUtils.isAnyBlank(node, tokenId, tokenSecret)) {
             throw new ConfigurationException("Proxmox node name and API token are required for host " + name);
         }
@@ -114,7 +127,7 @@ public class ProxmoxResource implements ServerResource {
     }
 
     protected ProxmoxApiClient createClient() {
-        return new ProxmoxApiClient(endpoint, tokenId, tokenSecret, verifyTls);
+        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, verifyTls);
     }
 
     @Override

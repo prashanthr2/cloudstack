@@ -83,6 +83,9 @@ public class ProxmoxServerDiscovererTest {
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE));
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE_IP));
             assertNotNull(details.get("guid"));
+            // the given address first, then every online node, so the API stays reachable if one node is lost
+            assertEquals("https://10.0.35.25:8006,https://10.0.32.196:8006,https://10.0.32.197:8006",
+                    details.get(ProxmoxResource.DETAIL_ENDPOINTS));
         }
     }
 

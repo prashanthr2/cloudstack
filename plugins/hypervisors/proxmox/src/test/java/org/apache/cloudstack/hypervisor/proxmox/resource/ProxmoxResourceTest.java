@@ -149,4 +149,24 @@ public class ProxmoxResourceTest {
         Answer answer = resource.executeRequest(mock(StartCommand.class));
         assertFalse(answer.getResult());
     }
+
+    @Test
+    public void everyKnownEndpointIsKeptWithTheConfiguredOneFirst() throws ConfigurationException {
+        Map<String, Object> params = new HashMap<>();
+        params.put("username", "root@pam!cloudstack");
+        params.put("password", "secret");
+        params.put(ProxmoxResource.DETAIL_NODE, NODE);
+        params.put(ProxmoxResource.DETAIL_ENDPOINT, "https://10.0.35.25:8006");
+        params.put(ProxmoxResource.DETAIL_ENDPOINTS, "https://10.0.35.25:8006, https://10.0.32.74:8006,https://10.0.32.198:8006");
+
+        ProxmoxResource other = new ProxmoxResource() {
+            @Override
+            protected ProxmoxApiClient createClient() {
+                return ProxmoxResourceTest.this.client;
+            }
+        };
+        other.configure(NODE, params);
+
+        assertEquals(Arrays.asList("https://10.0.35.25:8006", "https://10.0.32.74:8006", "https://10.0.32.198:8006"), other.endpoints);
+    }
 }

@@ -23,20 +23,30 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import javax.net.ssl.SSLContext;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.http.NameValuePair;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.conn.ssl.TrustAllStrategy;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.ssl.SSLContexts;
 import org.apache.http.util.EntityUtils;
 
@@ -53,19 +63,45 @@ public class ProxmoxApiClient implements Closeable {
     private static final int DEFAULT_TIMEOUT_MS = 15000;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final String baseUrl;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+
+    private final List<String> baseUrls;
     private final String authHeader;
     private final CloseableHttpClient httpClient;
+    private volatile int current;
 
     public ProxmoxApiClient(String baseUrl, String tokenId, String tokenSecret, boolean verifyTls) {
-        this(baseUrl, tokenId, tokenSecret, verifyTls, DEFAULT_TIMEOUT_MS);
+        this(Collections.singletonList(baseUrl), tokenId, tokenSecret, verifyTls, DEFAULT_TIMEOUT_MS);
     }
 
-    public ProxmoxApiClient(String baseUrl, String tokenId, String tokenSecret, boolean verifyTls, int timeoutMs) {
-        this.baseUrl = StringUtils.removeEnd(baseUrl, "/");
+    public ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, boolean verifyTls) {
+        this(baseUrls, tokenId, tokenSecret, verifyTls, DEFAULT_TIMEOUT_MS);
+    }
+
+    /**
+     * @param baseUrls every address the cluster can be reached on (any node answers for the whole cluster). They are
+     *                 tried in turn when one cannot be reached, and the last one that worked is used first.
+     */
+    public ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, boolean verifyTls, int timeoutMs) {
+        this(baseUrls, tokenId, tokenSecret, buildHttpClient(verifyTls, timeoutMs));
+    }
+
+    ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, CloseableHttpClient httpClient) {
+        List<String> cleaned = new ArrayList<>();
+        for (String url : new LinkedHashSet<>(baseUrls)) {
+            cleaned.add(StringUtils.removeEnd(url, "/"));
+        }
+        if (cleaned.isEmpty()) {
+            throw new ProxmoxApiException("At least one Proxmox API address is required");
+        }
+        this.baseUrls = cleaned;
         this.authHeader = "PVEAPIToken=" + tokenId + "=" + tokenSecret;
+        this.httpClient = httpClient;
+    }
+
+    private static CloseableHttpClient buildHttpClient(boolean verifyTls, int timeoutMs) {
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(timeoutMs)
+                .setConnectTimeout(Math.min(timeoutMs, CONNECT_TIMEOUT_MS))
                 .setSocketTimeout(timeoutMs)
                 .setConnectionRequestTimeout(timeoutMs)
                 .build();
@@ -74,7 +110,7 @@ public class ProxmoxApiClient implements Closeable {
                     : SSLContexts.custom().loadTrustMaterial(null, TrustAllStrategy.INSTANCE).build();
             SSLConnectionSocketFactory socketFactory = verifyTls ? new SSLConnectionSocketFactory(sslContext)
                     : new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
-            this.httpClient = HttpClients.custom()
+            return HttpClients.custom()
                     .setDefaultRequestConfig(requestConfig)
                     .setSSLSocketFactory(socketFactory)
                     .build();
@@ -112,48 +148,67 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     public JsonNode get(String path) {
-        return execute(new org.apache.http.client.methods.HttpGet(baseUrl + "/api2/json" + path));
+        return execute(api -> new HttpGet(api + path));
     }
 
     public JsonNode post(String path, Map<String, String> form) {
-        org.apache.http.client.methods.HttpPost request = new org.apache.http.client.methods.HttpPost(baseUrl + "/api2/json" + path);
-        request.setEntity(toFormEntity(form));
-        return execute(request);
+        return execute(api -> {
+            HttpPost request = new HttpPost(api + path);
+            request.setEntity(toFormEntity(form));
+            return request;
+        });
     }
 
     public JsonNode put(String path, Map<String, String> form) {
-        org.apache.http.client.methods.HttpPut request = new org.apache.http.client.methods.HttpPut(baseUrl + "/api2/json" + path);
-        request.setEntity(toFormEntity(form));
-        return execute(request);
+        return execute(api -> {
+            HttpPut request = new HttpPut(api + path);
+            request.setEntity(toFormEntity(form));
+            return request;
+        });
     }
 
     public JsonNode delete(String path) {
-        return execute(new org.apache.http.client.methods.HttpDelete(baseUrl + "/api2/json" + path));
+        return execute(api -> new HttpDelete(api + path));
     }
 
-    private static org.apache.http.client.entity.UrlEncodedFormEntity toFormEntity(Map<String, String> form) {
-        List<org.apache.http.NameValuePair> pairs = new ArrayList<>();
+    private static UrlEncodedFormEntity toFormEntity(Map<String, String> form) {
+        List<NameValuePair> pairs = new ArrayList<>();
         if (form != null) {
-            form.forEach((k, v) -> pairs.add(new org.apache.http.message.BasicNameValuePair(k, v)));
+            form.forEach((k, v) -> pairs.add(new BasicNameValuePair(k, v)));
         }
-        return new org.apache.http.client.entity.UrlEncodedFormEntity(pairs, StandardCharsets.UTF_8);
+        return new UrlEncodedFormEntity(pairs, StandardCharsets.UTF_8);
     }
 
-    private JsonNode execute(HttpRequestBase request) {
-        request.setHeader("Authorization", authHeader);
-        request.setHeader("Accept", "application/json");
-        try (CloseableHttpResponse response = httpClient.execute(request)) {
-            int status = response.getStatusLine().getStatusCode();
-            String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-            if (status < 200 || status >= 300) {
-                throw new ProxmoxApiException(String.format("Proxmox API %s %s failed: HTTP %d %s", request.getMethod(),
-                        request.getURI().getPath(), status, response.getStatusLine().getReasonPhrase()), status, null);
+    /**
+     * Runs a request against the address that worked last, moving on to the next address only when the connection
+     * itself fails. An HTTP error answer (401, 500 ...) means the address was reachable and is returned as such.
+     */
+    private JsonNode execute(Function<String, HttpRequestBase> requestFactory) {
+        IOException lastFailure = null;
+        String lastTarget = null;
+        int count = baseUrls.size();
+        int first = current;
+        for (int attempt = 0; attempt < count; attempt++) {
+            int index = (first + attempt) % count;
+            HttpRequestBase request = requestFactory.apply(baseUrls.get(index) + "/api2/json");
+            request.setHeader("Authorization", authHeader);
+            request.setHeader("Accept", "application/json");
+            lastTarget = request.getMethod() + " " + request.getURI().getPath();
+            try (CloseableHttpResponse response = httpClient.execute(request)) {
+                int status = response.getStatusLine().getStatusCode();
+                String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                current = index;
+                if (status < 200 || status >= 300) {
+                    throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s", lastTarget, status,
+                            response.getStatusLine().getReasonPhrase()), status, null);
+                }
+                return parseData(body);
+            } catch (IOException e) {
+                lastFailure = e;
             }
-            return parseData(body);
-        } catch (IOException e) {
-            throw new ProxmoxApiException(String.format("Unable to reach the Proxmox API for %s %s: %s", request.getMethod(),
-                    request.getURI().getPath(), e.getMessage()), e);
         }
+        throw new ProxmoxApiException(String.format("Unable to reach the Proxmox API for %s on any of %s: %s", lastTarget,
+                baseUrls, lastFailure == null ? "no address" : lastFailure.getMessage()), lastFailure);
     }
 
     static JsonNode parseData(String body) {
