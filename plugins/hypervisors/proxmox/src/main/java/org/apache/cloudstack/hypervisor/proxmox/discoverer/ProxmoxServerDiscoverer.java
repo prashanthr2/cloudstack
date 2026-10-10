@@ -131,8 +131,12 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 logger.error("Unable to configure the resource for Proxmox node {}: {}", nodeInfo.getName(), e.getMessage());
                 continue;
             }
+            // Host details are all that is kept for a host; the resource is rebuilt from them after a management
+            // server restart. The "password" detail is encrypted by the host details DAO.
             Map<String, String> details = new HashMap<>();
             details.put("guid", guid);
+            details.put("username", username);
+            details.put("password", password);
             details.put(ProxmoxResource.DETAIL_NODE, nodeInfo.getName());
             details.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             details.put(ProxmoxResource.DETAIL_VERIFY_TLS, Boolean.toString(verifyTls));
