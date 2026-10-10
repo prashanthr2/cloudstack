@@ -292,6 +292,19 @@ public class ProxmoxApiClient implements Closeable {
         }
     }
 
+    /**
+     * Proxmox reports "pve-manager/8.4.21/2606ac850d46da29"; only the version part is wanted. The host table keeps
+     * the hypervisor version in a varchar(32), so the result is also capped to that length.
+     */
+    static String shortVersion(String pveVersion) {
+        if (StringUtils.isBlank(pveVersion)) {
+            return null;
+        }
+        String[] parts = pveVersion.split("/");
+        String version = parts.length >= 2 ? parts[1] : parts[0];
+        return StringUtils.left(version, 32);
+    }
+
     public NodeStatus getNodeStatus(String node) {
         JsonNode data = get("/nodes/" + node + "/status");
         if (data == null || data.isNull() || data.isMissingNode()) {
@@ -307,7 +320,7 @@ public class ProxmoxApiClient implements Closeable {
         }
         return new NodeStatus(cpuInfo.path("cpus").asInt(0), cpuInfo.path("sockets").asInt(1), (long) mhz,
                 memory.path("total").asLong(0), memory.path("used").asLong(0), memory.path("free").asLong(0),
-                data.path("cpu").asDouble(0), data.path("pveversion").asText(null));
+                data.path("cpu").asDouble(0), shortVersion(data.path("pveversion").asText(null)));
     }
 
     /** A QEMU virtual machine on a node. */

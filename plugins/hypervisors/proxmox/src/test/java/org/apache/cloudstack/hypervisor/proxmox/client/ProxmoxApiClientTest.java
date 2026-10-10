@@ -18,6 +18,7 @@ package org.apache.cloudstack.hypervisor.proxmox.client;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.net.URI;
@@ -68,5 +69,19 @@ public class ProxmoxApiClientTest {
     public void parseDataToleratesEmptyBodies() {
         assertTrue(ProxmoxApiClient.parseData("").isNull());
         assertTrue(ProxmoxApiClient.parseData("{}").isNull());
+    }
+
+    @Test
+    public void shortVersionKeepsOnlyTheVersionPart() {
+        assertEquals("8.4.21", ProxmoxApiClient.shortVersion("pve-manager/8.4.21/2606ac850d46da29"));
+        assertEquals("8.4", ProxmoxApiClient.shortVersion("8.4"));
+        assertNull(ProxmoxApiClient.shortVersion(null));
+        assertNull(ProxmoxApiClient.shortVersion(" "));
+    }
+
+    @Test
+    public void shortVersionFitsTheHostTableColumn() {
+        String version = ProxmoxApiClient.shortVersion("pve-manager/" + "9".repeat(60) + "/abc");
+        assertEquals(32, version.length());
     }
 }
