@@ -24,6 +24,7 @@ import java.util.Map;
 
 import javax.naming.ConfigurationException;
 
+import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.commons.lang3.StringUtils;
@@ -127,7 +128,8 @@ public class ProxmoxResource implements ServerResource {
     }
 
     protected ProxmoxApiClient createClient() {
-        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, verifyTls);
+        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, verifyTls, ProxmoxConfig.ApiConnectTimeout.value(),
+                ProxmoxConfig.ApiReadTimeout.value());
     }
 
     @Override

@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.discoverer;
 
 import java.net.URI;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -27,6 +28,7 @@ import java.util.UUID;
 
 import javax.naming.ConfigurationException;
 
+import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxResource;
@@ -60,7 +62,8 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
     }
 
     protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret, boolean verifyTls) {
-        return new ProxmoxApiClient(endpoint, tokenId, tokenSecret, verifyTls);
+        return new ProxmoxApiClient(Collections.singletonList(endpoint), tokenId, tokenSecret, verifyTls,
+                ProxmoxConfig.ApiConnectTimeout.value(), ProxmoxConfig.ApiReadTimeout.value());
     }
 
     protected String getResourceGuid(String proxmoxClusterName, String nodeName) {

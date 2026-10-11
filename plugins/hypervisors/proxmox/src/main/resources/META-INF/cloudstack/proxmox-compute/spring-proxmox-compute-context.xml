@@ -31,4 +31,5 @@
     <bean id="ProxmoxInvestigator" class="org.apache.cloudstack.hypervisor.proxmox.ha.ProxmoxInvestigator">
         <property name="name" value="ProxmoxInvestigator" />
     </bean>
+    <bean id="ProxmoxConfig" class="org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig" />
 </beans>

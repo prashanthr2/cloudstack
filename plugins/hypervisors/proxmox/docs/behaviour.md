@@ -53,7 +53,7 @@ two-factor authentication. Username/password login is possible later; the two ar
 - Any Proxmox node answers for the whole cluster, so the discoverer stores the address of every online node, the one
   given first. If a connection to the address in use fails, the client tries the next and remembers the one that worked.
 - Only connection failures cause a switch. An HTTP answer (401, 500 ...) means the address was reachable and is returned
-  as an error. The connect timeout is capped at 5 seconds so a dead address does not stall a ping.
+  as an error. The connect timeout (`proxmox.api.connect.timeout`, 5 s by default) keeps a dead address from stalling a ping.
 - Why: without it every host talks through one node, so losing that node put the healthy nodes into Alert too.
 - Hosts added before this existed hold only one address and must be re-added to get the list.
 
@@ -99,8 +99,19 @@ The plugin only supplies `getCurrentStatus()` (one API call per ping) and the re
   ping inside the timeout window and starts the investigation, which for Proxmox ends in `Disconnected` (section 5).
 - Reconnection: the scan reloads lost hosts from their stored details and starts the resource again. A recovered node is
   `Up` again within roughly one scan interval; a node that is still down is retried at the next scan.
-- Caveat: an API call has a 5 s connect timeout per address, so if every node address times out (instead of refusing) one
-  ping can take about 5 s x the number of addresses. With a short `ping.interval` (10 s in the lab) pings then run late.
+- Caveat: an API call waits up to `proxmox.api.connect.timeout` per address, so if every node address times out (instead
+  of refusing) one ping can take about that many seconds x the number of addresses. With a short `ping.interval` (10 s in
+  the lab) pings then run late; lower the connect timeout if that happens.
+
+### Plugin settings
+
+Global settings, like XenServer's `xapiwait` and VMware's `vmware.vcenter.session.timeout`. They are dynamic, and are read
+when a host (re)connects, so a new value reaches a host the next time it connects.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `proxmox.api.connect.timeout` | 5 s | Wait for a connection to one node's API before trying the next node |
+| `proxmox.api.read.timeout` | 15 s | Wait for an API answer once connected |
 
 ## 6. HA stance
 

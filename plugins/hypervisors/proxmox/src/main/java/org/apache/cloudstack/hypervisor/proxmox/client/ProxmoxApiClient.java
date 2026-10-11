@@ -60,10 +60,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class ProxmoxApiClient implements Closeable {
     public static final int DEFAULT_PORT = 8006;
     public static final String VERIFY_TLS_PARAM = "verifyTls";
-    private static final int DEFAULT_TIMEOUT_MS = 15000;
+    public static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 5;
+    public static final int DEFAULT_READ_TIMEOUT_SECONDS = 15;
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    private static final int CONNECT_TIMEOUT_MS = 5000;
 
     private final List<String> baseUrls;
     private final String authHeader;
@@ -71,19 +70,18 @@ public class ProxmoxApiClient implements Closeable {
     private volatile int current;
 
     public ProxmoxApiClient(String baseUrl, String tokenId, String tokenSecret, boolean verifyTls) {
-        this(Collections.singletonList(baseUrl), tokenId, tokenSecret, verifyTls, DEFAULT_TIMEOUT_MS);
-    }
-
-    public ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, boolean verifyTls) {
-        this(baseUrls, tokenId, tokenSecret, verifyTls, DEFAULT_TIMEOUT_MS);
+        this(Collections.singletonList(baseUrl), tokenId, tokenSecret, verifyTls, DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS);
     }
 
     /**
      * @param baseUrls every address the cluster can be reached on (any node answers for the whole cluster). They are
      *                 tried in turn when one cannot be reached, and the last one that worked is used first.
+     * @param connectTimeoutSeconds how long to wait for a connection to one address before trying the next
+     * @param readTimeoutSeconds how long to wait for an answer once connected
      */
-    public ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, boolean verifyTls, int timeoutMs) {
-        this(baseUrls, tokenId, tokenSecret, buildHttpClient(verifyTls, timeoutMs));
+    public ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, boolean verifyTls,
+            int connectTimeoutSeconds, int readTimeoutSeconds) {
+        this(baseUrls, tokenId, tokenSecret, buildHttpClient(verifyTls, connectTimeoutSeconds * 1000, readTimeoutSeconds * 1000));
     }
 
     ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, CloseableHttpClient httpClient) {
@@ -99,11 +97,11 @@ public class ProxmoxApiClient implements Closeable {
         this.httpClient = httpClient;
     }
 
-    private static CloseableHttpClient buildHttpClient(boolean verifyTls, int timeoutMs) {
+    private static CloseableHttpClient buildHttpClient(boolean verifyTls, int connectTimeoutMs, int readTimeoutMs) {
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(Math.min(timeoutMs, CONNECT_TIMEOUT_MS))
-                .setSocketTimeout(timeoutMs)
-                .setConnectionRequestTimeout(timeoutMs)
+                .setConnectTimeout(connectTimeoutMs)
+                .setSocketTimeout(readTimeoutMs)
+                .setConnectionRequestTimeout(readTimeoutMs)
                 .build();
         try {
             SSLContext sslContext = verifyTls ? SSLContexts.createSystemDefault()
