@@ -44,19 +44,36 @@ certificate with its own cluster CA (`/etc/pve/pve-root-ca.pem`, confirmed on Pr
    scp root@<proxmox-node>:/etc/pve/pve-root-ca.pem .
    ```
 
-2. Import it into the truststore of the Java runtime that runs the management server. The default truststore is
-   `$JAVA_HOME/lib/security/cacerts` (default password `changeit`), unless the process is started with
-   `-Djavax.net.ssl.trustStore=...`:
+2. Add it to the truststore of the Java runtime that runs the management server. Either way, the Java in use must be the
+   one the management server really runs with (`readlink -f "$(which java)"` shows it).
 
-   ```bash
-   keytool -importcert -trustcacerts -alias pve-root-ca -file pve-root-ca.pem \
-       -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit
-   ```
+   - **Debian / Ubuntu (recommended).** The system tool also updates Java's truststore, and a Java package update does not
+     remove the entry. The file must end in `.crt`:
 
-   Use the Java installation the management server really runs with. A Java package update can replace `cacerts`; if that
-   is a concern, keep a dedicated truststore and point the management server at it with `-Djavax.net.ssl.trustStore` in
-   its `JAVA_OPTS`. (The `cloud.jks` keystore in `/etc/cloudstack/management` holds the management server's own HTTPS
-   certificate and is not used for this.)
+     ```bash
+     sudo cp pve-root-ca.pem /usr/local/share/ca-certificates/pve-root-ca.crt
+     sudo update-ca-certificates
+     ```
+
+   - **RHEL and derivatives.** Java uses the system trust store there:
+
+     ```bash
+     sudo cp pve-root-ca.pem /etc/pki/ca-trust/source/anchors/pve-root-ca.pem
+     sudo update-ca-trust
+     ```
+
+   - **Any system, directly with `keytool`.** `-cacerts` selects the default truststore of the Java that `keytool` belongs to
+     (default password `changeit`), so no path or `JAVA_HOME` is needed:
+
+     ```bash
+     keytool -importcert -trustcacerts -cacerts -alias pve-root-ca -file pve-root-ca.pem -storepass changeit
+     ```
+
+     A Java package update can replace that file. If that is a concern, keep a dedicated truststore and point the
+     management server at it with `-Djavax.net.ssl.trustStore` in its `JAVA_OPTS`. (The `cloud.jks` keystore in
+     `/etc/cloudstack/management` holds the management server's own HTTPS certificate and is not used for this.)
+
+   To check that Java now trusts it: `keytool -list -cacerts -storepass changeit | grep -i -A1 pve`.
 
 3. Restart the management server so the truststore is read again.
 4. Set the global setting `proxmox.api.verify.tls` to `true`. It is dynamic and applies when a host (re)connects.
