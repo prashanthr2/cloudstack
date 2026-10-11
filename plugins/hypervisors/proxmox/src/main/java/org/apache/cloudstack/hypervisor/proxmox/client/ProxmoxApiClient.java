@@ -19,7 +19,6 @@ package org.apache.cloudstack.hypervisor.proxmox.client;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
@@ -59,7 +58,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public class ProxmoxApiClient implements Closeable {
     public static final int DEFAULT_PORT = 8006;
-    public static final String VERIFY_TLS_PARAM = "verifyTls";
     public static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 5;
     public static final int DEFAULT_READ_TIMEOUT_SECONDS = 15;
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -118,8 +116,9 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Builds the API endpoint (always https) from the URL the operator supplied when adding the host,
-     * e.g. "https://10.0.35.25:8006" or "10.0.35.25". The port defaults to 8006.
+     * Builds the API endpoint (always https) from what the operator typed when adding the host: an address with an
+     * optional port, e.g. "10.0.35.25" or "10.0.35.25:8443". The port defaults to 8006. Anything else in the URL
+     * (scheme, path, query) is ignored.
      */
     public static String endpointOf(URI uri) {
         String host = uri.getHost();
@@ -128,21 +127,6 @@ public class ProxmoxApiClient implements Closeable {
         }
         int port = uri.getPort() == -1 ? DEFAULT_PORT : uri.getPort();
         return "https://" + host + ":" + port;
-    }
-
-    /**
-     * TLS verification is on unless the URL carries verifyTls=false (as query parameter, or - because the
-     * management server URL-encodes everything after the first '/' - inside the path).
-     */
-    public static boolean isTlsVerificationEnabled(URI uri) {
-        String candidates = StringUtils.defaultString(uri.getRawQuery()) + "&"
-                + URLDecoder.decode(StringUtils.defaultString(uri.getRawPath()), StandardCharsets.UTF_8);
-        for (String token : candidates.split("[?&]")) {
-            if (token.equalsIgnoreCase(VERIFY_TLS_PARAM + "=false")) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public JsonNode get(String path) {

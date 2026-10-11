@@ -64,7 +64,6 @@ import com.cloud.vm.VirtualMachine;
 public class ProxmoxResource implements ServerResource {
     public static final String DETAIL_NODE = "node";
     public static final String DETAIL_NODE_IP = "nodeip";
-    public static final String DETAIL_VERIFY_TLS = "verifytls";
     public static final String DETAIL_ENDPOINT = "endpoint";
     public static final String DETAIL_ENDPOINTS = "endpoints";
     protected static final String CAPABILITIES = "hvm";
@@ -83,7 +82,6 @@ public class ProxmoxResource implements ServerResource {
     protected List<String> endpoints = new ArrayList<>();
     protected String tokenId;
     protected String tokenSecret;
-    protected boolean verifyTls = true;
     protected ProxmoxApiClient client;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
@@ -101,7 +99,6 @@ public class ProxmoxResource implements ServerResource {
         nodeIp = (String) params.get(DETAIL_NODE_IP);
         tokenId = (String) params.get("username");
         tokenSecret = (String) params.get("password");
-        verifyTls = !"false".equalsIgnoreCase((String) params.get(DETAIL_VERIFY_TLS));
         endpoint = (String) params.get(DETAIL_ENDPOINT);
         if (StringUtils.isBlank(endpoint)) {
             String url = (String) params.get("url");
@@ -128,7 +125,7 @@ public class ProxmoxResource implements ServerResource {
     }
 
     protected ProxmoxApiClient createClient() {
-        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, verifyTls, ProxmoxConfig.ApiConnectTimeout.value(),
+        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, ProxmoxConfig.ApiVerifyTls.value(), ProxmoxConfig.ApiConnectTimeout.value(),
                 ProxmoxConfig.ApiReadTimeout.value());
     }
 

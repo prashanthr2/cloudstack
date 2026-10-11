@@ -21,7 +21,7 @@ import org.apache.cloudstack.framework.config.Configurable;
 
 /**
  * Global settings of the Proxmox plugin. Like XenServer's "xapiwait" and VMware's "vmware.vcenter.session.timeout",
- * the timeouts are global settings. They are read when a host (re)connects, so a changed value reaches a host the next
+ * the timeouts are global settings, and so is whether the TLS certificate is verified. They are read when a host (re)connects, so a changed value reaches a host the next
  * time it connects.
  */
 public class ProxmoxConfig implements Configurable {
@@ -33,6 +33,11 @@ public class ProxmoxConfig implements Configurable {
             "proxmox.api.read.timeout", "15",
             "Seconds to wait for a Proxmox API answer once connected", true);
 
+    public static final ConfigKey<Boolean> ApiVerifyTls = new ConfigKey<>("Advanced", Boolean.class,
+            "proxmox.api.verify.tls", "true",
+            "Verify the TLS certificate of the Proxmox API. Needs the CA that signed the Proxmox certificates (by default "
+                    + "the Proxmox cluster CA, /etc/pve/pve-root-ca.pem) in the management server's Java truststore", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -40,6 +45,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls};
     }
 }

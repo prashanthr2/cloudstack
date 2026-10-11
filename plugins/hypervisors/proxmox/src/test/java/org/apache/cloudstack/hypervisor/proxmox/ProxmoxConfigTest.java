@@ -32,12 +32,19 @@ public class ProxmoxConfigTest {
     }
 
     @Test
-    public void bothSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
+    public void theTlsCertificateIsVerifiedUnlessTheOperatorTurnsThatOff() {
+        assertTrue(ProxmoxConfig.ApiVerifyTls.value());
+    }
+
+    @Test
+    public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(2, config.getConfigKeys().length);
+        assertEquals(3, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
         assertTrue(ProxmoxConfig.ApiConnectTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiReadTimeout.isDynamic());
+        assertTrue(ProxmoxConfig.ApiVerifyTls.isDynamic());
     }
 }

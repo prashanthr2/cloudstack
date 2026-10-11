@@ -1,29 +1,20 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
 package org.apache.cloudstack.hypervisor.proxmox.discoverer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
@@ -35,41 +26,55 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.cloud.dc.ClusterVO;
 import com.cloud.dc.dao.ClusterDao;
 import com.cloud.exception.DiscoveryException;
-import com.cloud.resource.ServerResource;
+import com.cloud.host.HostVO;
+import com.cloud.host.dao.HostDao;
 import com.cloud.hypervisor.Hypervisor;
+import com.cloud.resource.ServerResource;
 
 public class ProxmoxServerDiscovererTest {
+    private static final URI GIVEN = URI.create("http://10.0.35.25:8006");
+
     private ProxmoxApiClient client;
     private ProxmoxServerDiscoverer discoverer;
+    private ClusterVO cluster;
+    private ClusterDao clusterDao;
+    private HostDao hostDao;
 
     @Before
     public void setUp() {
         client = mock(ProxmoxApiClient.class);
         discoverer = new ProxmoxServerDiscoverer() {
             @Override
-            protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret, boolean verifyTls) {
+            protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret) {
                 return ProxmoxServerDiscovererTest.this.client;
             }
         };
-        ClusterVO cluster = mock(ClusterVO.class);
+        cluster = mock(ClusterVO.class);
+        when(cluster.getId()).thenReturn(2L);
+        when(cluster.getName()).thenReturn("ProxmoxCluster");
         when(cluster.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
-        when(cluster.getGuid()).thenReturn("cluster-guid");
-        ClusterDao clusterDao = mock(ClusterDao.class);
+        when(cluster.getGuid()).thenReturn(null);
+        clusterDao = mock(ClusterDao.class);
         when(clusterDao.findById(2L)).thenReturn(cluster);
+        hostDao = mock(HostDao.class);
         ReflectionTestUtils.setField(discoverer, "_clusterDao", clusterDao);
-    }
+        ReflectionTestUtils.setField(discoverer, "_hostDao", hostDao);
 
-    @Test
-    public void everyOnlineNodeBecomesAHostAndKeepsTheCredentialsNeededToReconnect() throws Exception {
         when(client.getVersion()).thenReturn("8.4.21");
         when(client.getClusterName()).thenReturn("lab");
         when(client.getClusterNodes(anyString())).thenReturn(Arrays.asList(
                 new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.196", true),
                 new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.197", true),
                 new ProxmoxApiClient.NodeInfo("pve3", "10.0.32.198", false)));
+    }
 
-        Map<? extends ServerResource, Map<String, String>> found = discoverer.find(1L, 1L, 2L,
-                URI.create("http://10.0.35.25:8006?verifyTls=false"), "root@pam!cloudstack", "secret", null);
+    private Map<? extends ServerResource, Map<String, String>> find() throws DiscoveryException {
+        return discoverer.find(1L, 1L, 2L, GIVEN, "root@pam!cloudstack", "secret", null);
+    }
+
+    @Test
+    public void everyOnlineNodeBecomesAHostAndKeepsTheCredentialsNeededToReconnect() throws Exception {
+        Map<? extends ServerResource, Map<String, String>> found = find();
 
         assertEquals("offline nodes are skipped", 2, found.size());
         for (Map.Entry<? extends ServerResource, Map<String, String>> entry : found.entrySet()) {
@@ -79,7 +84,6 @@ public class ProxmoxServerDiscovererTest {
             assertEquals("root@pam!cloudstack", details.get("username"));
             assertEquals("secret", details.get("password"));
             assertEquals("https://10.0.35.25:8006", details.get(ProxmoxResource.DETAIL_ENDPOINT));
-            assertEquals("false", details.get(ProxmoxResource.DETAIL_VERIFY_TLS));
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE));
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE_IP));
             assertNotNull(details.get("guid"));
@@ -89,10 +93,82 @@ public class ProxmoxServerDiscovererTest {
         }
     }
 
+    @Test
+    public void aPortOtherThanTheDefaultIsUsedForEveryNode() throws Exception {
+        Map<? extends ServerResource, Map<String, String>> found = discoverer.find(1L, 1L, 2L, URI.create("http://10.0.35.25:8443"),
+                "root@pam!cloudstack", "secret", null);
+        for (Map<String, String> details : found.values()) {
+            assertEquals("https://10.0.35.25:8443,https://10.0.32.196:8443,https://10.0.32.197:8443",
+                    details.get(ProxmoxResource.DETAIL_ENDPOINTS));
+        }
+    }
+
+    @Test
+    public void theFirstAdditionRecordsWhichProxmoxClusterTheCloudStackClusterHolds() throws Exception {
+        find();
+        verify(cluster).setGuid("proxmox-cluster:lab");
+        verify(clusterDao).update(2L, cluster);
+    }
+
+    @Test
+    public void anOldRandomClusterGuidIsReplaced() throws Exception {
+        when(cluster.getGuid()).thenReturn("6f1c2b9e-3b1b-4e7e-9d63-5a4b2c1d0e9f");
+        find();
+        verify(cluster).setGuid("proxmox-cluster:lab");
+    }
+
+    @Test
+    public void addingNodesOfTheSameProxmoxClusterAgainLeavesTheGuidAlone() throws Exception {
+        when(cluster.getGuid()).thenReturn("proxmox-cluster:lab");
+        find();
+        verify(cluster, never()).setGuid(anyString());
+    }
+
+    @Test
+    public void nodesOfAnotherProxmoxClusterAreRefused() throws Exception {
+        when(cluster.getGuid()).thenReturn("proxmox-cluster:other");
+        try {
+            find();
+            fail("expected the add to be refused");
+        } catch (DiscoveryException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("other") && e.getMessage().contains("lab"));
+        }
+        verify(clusterDao, never()).update(anyLong(), any(ClusterVO.class));
+    }
+
+    @Test
+    public void aStandaloneNodeIsIdentifiedByItsOwnName() throws Exception {
+        when(client.getClusterName()).thenReturn("");
+        when(client.getClusterNodes(anyString())).thenReturn(Arrays.asList(new ProxmoxApiClient.NodeInfo("solo", "10.0.32.196", true)));
+        find();
+        verify(cluster).setGuid("proxmox-cluster:solo");
+    }
+
+    @Test
+    public void nodesThatAreAlreadyAddedAreSkippedSoANewNodeCanBePickedUpByAddingAgain() throws Exception {
+        when(hostDao.findByGuid(discoverer.getResourceGuid("lab", "pve1"))).thenReturn(mock(HostVO.class));
+
+        Map<? extends ServerResource, Map<String, String>> found = find();
+
+        assertEquals(1, found.size());
+        assertEquals("pve2", found.values().iterator().next().get(ProxmoxResource.DETAIL_NODE));
+    }
+
+    @Test
+    public void addingAgainWhenEveryNodeIsAlreadyAddedSaysSo() throws Exception {
+        when(hostDao.findByGuid(anyString())).thenReturn(mock(HostVO.class));
+        try {
+            find();
+            fail("expected a message that nothing is new");
+        } catch (DiscoveryException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("already added"));
+        }
+    }
+
     @Test(expected = DiscoveryException.class)
     public void findFailsWhenNoNodeIsOnline() throws Exception {
-        when(client.getClusterName()).thenReturn("lab");
-        when(client.getClusterNodes(anyString())).thenReturn(Arrays.asList(new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.196", false)));
-        discoverer.find(1L, 1L, 2L, URI.create("http://10.0.35.25:8006"), "root@pam!cloudstack", "secret", null);
+        List<ProxmoxApiClient.NodeInfo> allOffline = Arrays.asList(new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.196", false));
+        when(client.getClusterNodes(anyString())).thenReturn(allOffline);
+        find();
     }
 }

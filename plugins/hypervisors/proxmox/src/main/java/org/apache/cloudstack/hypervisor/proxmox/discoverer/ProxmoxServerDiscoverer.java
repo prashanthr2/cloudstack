@@ -24,7 +24,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 import javax.naming.ConfigurationException;
 
@@ -54,6 +53,8 @@ import com.cloud.utils.UuidUtils;
  */
 public class ProxmoxServerDiscoverer extends DiscovererBase implements Discoverer, ResourceStateAdapter {
 
+    static final String CLUSTER_GUID_PREFIX = "proxmox-cluster:";
+
     @Override
     public boolean configure(String name, Map<String, Object> params) throws ConfigurationException {
         super.configure(name, params);
@@ -61,9 +62,22 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         return true;
     }
 
-    protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret, boolean verifyTls) {
-        return new ProxmoxApiClient(Collections.singletonList(endpoint), tokenId, tokenSecret, verifyTls,
+    protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret) {
+        return new ProxmoxApiClient(Collections.singletonList(endpoint), tokenId, tokenSecret, ProxmoxConfig.ApiVerifyTls.value(),
                 ProxmoxConfig.ApiConnectTimeout.value(), ProxmoxConfig.ApiReadTimeout.value());
+    }
+
+    /**
+     * The identity of a Proxmox cluster as kept in the CloudStack cluster's GUID, so that nodes of a different Proxmox
+     * cluster cannot be added to the same CloudStack cluster (XenServer does the same with the pool UUID).
+     */
+    protected String getClusterIdentity(String proxmoxClusterName, List<ProxmoxApiClient.NodeInfo> nodes) {
+        String name = proxmoxClusterName;
+        if (name == null || name.isEmpty()) {
+            // a standalone node has no cluster name; its own name identifies it
+            name = nodes.get(0).getName();
+        }
+        return CLUSTER_GUID_PREFIX + name;
     }
 
     protected String getResourceGuid(String proxmoxClusterName, String nodeName) {
@@ -83,23 +97,17 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         if (cluster == null || cluster.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
             throw new DiscoveryException("Invalid cluster id or the cluster is not a Proxmox cluster");
         }
-        if (cluster.getGuid() == null) {
-            cluster.setGuid(UUID.randomUUID().toString());
-            _clusterDao.update(clusterId, cluster);
-        }
 
         String endpoint;
-        boolean verifyTls;
         try {
             endpoint = ProxmoxApiClient.endpointOf(uri);
-            verifyTls = ProxmoxApiClient.isTlsVerificationEnabled(uri);
         } catch (ProxmoxApiException e) {
             throw new DiscoveryException(e.getMessage(), e);
         }
 
         List<ProxmoxApiClient.NodeInfo> nodes;
         String proxmoxClusterName;
-        try (ProxmoxApiClient client = createClient(endpoint, username, password, verifyTls)) {
+        try (ProxmoxApiClient client = createClient(endpoint, username, password)) {
             String version = client.getVersion();
             logger.info("Connected to Proxmox VE {} at {}", version, endpoint);
             proxmoxClusterName = client.getClusterName();
@@ -108,6 +116,11 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             logger.error("Unable to discover the Proxmox cluster at {}: {}", endpoint, e.getMessage());
             throw new DiscoveryException("Unable to connect to the Proxmox API at " + endpoint + ": " + e.getMessage(), e);
         }
+
+        if (nodes.isEmpty()) {
+            throw new DiscoveryException("No nodes found at " + endpoint);
+        }
+        checkAndAdoptClusterIdentity(cluster, getClusterIdentity(proxmoxClusterName, nodes), proxmoxClusterName);
 
         // Any node answers for the whole cluster, so remember every node's address: the one given first, then the
         // others, to carry on when the node used for the API goes down.
@@ -128,6 +141,10 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 continue;
             }
             String guid = getResourceGuid(proxmoxClusterName, nodeInfo.getName());
+            if (_hostDao.findByGuid(guid) != null) {
+                logger.info("Skipping Proxmox node {}: it is already added", nodeInfo.getName());
+                continue;
+            }
             Map<String, Object> params = new HashMap<>();
             params.put("username", username);
             params.put("password", password);
@@ -137,7 +154,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             params.put("guid", guid);
             params.put(ProxmoxResource.DETAIL_NODE, nodeInfo.getName());
             params.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
-            params.put(ProxmoxResource.DETAIL_VERIFY_TLS, Boolean.toString(verifyTls));
             params.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
             params.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
 
@@ -157,15 +173,33 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             details.put("password", password);
             details.put(ProxmoxResource.DETAIL_NODE, nodeInfo.getName());
             details.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
-            details.put(ProxmoxResource.DETAIL_VERIFY_TLS, Boolean.toString(verifyTls));
             details.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
             details.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
             resources.put(resource, details);
         }
         if (resources.isEmpty()) {
-            throw new DiscoveryException("No online Proxmox nodes found at " + endpoint);
+            throw new DiscoveryException("No new online Proxmox nodes found at " + endpoint
+                    + ": every online node of the Proxmox cluster is already added");
         }
         return resources;
+    }
+
+    /**
+     * A CloudStack cluster maps to one Proxmox cluster. The first node added records which one; later additions from
+     * a different Proxmox cluster are refused. A GUID that was not set by this plugin (an old random one) is replaced.
+     */
+    private void checkAndAdoptClusterIdentity(ClusterVO cluster, String identity, String proxmoxClusterName) throws DiscoveryException {
+        String current = cluster.getGuid();
+        if (current != null && current.startsWith(CLUSTER_GUID_PREFIX)) {
+            if (!current.equals(identity)) {
+                throw new DiscoveryException(String.format("CloudStack cluster %s already holds nodes of the Proxmox cluster '%s', but the nodes "
+                        + "found belong to '%s'. Use a separate CloudStack cluster for each Proxmox cluster.", cluster.getName(),
+                        current.substring(CLUSTER_GUID_PREFIX.length()), identity.substring(CLUSTER_GUID_PREFIX.length())));
+            }
+            return;
+        }
+        cluster.setGuid(identity);
+        _clusterDao.update(cluster.getId(), cluster);
     }
 
     @Override

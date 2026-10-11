@@ -17,7 +17,6 @@
 package org.apache.cloudstack.hypervisor.proxmox.client;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -42,21 +41,13 @@ public class ProxmoxApiClientTest {
     }
 
     @Test
-    public void tlsVerificationIsOnByDefault() {
-        assertTrue(ProxmoxApiClient.isTlsVerificationEnabled(URI.create("https://10.0.35.25:8006")));
-        assertTrue(ProxmoxApiClient.isTlsVerificationEnabled(URI.create("https://10.0.35.25:8006?verifyTls=true")));
+    public void theGivenPortIsUsed() {
+        assertEquals("https://10.0.35.25:8443", ProxmoxApiClient.endpointOf(URI.create("http://10.0.35.25:8443")));
     }
 
     @Test
-    public void tlsVerificationCanBeDisabledThroughQuery() {
-        assertFalse(ProxmoxApiClient.isTlsVerificationEnabled(URI.create("https://10.0.35.25:8006?verifyTls=false")));
-        assertFalse(ProxmoxApiClient.isTlsVerificationEnabled(URI.create("https://10.0.35.25:8006?foo=1&verifyTls=false")));
-    }
-
-    @Test
-    public void tlsVerificationCanBeDisabledWhenManagementServerEncodedThePath() {
-        // UriUtils.encodeURIComponent encodes everything after the first '/', including the '?'
-        assertFalse(ProxmoxApiClient.isTlsVerificationEnabled(URI.create("https://10.0.35.25:8006/%3FverifyTls%3Dfalse")));
+    public void everythingButTheAddressAndPortIsIgnored() {
+        assertEquals("https://10.0.35.25:8006", ProxmoxApiClient.endpointOf(URI.create("http://10.0.35.25:8006/some/path?x=1")));
     }
 
     @Test

@@ -47,9 +47,22 @@ What was tested, how, and what the tests found. One section per round; newest la
 ### Lessons that are not code
 
 - The UI prepends `http://` to the host field unless it already contains `http://`, so a full `https://` URL cannot be
-  typed; type `host:8006?verifyTls=false` without a scheme.
+  typed; type the plain address (with `:port` if needed). The scheme is ignored by the plugin. (Early builds also read
+  `?verifyTls=false` from the host field; that was replaced by the global setting `proxmox.api.verify.tls`.)
 - A host in `Disconnected` status with resource state `Enabled` has no Remove button; disable it first.
 - The upstream project version moved to `24.0.0-SNAPSHOT` while this was in development; the plugin POM and the
   upgrade SQL had to follow (`schema-42300to2400.sql`).
 - A build that "passes" can silently use stale artifacts from the local Maven repository if the project version changed;
   verify that the artifacts built carry the expected version.
+
+## Changes after Phase 1 that still need a lab check (2026-10-12)
+
+Unit tests pass for all of these; they have not run against the lab yet.
+
+| # | Change | Check on the lab |
+|---|---|---|
+| a | TLS verification is now the global setting `proxmox.api.verify.tls` (default true) instead of `?verifyTls=false` in the URL | With the setting `true` and the Proxmox CA not trusted the add fails with a PKIX error; after importing the CA, or setting `false`, it works |
+| b | Host name accepts `address` or `address:port` | Add with the plain address; add with an explicit `:8006` |
+| c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists |
+| d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears |
+| e | Minimal token permissions (`PVEAuditor`) | A privilege-separated token with only `PVEAuditor` can add the cluster and all hosts report capacity and VMs |

@@ -8,17 +8,26 @@ Open questions are collected at the end.
 **Code:** `discoverer/ProxmoxServerDiscoverer`, `client/ProxmoxApiClient`
 
 - One add-host call connects to the given address, reads `/cluster/status`, and creates a host for **every online node**.
-  This matches how XenServer adds a whole pool from one host. Offline nodes are skipped; there is no automatic refresh,
-  so a node added to Proxmox later has to be added to CloudStack separately (known gap, see below).
+  This matches how XenServer adds a whole pool from one host. Offline nodes are skipped. There is no automatic refresh;
+  a node that joins later is added by adding the same address again (see below).
 - Credentials: the username field carries the API token id and the password field the token secret. CloudStack requires
-  both fields, and tokens are revocable and can be scoped, which a stored account password cannot (see "Why API tokens").
-- The URL is only used to find the API address. The scheme is ignored (the UI forces `http://` on anything typed
-  without it) and HTTPS is always used. `verifyTls=false` in the query disables certificate checks for lab use.
+  both fields, and tokens are revocable and can be scoped, which a stored account password cannot (see "Why API tokens"
+  and [requirements.md](requirements.md)).
+- The "host name" field is an address with an optional port (`10.0.35.25` or `10.0.35.25:8443`); the port defaults to 8006
+  and is used for every node. The scheme the UI adds (`http://`) and anything after the address are ignored: the API is
+  always reached over HTTPS.
+- TLS verification is the global setting `proxmox.api.verify.tls` (default `true`), not part of the host URL. See
+  [requirements.md](requirements.md) for the truststore requirement.
+- A CloudStack cluster holds one Proxmox cluster. The first node added records the Proxmox cluster in the CloudStack
+  cluster's GUID (`proxmox-cluster:<name>`; a standalone node uses its own name), as XenServer does with the pool UUID.
+  Adding nodes of a different Proxmox cluster is refused. A GUID that was not set by the plugin is replaced.
+- Adding the same address again skips the nodes that already exist and adds only new ones, which picks up a node that joined
+  the Proxmox cluster later. If every online node is already added the call says so.
 - The host GUID is derived from the Proxmox cluster name and the node name, so nodes of different Proxmox clusters
   cannot collide.
 - Host details stored per host (all that CloudStack keeps for a host, and what the resource is rebuilt from after a
   management server restart): `username`, `password` (encrypted by the host details DAO when database encryption is on),
-  `node`, `nodeip`, `endpoint`, `endpoints`, `verifytls`.
+  `node`, `nodeip`, `endpoint`, `endpoints`. (Hosts added by earlier builds also carry `verifytls`, which is now ignored.)
 
 **Why API tokens.** The management server is an unattended service. A token can be revoked without touching a user, can be
 limited with privilege separation, does not expire after two hours like a login ticket, and works when the account has
@@ -136,13 +145,15 @@ The plugin only supplies `getCurrentStatus()` (one API call per ping) and the re
 
 ### Plugin settings
 
-Global settings, like XenServer's `xapiwait` and VMware's `vmware.vcenter.session.timeout`. They are dynamic, and are read
+Global settings, like XenServer's `xapiwait` and VMware's `vmware.vcenter.session.timeout` (those plugins have no TLS
+setting; they accept any server certificate). They are dynamic, and are read
 when a host (re)connects, so a new value reaches a host the next time it connects.
 
 | Setting | Default | Effect |
 |---|---|---|
 | `proxmox.api.connect.timeout` | 5 s | Wait for a connection to one node's API before trying the next node |
 | `proxmox.api.read.timeout` | 15 s | Wait for an API answer once connected |
+| `proxmox.api.verify.tls` | true | Verify the Proxmox API certificate (needs the signing CA in the management server's Java truststore) |
 
 ## 6. HA stance
 
@@ -164,10 +175,11 @@ functionality fails loudly instead of being accepted silently.
 
 ## Known gaps and open questions
 
-- A Proxmox node added after the cluster was registered is not picked up automatically.
+- A Proxmox node that joins later is not detected automatically; add the same address again to add it.
 - HA skips in `HighAvailabilityManagerImpl` / `VirtualMachineManagerImpl` (section 6).
-- TLS: only "verify" or "do not verify". Pinning a certificate fingerprint or trusting a custom CA is not supported.
-- Token permissions: the lab uses a `root@pam` token. The minimum privilege set is to be worked out once the VM, storage
-  and network features exist.
+- TLS: only "verify against the Java truststore" or "do not verify". Pinning a certificate fingerprint is not supported.
+- The API port is one value for the whole cluster; nodes listening on different ports are not supported.
+- Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
+  documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
 - Not yet implemented: VM lifecycle, storage (NFS), networking, migration, system VMs and virtual routers, snapshots.

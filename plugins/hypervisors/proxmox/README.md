@@ -5,7 +5,8 @@ extensions framework.
 
 **Status:** prototype, work in progress. Phase 1 (registration, discovery, host lifecycle, failure detection) is done
 and tested in a lab. VM lifecycle, storage, networking, migration and HA are not implemented yet.
-See [docs/behaviour.md](docs/behaviour.md) for every behaviour and the reasoning behind it, and
+See [docs/requirements.md](docs/requirements.md) for what has to be in place (ports, TLS, API token),
+[docs/behaviour.md](docs/behaviour.md) for every behaviour and the reasoning behind it, and
 [docs/test-log.md](docs/test-log.md) for what was tested and the bugs the tests found.
 
 ## How it works
@@ -17,14 +18,20 @@ See [docs/behaviour.md](docs/behaviour.md) for every behaviour and the reasoning
 
 ## Adding a cluster
 
+Read [docs/requirements.md](docs/requirements.md) first: ports, TLS and the API token.
+
 1. Create a cluster with hypervisor `Proxmox`.
 2. Add a host:
-   - **URL:** the API address of any node, for example `10.0.35.25:8006?verifyTls=false`.
-     The UI puts `http://` in front of what you type; the scheme is ignored and the API is always reached over HTTPS.
-     Port 8006 is the default. `verifyTls=false` is needed for self-signed certificates; put no `/` before the `?`.
-   - **Username:** the API token id, `user@realm!tokenname` (for example `root@pam!cloudstack`).
+   - **Host name:** the address of any node, with a port if it is not 8006: `10.0.35.25` or `10.0.35.25:8443`.
+     (The UI puts `http://` in front of what you type; the scheme is ignored and the API is always reached over HTTPS.)
+   - **Username:** the API token id, `user@realm!tokenname`.
    - **Password:** the token secret.
-3. One call adds **every online node** of the Proxmox cluster, one host per node.
+3. One call adds **every online node** of the Proxmox cluster, one host per node. Adding the same address again adds only
+   nodes that are not added yet, which is how a node that joined the Proxmox cluster later is picked up.
+4. A CloudStack cluster holds one Proxmox cluster; nodes of another Proxmox cluster are refused.
+
+A default Proxmox installation uses its own CA for the API certificate. Either import that CA into the management server's
+Java truststore, or, for a lab, set the global setting `proxmox.api.verify.tls` to `false`.
 
 ## Changes outside the plugin
 
