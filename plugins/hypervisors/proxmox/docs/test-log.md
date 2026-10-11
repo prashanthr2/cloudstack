@@ -61,12 +61,12 @@ Unit tests pass for all of these; they have not run against the lab yet.
 
 | # | Change | Check on the lab |
 |---|---|---|
-| a | TLS verification is now the global setting `proxmox.api.verify.tls` (default `false`, as for VMware and XenServer) instead of `?verifyTls=false` in the URL | Add works with the default; set `true` without the CA: PKIX error; import `/etc/pve/pve-root-ca.pem` (path confirmed), restart, set `true`: works |
-| b | Host name accepts `address` or `address:port` | Add with the plain address; add with an explicit `:8006` |
-| c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists |
-| d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears |
+| a | TLS verification is now the global setting `proxmox.api.verify.tls` (default `false`, as for VMware and XenServer) instead of `?verifyTls=false` in the URL | Add works with the default; set `true` without the CA: PKIX error; import `/etc/pve/pve-root-ca.pem` (path confirmed), restart, set `true`: works **Pass (2026-10-12): default false works; CA imported with update-ca-certificates, verify true works** |
+| b | Host name accepts `address` or `address:port` | Add with the plain address; add with an explicit `:8006` **Pass (2026-10-12)** |
+| c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists **Pass (2026-10-12)** |
+| d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears **Pass (2026-10-12)** |
 | e | Minimal token permissions (`PVEAuditor`) | **Pass** (2026-10-12): with the role on the token, `cluster/status` 200, node status shows CPU and memory, and the VM list shows a test VM; without the role on the token the same token got 403 / empty results. ACLs of the working setup: role `PVEAuditor` on `/` (propagate) for the user `pveaudit@pam` and for the token `pveaudit@pam!cloudstack` |
-| f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval |
+| f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval **Partly passed (2026-10-12), see notes below** |
 
 ### Notes on check a (TLS)
 
@@ -76,4 +76,20 @@ Unit tests pass for all of these; they have not run against the lab yet.
   `rehash: skipping ca-certificates.crt, it does not contain exactly one certificate or CRL` is harmless. The first attempt
   with `keytool ... "$JAVA_HOME/lib/security/cacerts"` failed because `JAVA_HOME` was not set; the documentation was
   changed to not depend on it.
+
+### Notes on check f (token rotation) and the check 0 (settings)
+
+- Check 0 (the three `proxmox.api.*` settings exist with the expected defaults): pass.
+- The token was deleted and recreated in Proxmox (same id, new secret). The UI "Change password" on one host updated only that
+  host; the other two hosts, still holding the old secret, went to `Alert`. The token belongs to the Proxmox cluster, so the old
+  secret is invalid for every node, while CloudStack keeps one copy per host.
+- `cmk update hostpassword clusterid=... update_passwd_on_host=true`: the first attempt failed with "CloudStack failed to
+  update the password of Host ..." because one host was still in `Alert` (CloudStack's `doUpdateHostPassword` returns false
+  for any host that is not attached); the second attempt succeeded once all hosts were `Up`. The new secret is stored for every
+  host of the cluster before the per-host step, which is why the other hosts recovered at the next reconnect scan.
+- A wrong secret is rejected (the call fails and the connected hosts stay on the old token), but CloudStack has already stored
+  the wrong secret for the hosts, so a reconnect would then fail. After a failed update, repeat it with the correct secret. The
+  error shown is generic; the reason ("The new API token was not accepted by Proxmox: ...") is in the management server log.
+- Follow-up under discussion: make a single-host update safe for Proxmox (refuse it, as XenServer does, or apply it to the whole
+  cluster), since the token is shared by all nodes.
 
