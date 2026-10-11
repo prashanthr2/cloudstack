@@ -80,10 +80,12 @@ When adding a host:
 | Username | the token id: `user@realm!tokenname`, for example `cloudstack@pve!cs` |
 | Password | the token secret (a UUID, shown by Proxmox only once when the token is created) |
 
-### Creating a token (**to verify** on the lab)
+### Creating a token
 
-Run on a Proxmox node. A dedicated user with a token whose rights are limited with privilege separation is recommended;
-the effective rights of such a token are the intersection of the token's and the user's permissions.
+Run on a Proxmox node. A dedicated user with a token whose rights are limited with privilege separation is recommended.
+Grant the role to the token as well as to the user (the effective rights of a privilege-separated token cannot exceed
+those of its user). The commands below are the Proxmox VE 8 syntax; the permission results above were confirmed on the lab
+with a token that had the `PVEAuditor` role.
 
 ```bash
 pveum user add cloudstack@pve
@@ -97,19 +99,24 @@ of the cluster; do not use that outside a lab.
 
 ### Permissions
 
-What the plugin calls, and what it therefore needs:
+What the plugin calls, and what it therefore needs. **Verified on Proxmox VE 8.4** with a user and a privilege-separated
+token that were given the built-in `PVEAuditor` role:
 
-| API call | Used for | Privilege (**to verify**) |
+| API call | Used for | Result with `PVEAuditor` |
 |---|---|---|
-| `GET /version` | check the connection when adding a cluster | none beyond a valid token |
-| `GET /cluster/status` | list nodes, node addresses, cluster name | `Sys.Audit` |
-| `GET /nodes` | fallback for a standalone node | `Sys.Audit` |
-| `GET /nodes/{node}/status` | CPU, memory, version, health check, statistics | `Sys.Audit` on `/nodes/{node}` |
-| `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | `VM.Audit` on `/vms` (without it the list comes back **empty**, so VM state would silently be missing) |
+| `GET /version` | check the connection when adding a cluster | 200 (works for any valid token) |
+| `GET /cluster/status` | list nodes, node addresses, cluster name | 200 (403 without privileges) |
+| `GET /nodes` | fallback for a standalone node | 200 (names only without privileges) |
+| `GET /nodes/{node}/status` | CPU, memory, version, health check, statistics | real values (empty without privileges) |
+| `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | lists the VMs (a test VM created with `qm create` showed up) |
 
-At this stage everything is read-only, and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is
-expected to be enough. The privileges needed for VM, storage and network management will be listed here as those features
-are added.
+At this stage everything is read-only and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is enough.
+The privileges needed for VM, storage and network management are listed here as those features are added.
+
+**A token without permissions looks half-working.** `version` and `nodes` answer 200, `cluster/status` answers 403, node
+status comes back without CPU and memory, and the VM list is empty. If adding a cluster fails with `HTTP 403`, or hosts show
+no capacity, check that the role was granted to the **token** itself (`pveum acl list` shows one line for the user and one
+for the token); a privilege-separated token never gets more than it is granted directly.
 
 ### How the secret is stored
 

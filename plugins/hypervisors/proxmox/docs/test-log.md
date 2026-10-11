@@ -65,6 +65,6 @@ Unit tests pass for all of these; they have not run against the lab yet.
 | b | Host name accepts `address` or `address:port` | Add with the plain address; add with an explicit `:8006` |
 | c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists |
 | d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears |
-| e | Minimal token permissions (`PVEAuditor`) | A privilege-separated token with only `PVEAuditor` can add the cluster and all hosts report capacity and VMs |
+| e | Minimal token permissions (`PVEAuditor`) | **Pass** (2026-10-12): with the role on the token, `cluster/status` 200, node status shows CPU and memory, and the VM list shows a test VM; without the role on the token the same token got 403 / empty results |
 | f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval |
 
