@@ -68,3 +68,12 @@ Unit tests pass for all of these; they have not run against the lab yet.
 | e | Minimal token permissions (`PVEAuditor`) | **Pass** (2026-10-12): with the role on the token, `cluster/status` 200, node status shows CPU and memory, and the VM list shows a test VM; without the role on the token the same token got 403 / empty results. ACLs of the working setup: role `PVEAuditor` on `/` (propagate) for the user `pveaudit@pam` and for the token `pveaudit@pam!cloudstack` |
 | f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval |
 
+### Notes on check a (TLS)
+
+- Importing the Proxmox CA on Ubuntu 24.04 (2026-10-12): copying `/etc/pve/pve-root-ca.pem` to
+  `/usr/local/share/ca-certificates/pve-root-ca.crt` and running `update-ca-certificates` printed `1 added, 0 removed` and
+  the `ca-certificates-java` hook printed `Adding debian:pve-root-ca.pem`, so the CA reached Java's truststore. The warning
+  `rehash: skipping ca-certificates.crt, it does not contain exactly one certificate or CRL` is harmless. The first attempt
+  with `keytool ... "$JAVA_HOME/lib/security/cacerts"` failed because `JAVA_HOME` was not set; the documentation was
+  changed to not depend on it.
+
