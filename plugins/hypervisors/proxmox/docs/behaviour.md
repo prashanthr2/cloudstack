@@ -93,6 +93,20 @@ other hypervisors. For a host that was `Up` the visible state is `Alert` either 
 the verdict only changes the alert text and how hosts that are not `Up` are handled. (An earlier version of this document
 claimed a lost host would show `Disconnected` until `alert.wait`; that was wrong for hosts that were `Up`.)
 
+### Same path as a VMware host (checked by reading the code)
+
+A VMware host and a Proxmox host go through identical steps when they stop answering. This comparison is from the source,
+not from running a VMware host.
+
+| Step | VMware | Proxmox |
+|---|---|---|
+| Ping (`getCurrentStatus`) | `null` if the hypervisor host is not connected | `null` if the Proxmox API cannot be reached |
+| Ping timeout / investigation | `MonitorTask` -> `disconnectWithInvestigation(PingTimeout)` (shared code, no hypervisor-specific branches) | same |
+| First investigation step: `CheckHealthCommand` | answers yes only if the hypervisor host is connected | answers yes only if the node's status can be read |
+| Investigators | `PingInvestigator`, then `VmwareInvestigator` -> `Disconnected` | `PingInvestigator`, then `ProxmoxInvestigator` -> `Disconnected` |
+| State machine (`Status.java`, hypervisor independent) | `Up` + `AgentDisconnected` -> `Alert` | same |
+| CloudStack HA | skipped explicitly in `HighAvailabilityManagerImpl` | to be added (see section 6) |
+
 ## 5a. Ping cadence, timeouts and reconnection
 
 **Code:** none of it is in the plugin: CloudStack's agent manager (`DirectAgentAttache`, `AgentManagerImpl.MonitorTask`,
