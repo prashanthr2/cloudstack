@@ -1161,6 +1161,7 @@ public class ManagementServerImpl extends MutualExclusiveIdsManagerBase implemen
 
         supportedHypervisors.add(HypervisorType.KVM);
         supportedHypervisors.add(HypervisorType.XenServer);
+        supportedHypervisors.add(HypervisorType.Proxmox);
 
         return true;
     }

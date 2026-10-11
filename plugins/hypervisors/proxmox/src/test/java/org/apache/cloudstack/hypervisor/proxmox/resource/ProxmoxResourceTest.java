@@ -23,6 +23,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
@@ -47,6 +48,7 @@ import com.cloud.agent.api.PingTestCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
 import com.cloud.agent.api.StartCommand;
+import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
 import com.cloud.hypervisor.Hypervisor;
@@ -56,15 +58,29 @@ public class ProxmoxResourceTest {
     private static final String NODE = "pve1";
 
     private ProxmoxApiClient client;
+    private ProxmoxApiClient newClient;
+    private ProxmoxApiClient rejectedClient;
+
+    private ProxmoxApiClient clientFor(String secret) {
+        if ("new-secret".equals(secret)) {
+            return newClient;
+        }
+        if ("bad-secret".equals(secret)) {
+            return rejectedClient;
+        }
+        return client;
+    }
     private ProxmoxResource resource;
 
     @Before
     public void setUp() throws ConfigurationException {
         client = mock(ProxmoxApiClient.class);
+        newClient = mock(ProxmoxApiClient.class);
+        rejectedClient = mock(ProxmoxApiClient.class);
         resource = new ProxmoxResource() {
             @Override
-            protected ProxmoxApiClient createClient() {
-                return ProxmoxResourceTest.this.client;
+            protected ProxmoxApiClient createClient(String id, String secret) {
+                return clientFor(secret);
             }
         };
         Map<String, Object> params = new HashMap<>();
@@ -162,8 +178,8 @@ public class ProxmoxResourceTest {
 
         ProxmoxResource other = new ProxmoxResource() {
             @Override
-            protected ProxmoxApiClient createClient() {
-                return ProxmoxResourceTest.this.client;
+            protected ProxmoxApiClient createClient(String id, String secret) {
+                return clientFor(secret);
             }
         };
         other.configure(NODE, params);
@@ -191,5 +207,32 @@ public class ProxmoxResourceTest {
     @Test
     public void pingTestForRoutersAndVmsIsNotClaimedAsSuccessful() {
         assertFalse(resource.executeRequest(new PingTestCommand("169.254.0.1", "10.1.1.5")).getResult());
+    }
+
+    @Test
+    public void aNewTokenThatProxmoxAcceptsIsUsedFromNowOn() {
+        when(newClient.getNodeStatus(NODE)).thenReturn(new ProxmoxApiClient.NodeStatus(1, 1, 1L, 1L, 0L, 1L, 0, null));
+        when(newClient.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(100, "i-2-10-VM", "running")));
+        when(client.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(200, "i-2-20-VM", "running")));
+
+        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("root@pam!cloudstack", "new-secret", "10.0.32.74"));
+
+        assertTrue(answer.getResult());
+        PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
+        assertTrue("the ping must now go through the new token", ping.getHostVmStateReport().containsKey("i-2-10-VM"));
+        assertFalse(ping.getHostVmStateReport().containsKey("i-2-20-VM"));
+    }
+
+    @Test
+    public void aNewTokenThatProxmoxRejectsIsNotAdoptedAndTheOldOneKeepsWorking() {
+        when(rejectedClient.getNodeStatus(NODE)).thenThrow(new ProxmoxApiException("HTTP 401", 401, null));
+        when(client.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(200, "i-2-20-VM", "running")));
+
+        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("root@pam!cloudstack", "bad-secret", "10.0.32.74"));
+
+        assertFalse(answer.getResult());
+        PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
+        assertTrue(ping.getHostVmStateReport().containsKey("i-2-20-VM"));
+        verify(rejectedClient).close();
     }
 }

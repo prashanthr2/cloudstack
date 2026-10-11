@@ -173,13 +173,28 @@ Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkC
 `GetHostStatsCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
+## 8. Changing the token of added hosts
+
+**Code:** `ManagementServerImpl` (supported hypervisors for `updateHostPassword`), `ProxmoxResource` (`UpdateHostPasswordCommand`)
+
+- CloudStack's `updateHostPassword` (API and the UI "Change password" action) stores a new password for a host and, for the
+  cluster variant, for every host of a cluster. It only accepted KVM and XenServer; Proxmox is added to that list.
+- The operation requires the username to equal the stored one, so it rotates the **secret** of a token id. A different
+  token id or user needs the hosts to be removed and added again.
+- With `update_passwd_on_host=true` CloudStack also sends `UpdateHostPasswordCommand` to the host's resource. For KVM that
+  changes the root password on the host. For Proxmox nothing can be changed on the node, so the resource instead checks the
+  new token with Proxmox and, if accepted, switches the running connection to it (a rejected token is reported and the old
+  one stays in use). Without the flag the new token is used from the next reconnect.
+- The password is stored encrypted when database encryption is on, like at add time.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
 - HA skips in `HighAvailabilityManagerImpl` / `VirtualMachineManagerImpl` (section 6).
 - TLS: only "verify against the Java truststore" or "do not verify" (the default, as for VMware and XenServer). Pinning a
   certificate fingerprint is not supported.
-- The token of added hosts cannot be changed (for example after rotating it); the hosts have to be removed and added again.
+- The token of added hosts can be rotated in place (same token id, new secret); a different token id needs the hosts to be
+  removed and added again (section 8).
 - The API port is one value for the whole cluster; nodes listening on different ports are not supported.
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.

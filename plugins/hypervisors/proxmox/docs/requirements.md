@@ -118,6 +118,29 @@ is encrypted by the shared host details DAO when database encryption is enabled,
 Hyper-V and OVM plugins, which store their passwords under the same key. With encryption off (a default development
 setup) it is stored as plain text, as for those plugins.
 
+### Changing the token of hosts that are already added
+
+Use the existing CloudStack `updateHostPassword` operation (also the "Change password" action on a host in the UI). The
+token id goes in `username` and the token secret in `password`.
+
+- **Same token id, new secret (rotation).** Recreate the token in Proxmox under the same id
+  (`pveum user token remove cloudstack@pve cs`, then `pveum user token add cloudstack@pve cs --privsep 1`, and give the new
+  token its permissions again), then update CloudStack. For the whole cluster in one call:
+
+  ```bash
+  cmk update hostpassword clusterid=<cloudstack-cluster-id> username='cloudstack@pve!cs' password=<new-secret> update_passwd_on_host=true
+  ```
+
+  The UI action works per host and sends no `update_passwd_on_host`.
+- **What `update_passwd_on_host=true` does for Proxmox.** Nothing is changed on the Proxmox node (a token's secret cannot be
+  changed there). The running connection is told to use the new token after Proxmox has accepted it, so the change takes
+  effect at once and a wrong secret is reported. Without it the new token is stored and used the next time the host
+  reconnects; if the old token was revoked in the meantime the host shows `Alert` until the reconnect scan (see
+  behaviour.md, section 5a) picks up the new one.
+- **A different token id or user is not supported by this operation**: CloudStack requires the username to match the stored
+  one and refuses otherwise ("The username is not same for the hosts"). To change the id, disable and remove the hosts and
+  add them again.
+
 ## 4. Proxmox cluster
 
 - One CloudStack cluster maps to one Proxmox cluster. Adding a node of a different Proxmox cluster to a CloudStack

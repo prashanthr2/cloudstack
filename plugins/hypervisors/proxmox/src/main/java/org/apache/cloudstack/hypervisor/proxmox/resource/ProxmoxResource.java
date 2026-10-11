@@ -51,6 +51,7 @@ import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
+import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.host.Host;
 import com.cloud.hypervisor.Hypervisor;
 import com.cloud.network.Networks;
@@ -82,7 +83,7 @@ public class ProxmoxResource implements ServerResource {
     protected List<String> endpoints = new ArrayList<>();
     protected String tokenId;
     protected String tokenSecret;
-    protected ProxmoxApiClient client;
+    protected volatile ProxmoxApiClient client;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
     private int runLevel;
@@ -120,12 +121,12 @@ public class ProxmoxResource implements ServerResource {
         if (StringUtils.isAnyBlank(node, tokenId, tokenSecret)) {
             throw new ConfigurationException("Proxmox node name and API token are required for host " + name);
         }
-        client = createClient();
+        client = createClient(tokenId, tokenSecret);
         return true;
     }
 
-    protected ProxmoxApiClient createClient() {
-        return new ProxmoxApiClient(endpoints, tokenId, tokenSecret, ProxmoxConfig.ApiVerifyTls.value(), ProxmoxConfig.ApiConnectTimeout.value(),
+    protected ProxmoxApiClient createClient(String id, String secret) {
+        return new ProxmoxApiClient(endpoints, id, secret, ProxmoxConfig.ApiVerifyTls.value(), ProxmoxConfig.ApiConnectTimeout.value(),
                 ProxmoxConfig.ApiReadTimeout.value());
     }
 
@@ -201,6 +202,8 @@ public class ProxmoxResource implements ServerResource {
                 return new MaintainAnswer((MaintainCommand) cmd);
             } else if (cmd instanceof GetHostStatsCommand) {
                 return execute((GetHostStatsCommand) cmd);
+            } else if (cmd instanceof UpdateHostPasswordCommand) {
+                return execute((UpdateHostPasswordCommand) cmd);
             }
             return Answer.createUnsupportedCommandAnswer(cmd);
         } catch (ProxmoxApiException e) {
@@ -230,6 +233,29 @@ public class ProxmoxResource implements ServerResource {
         } catch (ProxmoxApiException e) {
             return new Answer(cmd, false, "Unable to check " + address + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * Sent after the token of a host has been changed with updateHostPassword (when "update_passwd_on_host" is set). Nothing is
+     * changed on the Proxmox node (a token's secret cannot be changed there): the running connection is told to use the new
+     * token, after checking that Proxmox accepts it. Without this command the new token is picked up the next time the host
+     * reconnects.
+     */
+    private Answer execute(UpdateHostPasswordCommand cmd) {
+        ProxmoxApiClient candidate = createClient(cmd.getUsername(), cmd.getNewPassword());
+        try {
+            candidate.getNodeStatus(node);
+        } catch (ProxmoxApiException e) {
+            candidate.close();
+            logger.warn("The new API token for Proxmox node {} was not accepted: {}", node, e.getMessage());
+            return new Answer(cmd, false, "The new API token was not accepted by Proxmox: " + e.getMessage());
+        }
+        tokenId = cmd.getUsername();
+        tokenSecret = cmd.getNewPassword();
+        // The previous client is not closed here because a ping on another thread may still be using it.
+        client = candidate;
+        logger.info("Proxmox node {} now uses the updated API token", node);
+        return new Answer(cmd, true, "The connection to Proxmox node " + node + " uses the new API token");
     }
 
     private Answer execute(CheckHealthCommand cmd) {
