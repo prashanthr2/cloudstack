@@ -123,8 +123,13 @@ The plugin only supplies `getCurrentStatus()` (one API call per ping) and the re
 
 - A failed ping does not disconnect the host itself. The monitor task (every `ping.interval`) finds hosts without a good
   ping inside the timeout window and starts the investigation (section 5); a host that was `Up` ends in `Alert`.
-- Reconnection: the scan reloads lost hosts from their stored details and starts the resource again. A recovered node is
-  `Up` again within roughly one scan interval; a node that is still down is retried at the next scan.
+- Reconnection is done by a timer thread ("ClusteredAgentManager Timer") that runs `scanDirectAgentToLoad()` every
+  `direct.agent.scan.interval` (the first run 5 s after startup). It first releases hosts whose last ping is older than the
+  ping timeout, then picks direct-connect hosts that have no owner and a stale last ping (at most `direct.agent.load.size`
+  = 16 per round), rebuilds each resource from the stored host details (`DiscovererBase.reloadResource`), runs
+  `initialize()` and starts a new agent link. A node that is still down fails `initialize()` and is retried at the next
+  scan. A recovered node is `Up` again within about one scan interval plus the time the node needs to answer API calls
+  (random phase, so 0-90 s plus boot; 45 s was measured in the lab).
 - Caveat: an API call waits up to `proxmox.api.connect.timeout` per address, so if every node address times out (instead
   of refusing) one ping can take about that many seconds x the number of addresses. With a short `ping.interval` (10 s in
   the lab) pings then run late; lower the connect timeout if that happens.
