@@ -16,66 +16,35 @@
 // under the License.
 package org.apache.cloudstack.hypervisor.proxmox.ha;
 
-import java.util.List;
-
-import javax.inject.Inject;
-
-import com.cloud.agent.AgentManager;
-import com.cloud.agent.api.Answer;
-import com.cloud.agent.api.CheckOnHostAnswer;
-import com.cloud.agent.api.CheckOnHostCommand;
 import com.cloud.ha.Investigator;
 import com.cloud.host.Host;
-import com.cloud.host.HostVO;
 import com.cloud.host.Status;
 import com.cloud.hypervisor.Hypervisor;
-import com.cloud.resource.ResourceManager;
 import com.cloud.utils.component.AdapterBase;
 import com.cloud.vm.VirtualMachine;
 
 /**
- * Decides what became of a Proxmox host that stopped answering, using the Proxmox cluster's own view of its members
- * as reported by a neighbouring node.
+ * Handles host failures the way the VMware investigator does, because Proxmox, like VMware, does its own HA.
  * <p>
- * A node that the cluster reports offline is returned as Alert, never as Down: Down would make CloudStack restart
- * the host's VMs itself, while that is Proxmox HA's job.
+ * A Proxmox host that stops answering is reported as Disconnected, never as Down (Down makes CloudStack restart
+ * the host's VMs itself, which is Proxmox HA's job). CloudStack then moves it to Alert once alert.wait has passed.
+ * VMs of Proxmox hosts are reported alive, so CloudStack's HA never competes with Proxmox HA.
  */
 public class ProxmoxInvestigator extends AdapterBase implements Investigator {
-    @Inject
-    ResourceManager resourceManager;
-    @Inject
-    AgentManager agentManager;
-
-    @Override
-    public boolean isVmAlive(VirtualMachine vm, Host host) throws UnknownVM {
-        // Whether a VM runs is for Proxmox (and its HA) to say, never to be guessed from the host state.
-        throw new UnknownVM();
-    }
 
     @Override
     public Status getHostAgentStatus(Host agent) {
-        if (agent.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
-            return null;
-        }
-        List<HostVO> neighbours = resourceManager.listHostsInClusterByStatus(agent.getClusterId(), Status.Up);
-        for (HostVO neighbour : neighbours) {
-            if (neighbour.getId() == agent.getId() || neighbour.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
-                continue;
-            }
-            try {
-                Answer answer = agentManager.easySend(neighbour.getId(), new CheckOnHostCommand(agent));
-                if (answer instanceof CheckOnHostAnswer && ((CheckOnHostAnswer) answer).isDetermined()) {
-                    if (((CheckOnHostAnswer) answer).isAlive()) {
-                        // the node is up, only CloudStack's link to it is broken
-                        return Status.Disconnected;
-                    }
-                    logger.warn("The Proxmox cluster reports {} offline: {}", agent, answer.getDetails());
-                    return Status.Alert;
-                }
-            } catch (Exception e) {
-                logger.debug("Unable to ask {} about {}", neighbour, agent, e);
-            }
+        if (agent.getHypervisorType() == Hypervisor.HypervisorType.Proxmox) {
+            return Status.Disconnected;
         }
         return null;
+    }
+
+    @Override
+    public boolean isVmAlive(VirtualMachine vm, Host host) throws UnknownVM {
+        if (vm.getHypervisorType() == Hypervisor.HypervisorType.Proxmox) {
+            return true;
+        }
+        throw new UnknownVM();
     }
 }

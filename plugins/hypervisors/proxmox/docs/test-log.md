@@ -22,7 +22,7 @@ What was tested, how, and what the tests found. One section per round; newest la
 | 7 | Host CPU / memory statistics shown | Pass |
 | 8 | Hosts reconnect after a management server restart | Pass, after fix 2 below |
 | 9a | One node powered off (`pve2`) | Host goes to `Alert` shortly; reported with the investigator in place |
-| 9b | The node used for the API powered off (`pve1`) | Failed first (all hosts `Alert`, dead node `Up`); fixes 3-5 below. **Re-test result to be recorded.** |
+| 9b | The node used for the API powered off (`pve1`) | Failed first (all hosts `Alert`, dead node `Up`); after fixes 3-5 `pve1` went to `Alert` while running but to `Disconnected` after a management server restart; fix 6 makes both `Disconnected`. **Re-test with fix 6 to be recorded.** |
 
 ### Bugs found by testing, and the fixes
 
@@ -35,8 +35,11 @@ What was tested, how, and what the tests found. One section per round; newest la
 4. **A powered-off node stayed `Up`** - `PingTestCommand` was answered "success" for any address, so the other hosts
    vouched for the dead one. Now it checks the cluster's view of node membership.
 5. **Dead node still `Up` for 30 minutes** - with no verdict, CloudStack waits `alert.wait` (1800 s). Added
-   `ProxmoxInvestigator`; an offline node is now `Alert` within a minute. Registration confirmed in the management
-   server log ("Ha Investigators Registry").
+   `ProxmoxInvestigator`. Registration confirmed in the management server log ("Ha Investigators Registry").
+6. **Inconsistent state for a dead node** - the first investigator reported an offline node as `Alert` at once, but
+   after a management server restart the same node showed `Disconnected` (what CloudStack does for any host it cannot
+   connect to). The investigator now follows the VMware model: `Disconnected`, then `Alert` after `alert.wait`, so the
+   state is the same either way. See "Decision history" in behaviour.md.
 
 ### Lessons that are not code
 

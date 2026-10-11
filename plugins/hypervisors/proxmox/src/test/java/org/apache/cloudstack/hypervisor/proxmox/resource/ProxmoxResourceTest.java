@@ -42,8 +42,6 @@ import com.cloud.agent.api.CheckHealthCommand;
 import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.HostVmStateReportEntry;
-import com.cloud.agent.api.CheckOnHostAnswer;
-import com.cloud.agent.api.CheckOnHostCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
 import com.cloud.agent.api.ReadyAnswer;
@@ -193,36 +191,5 @@ public class ProxmoxResourceTest {
     @Test
     public void pingTestForRoutersAndVmsIsNotClaimedAsSuccessful() {
         assertFalse(resource.executeRequest(new PingTestCommand("169.254.0.1", "10.1.1.5")).getResult());
-    }
-
-    @Test
-    public void checkOnHostReportsWhetherTheNodeBehindTheAddressIsOnline() {
-        when(client.getClusterNodes(null)).thenReturn(Arrays.asList(
-                new ProxmoxApiClient.NodeInfo("pve1", "10.0.35.25", false),
-                new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.74", true)));
-
-        CheckOnHostAnswer offline = (CheckOnHostAnswer) resource.executeRequest(new CheckOnHostCommand(hostAt("10.0.35.25")));
-        assertTrue(offline.isDetermined());
-        assertFalse(offline.isAlive());
-
-        CheckOnHostAnswer online = (CheckOnHostAnswer) resource.executeRequest(new CheckOnHostCommand(hostAt("10.0.32.74")));
-        assertTrue(online.isDetermined());
-        assertTrue(online.isAlive());
-
-        CheckOnHostAnswer unknown = (CheckOnHostAnswer) resource.executeRequest(new CheckOnHostCommand(hostAt("10.9.9.9")));
-        assertFalse("an address outside the cluster cannot be judged", unknown.isDetermined());
-    }
-
-    @Test
-    public void checkOnHostIsUndeterminedWhenTheClusterCannotBeQueried() {
-        when(client.getClusterNodes(null)).thenThrow(new ProxmoxApiException("down"));
-        CheckOnHostAnswer answer = (CheckOnHostAnswer) resource.executeRequest(new CheckOnHostCommand(hostAt("10.0.32.74")));
-        assertFalse(answer.isDetermined());
-    }
-
-    private com.cloud.host.Host hostAt(String ip) {
-        com.cloud.host.Host host = mock(com.cloud.host.Host.class);
-        when(host.getPrivateIpAddress()).thenReturn(ip);
-        return host;
     }
 }

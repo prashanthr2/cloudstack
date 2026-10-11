@@ -59,29 +59,33 @@ two-factor authentication. Username/password login is possible later; the two ar
 
 ## 5. Failure detection
 
-**Code:** `resource/ProxmoxResource` (`PingTestCommand`, `CheckOnHostCommand`), `ha/ProxmoxInvestigator`
+**Code:** `resource/ProxmoxResource` (`PingTestCommand`), `ha/ProxmoxInvestigator`
 
-When a host stops answering, CloudStack asks its investigators what happened.
+When a connected host stops answering, CloudStack asks its investigators what happened. Proxmox hosts are treated the way
+VMware hosts are, because both rely on the hypervisor's own HA.
 
-- `PingTestCommand` (used by the built-in ping investigator) is answered truthfully: yes only if the address belongs to a
-  node the Proxmox cluster currently reports online. It used to answer yes to everything, so a powered-off node was vouched
-  for by the others and stayed `Up`.
-- `ProxmoxInvestigator` asks a neighbouring node (`CheckOnHostCommand`) whether the cluster still reports the node online:
+- `ProxmoxInvestigator` reports a Proxmox host that stopped answering as **`Disconnected`**, never `Down`. CloudStack then
+  moves it to `Alert` once `alert.wait` (1800 s by default) has passed since the last successful ping, exactly as for
+  VMware. `Down` is avoided because it makes CloudStack restart the host's VMs itself.
+- `isVmAlive` answers **true** for Proxmox VMs (as VMware does), so CloudStack's HA never decides a Proxmox VM is dead.
+- `PingTestCommand` (used by CloudStack's built-in ping investigator) is answered truthfully: yes only if the address
+  belongs to a node the Proxmox cluster currently reports online. It used to answer yes to everything, so a powered-off
+  node was vouched for by the others and stayed `Up`.
+- **Consistency with a management server restart:** a freshly started management server that cannot reach a host marks it
+  `Disconnected`. Reporting `Disconnected` here as well means a dead node looks the same whether the loss happens while
+  CloudStack is running or while it starts.
+- Without any investigator verdict a dead host would stay `Up` until `alert.wait` has passed. To see `Alert` sooner in a
+  lab, lower the global setting `alert.wait`.
 
-  | Cluster says | Host becomes | Why |
-  |---|---|---|
-  | node offline | `Alert` | Visible at once; never `Down`, see HA stance |
-  | node online | `Disconnected` | Node is alive, only CloudStack's link to it is broken |
-  | cannot tell | no verdict | CloudStack waits `alert.wait` (30 min default), then `Alert` |
-
-- Without an investigator of its own a dead host stays `Up` for `alert.wait` (1800 s by default), which is the normal
-  behaviour for any hypervisor that has none.
-- `isVmAlive` always answers "unknown": whether a VM runs is for Proxmox to say, never guessed from the host state.
+**Decision history.** A first version asked a neighbouring node whether the Proxmox cluster still listed the node online
+and reported `Alert` for an offline node at once. It was replaced because a restart of the management server showed the
+same node as `Disconnected`, which was confusing, and because the aim is to behave like the other hypervisors.
 
 ## 6. HA stance
 
 - Proxmox HA restarts VMs after a node failure. CloudStack must not compete.
-- The investigator never reports `Down`, and `Down` is what makes CloudStack schedule VM restarts.
+- The investigator never reports `Down`, and `Down` is what makes CloudStack schedule VM restarts. It also reports
+  Proxmox VMs as alive.
 - **Not done yet:** the explicit skips VMware and Hyper-V have in `HighAvailabilityManagerImpl` (host `Down` handling,
   `scheduleRestart`) and in the out-of-band power-off restart in `VirtualMachineManagerImpl`. These must be added before
   VMs are deployed on Proxmox.
@@ -92,14 +96,13 @@ hypervisor's HA with explicit skips in CloudStack. Proxmox follows the VMware mo
 ## 7. Commands the resource answers
 
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
-`GetHostStatsCommand`, `CheckOnHostCommand`. Every other command is answered with an "unsupported" result, so missing
+`GetHostStatsCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
 ## Known gaps and open questions
 
 - A Proxmox node added after the cluster was registered is not picked up automatically.
 - HA skips in `HighAvailabilityManagerImpl` / `VirtualMachineManagerImpl` (section 6).
-- Whether an offline node should be `Alert` straight away (current) or `Disconnected` first, as other hypervisors show it.
 - TLS: only "verify" or "do not verify". Pinning a certificate fingerprint or trusting a custom CA is not supported.
 - Token permissions: the lab uses a `root@pam` token. The minimum privilege set is to be worked out once the VM, storage
   and network features exist.
