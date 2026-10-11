@@ -195,7 +195,7 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof CheckHealthCommand) {
                 return execute((CheckHealthCommand) cmd);
             } else if (cmd instanceof PingTestCommand) {
-                return new Answer(cmd);
+                return execute((PingTestCommand) cmd);
             } else if (cmd instanceof CheckNetworkCommand) {
                 return new CheckNetworkAnswer((CheckNetworkCommand) cmd, true, "Network setup check by names is done");
             } else if (cmd instanceof MaintainCommand) {
@@ -207,6 +207,29 @@ public class ProxmoxResource implements ServerResource {
         } catch (ProxmoxApiException e) {
             logger.error("Proxmox API error while executing {}: {}", cmd.getClass().getSimpleName(), e.getMessage());
             return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    /**
+     * CloudStack's host investigators send this to the other hosts to ask "can you reach this address?", to tell a
+     * dead machine from a dead agent. It must not answer yes blindly: the address is reachable if it belongs to a
+     * node that the Proxmox cluster currently reports online.
+     */
+    private Answer execute(PingTestCommand cmd) {
+        String address = cmd.getComputingHostIp();
+        if (StringUtils.isBlank(address)) {
+            return new Answer(cmd, false, "Pinging a router or VM address is not supported for Proxmox hosts");
+        }
+        try {
+            for (ProxmoxApiClient.NodeInfo nodeInfo : client.getClusterNodes(null)) {
+                if (address.equals(nodeInfo.getIp())) {
+                    return new Answer(cmd, nodeInfo.isOnline(), String.format("Proxmox node %s is %s", nodeInfo.getName(),
+                            nodeInfo.isOnline() ? "online" : "offline"));
+                }
+            }
+            return new Answer(cmd, false, address + " is not a node of this Proxmox cluster");
+        } catch (ProxmoxApiException e) {
+            return new Answer(cmd, false, "Unable to check " + address + ": " + e.getMessage());
         }
     }
 

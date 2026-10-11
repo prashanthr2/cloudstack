@@ -43,6 +43,7 @@ import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.PingRoutingCommand;
+import com.cloud.agent.api.PingTestCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
 import com.cloud.agent.api.StartCommand;
@@ -168,5 +169,27 @@ public class ProxmoxResourceTest {
         other.configure(NODE, params);
 
         assertEquals(Arrays.asList("https://10.0.35.25:8006", "https://10.0.32.74:8006", "https://10.0.32.198:8006"), other.endpoints);
+    }
+
+    @Test
+    public void pingTestSucceedsOnlyForAnAddressOfAnOnlineNode() {
+        when(client.getClusterNodes(null)).thenReturn(Arrays.asList(
+                new ProxmoxApiClient.NodeInfo("pve1", "10.0.35.25", false),
+                new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.74", true)));
+
+        assertTrue(resource.executeRequest(new PingTestCommand("10.0.32.74")).getResult());
+        assertFalse("a powered-off node must not look reachable", resource.executeRequest(new PingTestCommand("10.0.35.25")).getResult());
+        assertFalse("an address outside the cluster is not vouched for", resource.executeRequest(new PingTestCommand("10.9.9.9")).getResult());
+    }
+
+    @Test
+    public void pingTestFailsWhenTheClusterCannotBeQueried() {
+        when(client.getClusterNodes(null)).thenThrow(new ProxmoxApiException("down"));
+        assertFalse(resource.executeRequest(new PingTestCommand("10.0.32.74")).getResult());
+    }
+
+    @Test
+    public void pingTestForRoutersAndVmsIsNotClaimedAsSuccessful() {
+        assertFalse(resource.executeRequest(new PingTestCommand("169.254.0.1", "10.1.1.5")).getResult());
     }
 }
