@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
@@ -32,8 +33,9 @@ public class ProxmoxConfigTest {
     }
 
     @Test
-    public void theTlsCertificateIsVerifiedUnlessTheOperatorTurnsThatOff() {
-        assertTrue(ProxmoxConfig.ApiVerifyTls.value());
+    public void theTlsCertificateIsNotVerifiedUnlessTheOperatorTurnsThatOn() {
+        // consistent with the VMware and XenServer plugins, which accept any server certificate
+        assertFalse(ProxmoxConfig.ApiVerifyTls.value());
     }
 
     @Test

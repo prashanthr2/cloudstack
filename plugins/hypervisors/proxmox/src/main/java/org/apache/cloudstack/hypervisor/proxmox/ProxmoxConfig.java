@@ -34,9 +34,10 @@ public class ProxmoxConfig implements Configurable {
             "Seconds to wait for a Proxmox API answer once connected", true);
 
     public static final ConfigKey<Boolean> ApiVerifyTls = new ConfigKey<>("Advanced", Boolean.class,
-            "proxmox.api.verify.tls", "true",
-            "Verify the TLS certificate of the Proxmox API. Needs the CA that signed the Proxmox certificates (by default "
-                    + "the Proxmox cluster CA, /etc/pve/pve-root-ca.pem) in the management server's Java truststore", true);
+            "proxmox.api.verify.tls", "false",
+            "Verify the TLS certificate of the Proxmox API. Off by default, like the VMware and XenServer plugins. When on, the "
+                    + "CA that signed the Proxmox certificates (by default the Proxmox cluster CA, /etc/pve/pve-root-ca.pem) must "
+                    + "be in the management server's Java truststore", true);
 
     @Override
     public String getConfigComponentName() {

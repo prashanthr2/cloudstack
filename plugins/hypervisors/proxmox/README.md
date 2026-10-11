@@ -30,8 +30,9 @@ Read [docs/requirements.md](docs/requirements.md) first: ports, TLS and the API 
    nodes that are not added yet, which is how a node that joined the Proxmox cluster later is picked up.
 4. A CloudStack cluster holds one Proxmox cluster; nodes of another Proxmox cluster are refused.
 
-A default Proxmox installation uses its own CA for the API certificate. Either import that CA into the management server's
-Java truststore, or, for a lab, set the global setting `proxmox.api.verify.tls` to `false`.
+The API certificate is not verified by default (`proxmox.api.verify.tls` is `false`), like the VMware and XenServer plugins.
+To verify it, import the Proxmox cluster CA into the management server's Java truststore and set the setting to `true`;
+the steps are in [docs/requirements.md](docs/requirements.md).
 
 ## Changes outside the plugin
 

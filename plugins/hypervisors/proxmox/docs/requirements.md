@@ -25,27 +25,47 @@ whatever the system VM work needs); it is updated with each phase.
 
 ## 2. TLS
 
-The Proxmox API is HTTPS only. By default the plugin **verifies** the certificate (global setting
-`proxmox.api.verify.tls`, default `true`).
+The Proxmox API is HTTPS only. Whether the plugin **verifies** the server certificate is the global setting
+`proxmox.api.verify.tls`, which is **off by default**. This is the same as the VMware and XenServer plugins, which accept
+any server certificate; it keeps a default Proxmox installation (with its own self-signed cluster CA) working out of the box.
 
-- Proxmox signs each node's certificate with its own cluster CA unless the administrator installed a certificate from a
-  public or corporate CA. Java trusts only the CAs in the management server JVM's truststore, so a default Proxmox
-  installation fails with `PKIX path building failed ... unable to find valid certification path`.
-- To keep verification on, import the CA that signed the Proxmox certificates into the truststore of the Java runtime
-  that runs the management server, then restart the management server. For the Proxmox cluster CA (**to verify**: the file
-  is `/etc/pve/pve-root-ca.pem` on a node):
+With the setting off the connection is encrypted but the server is not authenticated, so something that can sit between the
+management server and a Proxmox node could impersonate it and obtain the API token. Turn verification on where that
+matters.
 
-  ```bash
-  keytool -importcert -trustcacerts -alias pve-root-ca -file pve-root-ca.pem \
-      -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit
-  ```
+### Turning certificate verification on
 
-  The certificate must also contain the address used to reach the node (its IP address or name) in its subject
-  alternative names, or hostname checking fails (**to verify** for default Proxmox node certificates).
-- For a lab with self-signed certificates the check can be turned off with the global setting
-  `proxmox.api.verify.tls = false`. It applies when a host (re)connects.
-- For comparison, the VMware and XenServer plugins accept any server certificate without checking it; this plugin verifies
-  by default.
+Java trusts only the CAs in the truststore of the Java runtime that runs the management server. Proxmox signs each node's
+certificate with its own cluster CA (`/etc/pve/pve-root-ca.pem`, confirmed on Proxmox VE 8.4), so that CA has to be added:
+
+1. Copy the CA certificate from any Proxmox node to the management server:
+
+   ```bash
+   scp root@<proxmox-node>:/etc/pve/pve-root-ca.pem .
+   ```
+
+2. Import it into the truststore of the Java runtime that runs the management server. The default truststore is
+   `$JAVA_HOME/lib/security/cacerts` (default password `changeit`), unless the process is started with
+   `-Djavax.net.ssl.trustStore=...`:
+
+   ```bash
+   keytool -importcert -trustcacerts -alias pve-root-ca -file pve-root-ca.pem \
+       -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit
+   ```
+
+   Use the Java installation the management server really runs with. A Java package update can replace `cacerts`; if that
+   is a concern, keep a dedicated truststore and point the management server at it with `-Djavax.net.ssl.trustStore` in
+   its `JAVA_OPTS`. (The `cloud.jks` keystore in `/etc/cloudstack/management` holds the management server's own HTTPS
+   certificate and is not used for this.)
+
+3. Restart the management server so the truststore is read again.
+4. Set the global setting `proxmox.api.verify.tls` to `true`. It is dynamic and applies when a host (re)connects.
+5. Check: the hosts reconnect and stay `Up`; a failed check shows in the management server log as
+   `PKIX path building failed ... unable to find valid certification path`.
+
+The certificate must also contain the address used to reach the node (its IP address or name) in its subject alternative
+names, or the hostname check fails (**to verify** for default Proxmox node certificates). If the nodes are reached by an
+address that is not in the certificate, either add that address to the certificate or leave verification off.
 
 ## 3. API token
 

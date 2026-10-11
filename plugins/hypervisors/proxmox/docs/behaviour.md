@@ -16,8 +16,8 @@ Open questions are collected at the end.
 - The "host name" field is an address with an optional port (`10.0.35.25` or `10.0.35.25:8443`); the port defaults to 8006
   and is used for every node. The scheme the UI adds (`http://`) and anything after the address are ignored: the API is
   always reached over HTTPS.
-- TLS verification is the global setting `proxmox.api.verify.tls` (default `true`), not part of the host URL. See
-  [requirements.md](requirements.md) for the truststore requirement.
+- TLS verification is the global setting `proxmox.api.verify.tls` (default `false`, like the VMware and XenServer plugins,
+  which accept any server certificate), not part of the host URL. How to turn it on is in [requirements.md](requirements.md).
 - A CloudStack cluster holds one Proxmox cluster. The first node added records the Proxmox cluster in the CloudStack
   cluster's GUID (`proxmox-cluster:<name>`; a standalone node uses its own name), as XenServer does with the pool UUID.
   Adding nodes of a different Proxmox cluster is refused. A GUID that was not set by the plugin is replaced.
@@ -153,7 +153,7 @@ when a host (re)connects, so a new value reaches a host the next time it connect
 |---|---|---|
 | `proxmox.api.connect.timeout` | 5 s | Wait for a connection to one node's API before trying the next node |
 | `proxmox.api.read.timeout` | 15 s | Wait for an API answer once connected |
-| `proxmox.api.verify.tls` | true | Verify the Proxmox API certificate (needs the signing CA in the management server's Java truststore) |
+| `proxmox.api.verify.tls` | false | Verify the Proxmox API certificate; when on, the signing CA must be in the management server's Java truststore |
 
 ## 6. HA stance
 
@@ -177,7 +177,9 @@ functionality fails loudly instead of being accepted silently.
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
 - HA skips in `HighAvailabilityManagerImpl` / `VirtualMachineManagerImpl` (section 6).
-- TLS: only "verify against the Java truststore" or "do not verify". Pinning a certificate fingerprint is not supported.
+- TLS: only "verify against the Java truststore" or "do not verify" (the default, as for VMware and XenServer). Pinning a
+  certificate fingerprint is not supported.
+- The token of added hosts cannot be changed (for example after rotating it); the hosts have to be removed and added again.
 - The API port is one value for the whole cluster; nodes listening on different ports are not supported.
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.

@@ -61,7 +61,7 @@ Unit tests pass for all of these; they have not run against the lab yet.
 
 | # | Change | Check on the lab |
 |---|---|---|
-| a | TLS verification is now the global setting `proxmox.api.verify.tls` (default true) instead of `?verifyTls=false` in the URL | With the setting `true` and the Proxmox CA not trusted the add fails with a PKIX error; after importing the CA, or setting `false`, it works |
+| a | TLS verification is now the global setting `proxmox.api.verify.tls` (default `false`, as for VMware and XenServer) instead of `?verifyTls=false` in the URL | Add works with the default; set `true` without the CA: PKIX error; import `/etc/pve/pve-root-ca.pem` (path confirmed), restart, set `true`: works |
 | b | Host name accepts `address` or `address:port` | Add with the plain address; add with an explicit `:8006` |
 | c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists |
 | d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears |
