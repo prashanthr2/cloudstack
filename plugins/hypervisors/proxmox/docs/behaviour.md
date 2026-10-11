@@ -81,6 +81,27 @@ VMware hosts are, because both rely on the hypervisor's own HA.
 and reported `Alert` for an offline node at once. It was replaced because a restart of the management server showed the
 same node as `Disconnected`, which was confusing, and because the aim is to behave like the other hypervisors.
 
+## 5a. Ping cadence, timeouts and reconnection
+
+**Code:** none of it is in the plugin: CloudStack's agent manager (`DirectAgentAttache`, `AgentManagerImpl.MonitorTask`,
+`ClusteredAgentManagerImpl.scanDirectAgentToLoad`) schedules every direct-connect host the same way, including VMware.
+The plugin only supplies `getCurrentStatus()` (one API call per ping) and the resource rebuild.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ping.interval` | 60 s | How often each host is pinged (one Proxmox API call: list the VMs on the node) |
+| `ping.timeout` | 2.5 | Multiplier: no good ping for `ping.interval` x `ping.timeout` marks the host lost |
+| `host.ping.retry.count` | 0 | Retries inside one ping when the status call fails |
+| `direct.agent.scan.interval` | 90 s | How often lost hosts are reloaded and reconnected (needs a restart to change) |
+| `alert.wait` | 1800 s | Time since the last good ping after which `Disconnected` becomes `Alert` |
+
+- A failed ping does not disconnect the host itself. The monitor task (every `ping.interval`) finds hosts without a good
+  ping inside the timeout window and starts the investigation, which for Proxmox ends in `Disconnected` (section 5).
+- Reconnection: the scan reloads lost hosts from their stored details and starts the resource again. A recovered node is
+  `Up` again within roughly one scan interval; a node that is still down is retried at the next scan.
+- Caveat: an API call has a 5 s connect timeout per address, so if every node address times out (instead of refusing) one
+  ping can take about 5 s x the number of addresses. With a short `ping.interval` (10 s in the lab) pings then run late.
+
 ## 6. HA stance
 
 - Proxmox HA restarts VMs after a node failure. CloudStack must not compete.
