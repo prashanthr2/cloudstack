@@ -106,3 +106,7 @@ Unit tests pass for all of these; they have not run against the lab yet.
 Observed on 2026-10-12 after a restart: a wrong secret stored by an earlier failed call left every host `Disconnected` until the
 correct secret was stored again (the value is saved before it is checked).
 
+Observed (2026-10-12): a cluster-wide update without `update_passwd_on_host` stored the value and returned success while the
+hosts stayed `Up`: a connected host keeps the token it started with in memory and uses the stored one only at the next
+reconnect. Check h (wrong secret **with** the flag, hosts `Up`) passes: the call is rejected with the Proxmox reason.
+

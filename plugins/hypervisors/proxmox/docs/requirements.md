@@ -167,6 +167,12 @@ in Proxmox therefore invalidates every host's copy at once, and all of them have
   The hosts pick the new token up at the next reconnect scan (see behaviour.md, section 5a) and return to `Up`, within about
   90 seconds by default. The value is **not checked** when it is stored: if it is wrong the hosts stay `Disconnected` and
   the management server log shows the Proxmox reason (for example HTTP 401). Run the call again with the correct secret.
+- **A stored token is only used when a host (re)connects.** A connected host keeps the token it started with in memory; the
+  update changes the stored details only. While the old token is still valid in Proxmox the hosts therefore stay `Up` on it,
+  and a wrong secret stored by mistake stays hidden until the next reconnect or management server restart, when the hosts fail
+  with it. To apply a stored token at once, use the host action **Force Reconnect** (`reconnectHost`), or restart the
+  management server. After the old token has been revoked this happens by itself, because the failing pings trigger a
+  reconnect.
 - **`update_passwd_on_host=true` is not for the rotation above.** With it, each host's running connection is told to use the
   new token after Proxmox has accepted it (nothing is changed on the Proxmox node). That only works for hosts that are
   connected, which they are not once the old token has been revoked. It is useful only while the old token is still valid.
