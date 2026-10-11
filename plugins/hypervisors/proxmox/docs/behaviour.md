@@ -59,27 +59,39 @@ two-factor authentication. Username/password login is possible later; the two ar
 
 ## 5. Failure detection
 
-**Code:** `resource/ProxmoxResource` (`PingTestCommand`), `ha/ProxmoxInvestigator`
+**Code:** `resource/ProxmoxResource` (`PingTestCommand`), `ha/ProxmoxInvestigator`; the resulting host states come from
+CloudStack's host state machine (`api/.../host/Status.java`), which the plugin does not change.
 
 When a connected host stops answering, CloudStack asks its investigators what happened. Proxmox hosts are treated the way
 VMware hosts are, because both rely on the hypervisor's own HA.
 
-- `ProxmoxInvestigator` reports a Proxmox host that stopped answering as **`Disconnected`**, never `Down`. CloudStack then
-  moves it to `Alert` once `alert.wait` (1800 s by default) has passed since the last successful ping, exactly as for
-  VMware. `Down` is avoided because it makes CloudStack restart the host's VMs itself.
+- `ProxmoxInvestigator` reports a Proxmox host that stopped answering as **`Disconnected`** ("agent link broken, host may
+  be up"), never `Down`. `Down` is avoided because it makes CloudStack restart the host's VMs itself.
 - `isVmAlive` answers **true** for Proxmox VMs (as VMware does), so CloudStack's HA never decides a Proxmox VM is dead.
 - `PingTestCommand` (used by CloudStack's built-in ping investigator) is answered truthfully: yes only if the address
   belongs to a node the Proxmox cluster currently reports online. It used to answer yes to everything, so a powered-off
   node was vouched for by the others and stayed `Up`.
-- **Consistency with a management server restart:** a freshly started management server that cannot reach a host marks it
-  `Disconnected`. Reporting `Disconnected` here as well means a dead node looks the same whether the loss happens while
-  CloudStack is running or while it starts.
-- Without any investigator verdict a dead host would stay `Up` until `alert.wait` has passed. To see `Alert` sooner in a
-  lab, lower the global setting `alert.wait`.
+
+### Resulting host states (CloudStack's state machine, same as for VMware)
+
+| What happens | Host becomes | Why |
+|---|---|---|
+| A host that was `Up` stops answering (ping timeout) | **`Alert`** | `Up` + `AgentDisconnected` -> `Alert` |
+| The management server stops or restarts while the host is `Up` | `Disconnected` | `Up` + `ManagementServerDown` -> `Disconnected` |
+| A disabled / maintenance host stops answering | `Disconnected` | `ShutdownRequested` |
+| A `Disconnected` host stays unreachable | `Alert` once `alert.wait` (1800 s) has passed since its last good ping | `WaitedTooLong` |
+| A host in `Alert` / `Disconnected` answers again | `Up` | reconnect scan (section 5a) |
+| No investigator gives a verdict at all | stays `Up` until `alert.wait` has passed, then `Alert` | |
+
+So the same dead node shows `Alert` when it fails while CloudStack is running and `Disconnected` after a management server
+restart. That is standard CloudStack behaviour for every hypervisor, not something specific to Proxmox.
+- To see `Alert` sooner for hosts that are already `Disconnected`, lower the global setting `alert.wait`.
 
 **Decision history.** A first version asked a neighbouring node whether the Proxmox cluster still listed the node online
-and reported `Alert` for an offline node at once. It was replaced because a restart of the management server showed the
-same node as `Disconnected`, which was confusing, and because the aim is to behave like the other hypervisors.
+and reported `Alert` for an offline node. It was replaced by the VMware-style `Disconnected` verdict to behave like the
+other hypervisors. For a host that was `Up` the visible state is `Alert` either way, because of the state machine above;
+the verdict only changes the alert text and how hosts that are not `Up` are handled. (An earlier version of this document
+claimed a lost host would show `Disconnected` until `alert.wait`; that was wrong for hosts that were `Up`.)
 
 ## 5a. Ping cadence, timeouts and reconnection
 
@@ -93,10 +105,10 @@ The plugin only supplies `getCurrentStatus()` (one API call per ping) and the re
 | `ping.timeout` | 2.5 | Multiplier: no good ping for `ping.interval` x `ping.timeout` marks the host lost |
 | `host.ping.retry.count` | 0 | Retries inside one ping when the status call fails |
 | `direct.agent.scan.interval` | 90 s | How often lost hosts are reloaded and reconnected (needs a restart to change) |
-| `alert.wait` | 1800 s | Time since the last good ping after which `Disconnected` becomes `Alert` |
+| `alert.wait` | 1800 s | Time since the last good ping after which a `Disconnected` host, or one with no investigator verdict, becomes `Alert` |
 
 - A failed ping does not disconnect the host itself. The monitor task (every `ping.interval`) finds hosts without a good
-  ping inside the timeout window and starts the investigation, which for Proxmox ends in `Disconnected` (section 5).
+  ping inside the timeout window and starts the investigation (section 5); a host that was `Up` ends in `Alert`.
 - Reconnection: the scan reloads lost hosts from their stored details and starts the resource again. A recovered node is
   `Up` again within roughly one scan interval; a node that is still down is retried at the next scan.
 - Caveat: an API call waits up to `proxmox.api.connect.timeout` per address, so if every node address times out (instead
