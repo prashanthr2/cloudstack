@@ -66,7 +66,7 @@ Unit tests pass for all of these; they have not run against the lab yet.
 | c | The CloudStack cluster records the Proxmox cluster (`proxmox-cluster:<name>`); a node of another Proxmox cluster is refused | Check `cluster.guid` after an add; try a second Proxmox cluster if one exists **Pass (2026-10-12)** |
 | d | Adding the same address again adds only new nodes | Add again: "already added" message; after a new node joins, add again: only that node appears **Pass (2026-10-12)** |
 | e | Minimal token permissions (`PVEAuditor`) | **Pass** (2026-10-12): with the role on the token, `cluster/status` 200, node status shows CPU and memory, and the VM list shows a test VM; without the role on the token the same token got 403 / empty results. ACLs of the working setup: role `PVEAuditor` on `/` (propagate) for the user `pveaudit@pam` and for the token `pveaudit@pam!cloudstack` |
-| f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval **Partly passed (2026-10-12), see notes below** |
+| f | Token rotation: `updateHostPassword` accepts Proxmox hosts; with `update_passwd_on_host=true` the running connection switches to the new token | Recreate the token under the same id, run the `cmk` command from requirements.md for the cluster: hosts stay `Up`; with a wrong secret the call fails and hosts stay `Up` on the old token. Also the UI "Change password" on one host, then revoke the old token: the host reconnects within about one scan interval **Pass (2026-10-12)**: rotation works; the single-host and message follow-ups are checks g to k |
 
 ### Notes on check a (TLS)
 
@@ -97,11 +97,11 @@ Unit tests pass for all of these; they have not run against the lab yet.
 
 | # | Check | Expected |
 |---|---|---|
-| g | UI "Change password" on one Proxmox host | refused: "Single host update is not supported by Proxmox hypervisors ... informing the Cluster ID" |
-| h | `cmk update hostpassword clusterid=... update_passwd_on_host=true` with a **wrong secret**, hosts `Up` | fails with "Reason given by the host: Proxmox rejected the API token (HTTP 401) ..." and the note that the new credentials were already saved; repeat with the right secret |
-| i | the same call while one host is `Alert` | fails with "The host is not connected; wait until it is Up and try again" |
-| j | the same call with the correct secret and all hosts `Up` | succeeds, hosts stay `Up` |
-| k | the normal rotation: recreate the token in Proxmox, then `cmk update hostpassword clusterid=... username=... password=<new>` **without** the flag | hosts leave `Alert`/`Disconnected` and are `Up` again within about one reconnect scan |
+| g | UI "Change password" on one Proxmox host | refused: "Single host update is not supported by Proxmox hypervisors ... informing the Cluster ID" **Pass (2026-10-12)** |
+| h | `cmk update hostpassword clusterid=... update_passwd_on_host=true` with a **wrong secret**, hosts `Up` | fails with "Reason given by the host: Proxmox rejected the API token (HTTP 401) ..." and the note that the new credentials were already saved; repeat with the right secret **Pass (2026-10-12): rejected with the Proxmox reason when done with the flag and hosts `Up`; without the flag a wrong secret is stored and reported as success (documented)** |
+| i | the same call while one host is `Alert` | fails with "The host is not connected; wait until it is Up and try again" **Pass (2026-10-12)** |
+| j | the same call with the correct secret and all hosts `Up` | succeeds, hosts stay `Up` **Pass (2026-10-12)** |
+| k | the normal rotation: recreate the token in Proxmox, then `cmk update hostpassword clusterid=... username=... password=<new>` **without** the flag | hosts leave `Alert`/`Disconnected` and are `Up` again within about one reconnect scan **Pass (2026-10-12)** |
 
 Observed on 2026-10-12 after a restart: a wrong secret stored by an earlier failed call left every host `Disconnected` until the
 correct secret was stored again (the value is saved before it is checked).
@@ -109,4 +109,10 @@ correct secret was stored again (the value is saved before it is checked).
 Observed (2026-10-12): a cluster-wide update without `update_passwd_on_host` stored the value and returned success while the
 hosts stayed `Up`: a connected host keeps the token it started with in memory and uses the stored one only at the next
 reconnect. Check h (wrong secret **with** the flag, hosts `Up`) passes: the call is rejected with the Proxmox reason.
+
+## Phase 1 status (2026-10-12)
+
+Every planned check has passed on the lab: registration, discovery, capacity and statistics, restart, failure and recovery,
+failover between node addresses, TLS setting, host name forms, cluster identity, adding again, minimal token permissions, and
+the token update. Known limits are in behaviour.md ("Known gaps") and upstream-notes.md.
 
