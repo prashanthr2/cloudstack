@@ -154,21 +154,24 @@ in Proxmox therefore invalidates every host's copy at once, and all of them have
 
 - **Single-host updates are refused for Proxmox** (including the UI "Change password" action on one host), with a message
   asking for the cluster id. This is the same as for XenServer pools, and it prevents a half-updated cluster.
-- **Same token id, new secret (rotation).** Recreate the token in Proxmox under the same id
+- **Same token id, new secret (rotation).** A token id is unique per user, so a new secret for the same id means deleting
+  the token and creating it again. **The old secret stops working at once, so the hosts go to `Alert` and then
+  `Disconnected` before CloudStack can be updated**; that is expected. Recreate the token in Proxmox under the same id
   (`pveum user token remove cloudstack@pve cs`, then `pveum user token add cloudstack@pve cs --privsep 1`, and give the new
-  token its permissions again), then update the whole cluster:
+  token its permissions again), then store the new secret for the whole cluster:
 
   ```bash
-  cmk update hostpassword clusterid=<cloudstack-cluster-id> username='cloudstack@pve!cs' password=<new-secret> update_passwd_on_host=true
+  cmk update hostpassword clusterid=<cloudstack-cluster-id> username='cloudstack@pve!cs' password=<new-secret>
   ```
 
-- **What `update_passwd_on_host=true` does for Proxmox.** Nothing is changed on the Proxmox node (a token's secret cannot be
-  changed there). Each host's running connection is told to use the new token after Proxmox has accepted it, so the change
-  takes effect at once and a wrong secret is reported. Without it the new token is stored and used the next time the host
-  reconnects; if the old token was revoked in the meantime the hosts show `Alert` until the reconnect scan (see behaviour.md,
-  section 5a) picks up the new one.
+  The hosts pick the new token up at the next reconnect scan (see behaviour.md, section 5a) and return to `Up`, within about
+  90 seconds by default. The value is **not checked** when it is stored: if it is wrong the hosts stay `Disconnected` and
+  the management server log shows the Proxmox reason (for example HTTP 401). Run the call again with the correct secret.
+- **`update_passwd_on_host=true` is not for the rotation above.** With it, each host's running connection is told to use the
+  new token after Proxmox has accepted it (nothing is changed on the Proxmox node). That only works for hosts that are
+  connected, which they are not once the old token has been revoked. It is useful only while the old token is still valid.
 - **Every host must be connected** for `update_passwd_on_host=true`; a host that is `Alert` or `Disconnected` makes the call
-  fail with "The host is not connected". Wait until it is `Up` and run the call again.
+  fail with "The host is not connected" (the new value has been stored by then, see the next point).
 - **The new value is stored first, then checked.** CloudStack saves the new username and password for all hosts of the cluster
   before it asks each host to use them. If the call fails (a wrong secret, or a host that is not connected) the stored value
   is already the new one, and a host that reconnects uses it. After a failed call run it again with the correct secret.

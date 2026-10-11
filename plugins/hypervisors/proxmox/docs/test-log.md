@@ -98,7 +98,11 @@ Unit tests pass for all of these; they have not run against the lab yet.
 | # | Check | Expected |
 |---|---|---|
 | g | UI "Change password" on one Proxmox host | refused: "Single host update is not supported by Proxmox hypervisors ... informing the Cluster ID" |
-| h | `cmk update hostpassword clusterid=... update_passwd_on_host=true` with a **wrong secret** | fails with "Reason given by the host: Proxmox rejected the API token (HTTP 401) ..." and the note that the new credentials were already saved; repeat with the right secret |
+| h | `cmk update hostpassword clusterid=... update_passwd_on_host=true` with a **wrong secret**, hosts `Up` | fails with "Reason given by the host: Proxmox rejected the API token (HTTP 401) ..." and the note that the new credentials were already saved; repeat with the right secret |
 | i | the same call while one host is `Alert` | fails with "The host is not connected; wait until it is Up and try again" |
 | j | the same call with the correct secret and all hosts `Up` | succeeds, hosts stay `Up` |
+| k | the normal rotation: recreate the token in Proxmox, then `cmk update hostpassword clusterid=... username=... password=<new>` **without** the flag | hosts leave `Alert`/`Disconnected` and are `Up` again within about one reconnect scan |
+
+Observed on 2026-10-12 after a restart: a wrong secret stored by an earlier failed call left every host `Disconnected` until the
+correct secret was stored again (the value is saved before it is checked).
 

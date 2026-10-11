@@ -191,6 +191,11 @@ functionality fails loudly instead of being accepted silently.
   one stays in use). Without the flag the new token is used from the next reconnect.
 - CloudStack stores the new value for all hosts **before** the per-host step, so a failed call leaves the new (possibly wrong)
   value stored; the call has to be repeated with the correct one.
+- In the one supported rotation (same token id) Proxmox forces the old token to be deleted before the new secret exists, so the
+  hosts are already disconnected when CloudStack is updated. The normal call is therefore the one **without**
+  `update_passwd_on_host` (store, then the hosts reconnect with it); the flag only helps while the old token is still valid.
+- The stored value is not validated. Open: validate the new credentials against Proxmox before storing them, in a way that does
+  not need connected hosts (for example through the discoverer).
 - **Failure messages carry the reason the host gave.** `ResourceManagerImpl` used to reply with a fixed sentence whatever
   went wrong; it now appends the host's reason, says when the host is not connected, and says that the new credentials were
   already saved. The Proxmox resource turns a 401 into "Proxmox rejected the API token ..." and a 403 into "does not have the
