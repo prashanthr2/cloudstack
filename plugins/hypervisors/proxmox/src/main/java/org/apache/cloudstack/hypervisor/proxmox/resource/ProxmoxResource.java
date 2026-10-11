@@ -247,8 +247,9 @@ public class ProxmoxResource implements ServerResource {
             candidate.getNodeStatus(node);
         } catch (ProxmoxApiException e) {
             candidate.close();
-            logger.warn("The new API token for Proxmox node {} was not accepted: {}", node, e.getMessage());
-            return new Answer(cmd, false, "The new API token was not accepted by Proxmox: " + e.getMessage());
+            String reason = describeTokenFailure(e);
+            logger.warn("The new API token for Proxmox node {} was not accepted: {}", node, reason);
+            return new Answer(cmd, false, reason);
         }
         tokenId = cmd.getUsername();
         tokenSecret = cmd.getNewPassword();
@@ -256,6 +257,18 @@ public class ProxmoxResource implements ServerResource {
         client = candidate;
         logger.info("Proxmox node {} now uses the updated API token", node);
         return new Answer(cmd, true, "The connection to Proxmox node " + node + " uses the new API token");
+    }
+
+    /** The reason a token was refused, in words an operator can act on. It never contains the token. */
+    static String describeTokenFailure(ProxmoxApiException e) {
+        switch (e.getStatusCode()) {
+            case 401:
+                return "Proxmox rejected the API token (HTTP 401): the token id or the secret is wrong, or the token was removed or has expired";
+            case 403:
+                return "Proxmox accepted the API token but it does not have the permissions CloudStack needs (HTTP 403)";
+            default:
+                return "The new API token could not be checked with Proxmox: " + e.getMessage();
+        }
     }
 
     private Answer execute(CheckHealthCommand cmd) {

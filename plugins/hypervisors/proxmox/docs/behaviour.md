@@ -175,16 +175,26 @@ functionality fails loudly instead of being accepted silently.
 
 ## 8. Changing the token of added hosts
 
-**Code:** `ManagementServerImpl` (supported hypervisors for `updateHostPassword`), `ProxmoxResource` (`UpdateHostPasswordCommand`)
+**Code:** `ManagementServerImpl` (`updateHostPassword`), `ResourceManagerImpl` (`updateClusterPassword`, failure message),
+`ProxmoxResource` (`UpdateHostPasswordCommand`, `describeTokenFailure`)
 
-- CloudStack's `updateHostPassword` (API and the UI "Change password" action) stores a new password for a host and, for the
-  cluster variant, for every host of a cluster. It only accepted KVM and XenServer; Proxmox is added to that list.
-- The operation requires the username to equal the stored one, so it rotates the **secret** of a token id. A different
-  token id or user needs the hosts to be removed and added again.
-- With `update_passwd_on_host=true` CloudStack also sends `UpdateHostPasswordCommand` to the host's resource. For KVM that
+- CloudStack's `updateHostPassword` stores a new username/password for a host, or for every host of a cluster when given a
+  cluster id. It only accepted KVM and XenServer; Proxmox is added to that list.
+- **A Proxmox token belongs to the whole Proxmox cluster**, but CloudStack keeps one copy per host, so a single-host update
+  would leave the other hosts holding a revoked secret. A single-host update is therefore refused for Proxmox, with a message
+  asking for the cluster id, as `ManagementServerImpl` already does for XenServer pools.
+- The operation requires the username to equal the stored one, so it rotates the **secret** of a token id. A different token id
+  or user needs the hosts to be removed and added again.
+- With `update_passwd_on_host=true` CloudStack also sends `UpdateHostPasswordCommand` to each host's resource. For KVM that
   changes the root password on the host. For Proxmox nothing can be changed on the node, so the resource instead checks the
   new token with Proxmox and, if accepted, switches the running connection to it (a rejected token is reported and the old
   one stays in use). Without the flag the new token is used from the next reconnect.
+- CloudStack stores the new value for all hosts **before** the per-host step, so a failed call leaves the new (possibly wrong)
+  value stored; the call has to be repeated with the correct one.
+- **Failure messages carry the reason the host gave.** `ResourceManagerImpl` used to reply with a fixed sentence whatever
+  went wrong; it now appends the host's reason, says when the host is not connected, and says that the new credentials were
+  already saved. The Proxmox resource turns a 401 into "Proxmox rejected the API token ..." and a 403 into "does not have the
+  permissions CloudStack needs". This applies to every hypervisor that answers `UpdateHostPasswordCommand` with details.
 - The password is stored encrypted when database encryption is on, like at add time.
 
 ## Known gaps and open questions
@@ -193,8 +203,8 @@ functionality fails loudly instead of being accepted silently.
 - HA skips in `HighAvailabilityManagerImpl` / `VirtualMachineManagerImpl` (section 6).
 - TLS: only "verify against the Java truststore" or "do not verify" (the default, as for VMware and XenServer). Pinning a
   certificate fingerprint is not supported.
-- The token of added hosts can be rotated in place (same token id, new secret); a different token id needs the hosts to be
-  removed and added again (section 8).
+- The token of added hosts can be rotated in place for the whole cluster (same token id, new secret); a single-host update is
+  refused, and a different token id needs the hosts to be removed and added again (section 8).
 - The API port is one value for the whole cluster; nodes listening on different ports are not supported.
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.

@@ -90,6 +90,15 @@ Unit tests pass for all of these; they have not run against the lab yet.
 - A wrong secret is rejected (the call fails and the connected hosts stay on the old token), but CloudStack has already stored
   the wrong secret for the hosts, so a reconnect would then fail. After a failed update, repeat it with the correct secret. The
   error shown is generic; the reason ("The new API token was not accepted by Proxmox: ...") is in the management server log.
-- Follow-up under discussion: make a single-host update safe for Proxmox (refuse it, as XenServer does, or apply it to the whole
-  cluster), since the token is shared by all nodes.
+- Follow-up done (not yet checked on the lab): a single-host update is refused for Proxmox, as XenServer does, and the failure
+  message now carries the reason the host gave (see the checks below).
+
+## Checks for the token update follow-up (to run on the lab)
+
+| # | Check | Expected |
+|---|---|---|
+| g | UI "Change password" on one Proxmox host | refused: "Single host update is not supported by Proxmox hypervisors ... informing the Cluster ID" |
+| h | `cmk update hostpassword clusterid=... update_passwd_on_host=true` with a **wrong secret** | fails with "Reason given by the host: Proxmox rejected the API token (HTTP 401) ..." and the note that the new credentials were already saved; repeat with the right secret |
+| i | the same call while one host is `Alert` | fails with "The host is not connected; wait until it is Up and try again" |
+| j | the same call with the correct secret and all hosts `Up` | succeeds, hosts stay `Up` |
 

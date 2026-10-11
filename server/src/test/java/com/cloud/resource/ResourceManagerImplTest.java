@@ -17,6 +17,8 @@
 
 package com.cloud.resource;
 
+import com.cloud.agent.api.Answer;
+import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.agent.AgentManager;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.GetVncPortAnswer;
@@ -1392,5 +1394,38 @@ public class ResourceManagerImplTest {
         Mockito.verify(hostDao).findByDataCenterId(zoneId);
         Mockito.verify(hostDao).findByClusterId(clusterId, Host.Type.Routing);
         Mockito.verify(hostDao).findByPodId(podId, Host.Type.Routing);
+    }
+
+    @Test
+    public void updateHostPasswordFailureMessageShowsTheReasonTheHostGave() {
+        HostVO host = Mockito.mock(HostVO.class);
+        Answer answer = new Answer(new UpdateHostPasswordCommand("user", "secret"), false, "Proxmox rejected the API token (HTTP 401)");
+
+        String message = resourceManager.getUpdateHostPasswordFailureMessage(host, answer);
+
+        Assert.assertTrue(message, message.contains("Reason given by the host: Proxmox rejected the API token (HTTP 401)."));
+        Assert.assertTrue(message, message.contains("already been saved"));
+        Assert.assertFalse("the secret must never appear in the message", message.contains("secret"));
+    }
+
+    @Test
+    public void updateHostPasswordFailureMessageSaysWhenTheHostIsNotConnected() {
+        HostVO host = Mockito.mock(HostVO.class);
+
+        String message = resourceManager.getUpdateHostPasswordFailureMessage(host, null);
+
+        Assert.assertTrue(message, message.contains("The host is not connected"));
+        Assert.assertFalse(message, message.contains("Reason given by the host"));
+    }
+
+    @Test
+    public void updateHostPasswordFailureMessageWithoutDetailsKeepsTheGenericAdvice() {
+        HostVO host = Mockito.mock(HostVO.class);
+        Answer answer = new Answer(new UpdateHostPasswordCommand("user", "secret"), false, null);
+
+        String message = resourceManager.getUpdateHostPasswordFailureMessage(host, answer);
+
+        Assert.assertFalse(message, message.contains("Reason given by the host"));
+        Assert.assertTrue(message, message.contains("make sure you are still able to connect to your hosts"));
     }
 }

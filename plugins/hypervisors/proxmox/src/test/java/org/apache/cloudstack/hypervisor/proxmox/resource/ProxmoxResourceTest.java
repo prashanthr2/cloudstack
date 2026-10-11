@@ -231,8 +231,16 @@ public class ProxmoxResourceTest {
         Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("root@pam!cloudstack", "bad-secret", "10.0.32.74"));
 
         assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("rejected the API token"));
         PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
         assertTrue(ping.getHostVmStateReport().containsKey("i-2-20-VM"));
         verify(rejectedClient).close();
+    }
+
+    @Test
+    public void aRefusedTokenIsExplainedInWordsAnOperatorCanActOn() {
+        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("x", 401, null)).contains("id or the secret is wrong"));
+        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("x", 403, null)).contains("permissions"));
+        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("Unable to reach the API")).contains("Unable to reach the API"));
     }
 }

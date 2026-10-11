@@ -5602,6 +5602,11 @@ public class ManagementServerImpl extends MutualExclusiveIdsManagerBase implemen
             throw new InvalidParameterValueException("Single host update is not supported by XenServer hypervisors. Please try again informing the Cluster ID.");
         }
 
+        if (host.getHypervisorType() == HypervisorType.Proxmox) {
+            throw new InvalidParameterValueException("Single host update is not supported by Proxmox hypervisors, because the API token is "
+                    + "shared by the whole Proxmox cluster. Please try again informing the Cluster ID.");
+        }
+
         if (!supportedHypervisors.contains(host.getHypervisorType())) {
             throw new InvalidParameterValueException("This operation is not supported for this hypervisor type");
         }

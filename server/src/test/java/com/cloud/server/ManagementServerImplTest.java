@@ -45,6 +45,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.cloudstack.api.command.admin.host.UpdateHostPasswordCmd;
 import org.apache.cloudstack.annotation.dao.AnnotationDao;
 import org.apache.cloudstack.affinity.dao.AffinityGroupVMMapDao;
 import org.apache.cloudstack.api.ApiConstants;
@@ -2492,5 +2493,19 @@ public class ManagementServerImplTest {
         Assert.assertEquals(6L, deploymentPlan.getDataCenterId());
         Assert.assertEquals(5L, (long) deploymentPlan.getPodId());
         Assert.assertEquals(4L, (long) deploymentPlan.getClusterId());
+    }
+
+    @Test
+    public void updateHostPasswordIsRefusedForASingleProxmoxHost() {
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(host.getHypervisorType()).thenReturn(HypervisorType.Proxmox);
+        Mockito.when(hostDao.findById(5L)).thenReturn(host);
+        UpdateHostPasswordCmd cmd = Mockito.mock(UpdateHostPasswordCmd.class);
+        Mockito.when(cmd.getHostId()).thenReturn(5L);
+
+        InvalidParameterValueException exception = Assert.assertThrows(InvalidParameterValueException.class, () -> spy.updateHostPassword(cmd));
+
+        Assert.assertTrue(exception.getMessage(), exception.getMessage().contains("Cluster ID"));
+        Mockito.verify(cmd, Mockito.never()).getUsername();
     }
 }

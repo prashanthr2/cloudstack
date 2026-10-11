@@ -4056,8 +4056,18 @@ public class ResourceManagerImpl extends ManagerBase implements ResourceManager,
     }
 
     private boolean doUpdateHostPassword(final long hostId) {
+        final Answer answer = sendUpdateHostPasswordCommand(hostId);
+        return answer != null && answer.getResult();
+    }
+
+    /**
+     * Sends the stored credentials of the host to its resource.
+     *
+     * @return the answer of the host, or null when the host is not connected
+     */
+    private Answer sendUpdateHostPasswordCommand(final long hostId) {
         if (!_agentMgr.isAgentAttached(hostId)) {
-            return false;
+            return null;
         }
 
         DetailVO nv = _hostDetailsDao.findDetail(hostId, ApiConstants.USERNAME);
@@ -4072,8 +4082,25 @@ public class ResourceManagerImpl extends ManagerBase implements ResourceManager,
         final UpdateHostPasswordCommand cmd = new UpdateHostPasswordCommand(username, password, hostIpAddress);
         final Answer answer = _agentMgr.easySend(hostId, cmd);
 
-        logger.info("Result returned from update host password ==> " + answer.getDetails());
-        return answer.getResult();
+        logger.info("Result returned from update host password ==> {}", answer == null ? null : answer.getDetails());
+        return answer;
+    }
+
+    /** The message of a failed password update, with the reason the host gave when there is one. */
+    protected String getUpdateHostPasswordFailureMessage(final HostVO host, final Answer answer) {
+        final StringBuilder message = new StringBuilder(String.format("CloudStack failed to update the password of %s.", host));
+        if (answer == null) {
+            message.append(" The host is not connected; wait until it is Up and try again.");
+        } else if (StringUtils.isNotBlank(answer.getDetails())) {
+            message.append(" Reason given by the host: ").append(answer.getDetails());
+            if (!answer.getDetails().endsWith(".")) {
+                message.append('.');
+            }
+        }
+        message.append(" The new credentials have already been saved for the hosts of the cluster and are used when a host reconnects; "
+                + "if they are wrong, run the update again with the correct ones. "
+                + "Please make sure you are still able to connect to your hosts.");
+        return message.toString();
     }
 
     @Override
@@ -4092,11 +4119,9 @@ public class ResourceManagerImpl extends ManagerBase implements ResourceManager,
             }
 
             if (shouldUpdateHostPasswd) {
-                final boolean isUpdated = doUpdateHostPassword(hostId);
-                if (!isUpdated) {
-                    HostVO host = _hostDao.findById(hostId);
-                    throw new CloudRuntimeException(
-                            String.format("CloudStack failed to update the password of %s. Please make sure you are still able to connect to your hosts.", host));
+                final Answer answer = sendUpdateHostPasswordCommand(hostId);
+                if (answer == null || !answer.getResult()) {
+                    throw new CloudRuntimeException(getUpdateHostPasswordFailureMessage(_hostDao.findById(hostId), answer));
                 }
             }
         }
