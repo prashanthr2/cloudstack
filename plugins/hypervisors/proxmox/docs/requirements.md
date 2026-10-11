@@ -84,8 +84,11 @@ When adding a host:
 
 Run on a Proxmox node. A dedicated user with a token whose rights are limited with privilege separation is recommended.
 Grant the role to the token as well as to the user (the effective rights of a privilege-separated token cannot exceed
-those of its user). The commands below are the Proxmox VE 8 syntax; the permission results above were confirmed on the lab
-with a token that had the `PVEAuditor` role.
+those of its user). A token that had only the user's role got no access, and the setup with the role on both worked; whether
+the user's own entry is strictly required was not tested separately. The commands below are the Proxmox VE 8 syntax. The
+lab used the `pam` realm (`pveaudit@pam!cloudstack`); `@pve`, Proxmox's own user database, is the usual choice for a
+service account because no matching operating system account is needed on every node. Tokens do not use a password, so
+either realm works.
 
 ```bash
 pveum user add cloudstack@pve
@@ -100,7 +103,8 @@ of the cluster; do not use that outside a lab.
 ### Permissions
 
 What the plugin calls, and what it therefore needs. **Verified on Proxmox VE 8.4** with a user and a privilege-separated
-token that were given the built-in `PVEAuditor` role:
+token that were both given the built-in `PVEAuditor` role at `/` (`pveum acl list` showed one entry of type `user` and one
+of type `token`, both with propagate on):
 
 | API call | Used for | Result with `PVEAuditor` |
 |---|---|---|
