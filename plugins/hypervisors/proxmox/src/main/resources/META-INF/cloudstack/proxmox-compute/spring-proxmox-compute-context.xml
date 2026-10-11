@@ -28,4 +28,7 @@
     <bean id="ProxmoxHypervisorGuru" class="org.apache.cloudstack.hypervisor.proxmox.guru.ProxmoxHypervisorGuru">
         <property name="name" value="ProxmoxHypervisorGuru" />
     </bean>
+    <bean id="ProxmoxInvestigator" class="org.apache.cloudstack.hypervisor.proxmox.ha.ProxmoxInvestigator">
+        <property name="name" value="ProxmoxInvestigator" />
+    </bean>
 </beans>

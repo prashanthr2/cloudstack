@@ -36,6 +36,8 @@ import com.cloud.agent.api.CheckHealthAnswer;
 import com.cloud.agent.api.CheckHealthCommand;
 import com.cloud.agent.api.CheckNetworkAnswer;
 import com.cloud.agent.api.CheckNetworkCommand;
+import com.cloud.agent.api.CheckOnHostAnswer;
+import com.cloud.agent.api.CheckOnHostCommand;
 import com.cloud.agent.api.Command;
 import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
@@ -198,6 +200,8 @@ public class ProxmoxResource implements ServerResource {
                 return execute((PingTestCommand) cmd);
             } else if (cmd instanceof CheckNetworkCommand) {
                 return new CheckNetworkAnswer((CheckNetworkCommand) cmd, true, "Network setup check by names is done");
+            } else if (cmd instanceof CheckOnHostCommand) {
+                return execute((CheckOnHostCommand) cmd);
             } else if (cmd instanceof MaintainCommand) {
                 return new MaintainAnswer((MaintainCommand) cmd);
             } else if (cmd instanceof GetHostStatsCommand) {
@@ -230,6 +234,25 @@ public class ProxmoxResource implements ServerResource {
             return new Answer(cmd, false, address + " is not a node of this Proxmox cluster");
         } catch (ProxmoxApiException e) {
             return new Answer(cmd, false, "Unable to check " + address + ": " + e.getMessage());
+        }
+    }
+
+    /** Asked by a neighbour's investigator: is the node behind this host's address a live member of the cluster? */
+    private Answer execute(CheckOnHostCommand cmd) {
+        String address = cmd.getHost() == null || cmd.getHost().getPrivateNetwork() == null ? null : cmd.getHost().getPrivateNetwork().getIp();
+        if (StringUtils.isBlank(address)) {
+            return new CheckOnHostAnswer(cmd, "The host to check has no address");
+        }
+        try {
+            for (ProxmoxApiClient.NodeInfo nodeInfo : client.getClusterNodes(null)) {
+                if (address.equals(nodeInfo.getIp())) {
+                    return new CheckOnHostAnswer(cmd, nodeInfo.isOnline(), String.format("Proxmox node %s is %s", nodeInfo.getName(),
+                            nodeInfo.isOnline() ? "online" : "offline"));
+                }
+            }
+            return new CheckOnHostAnswer(cmd, address + " is not a node of this Proxmox cluster");
+        } catch (ProxmoxApiException e) {
+            return new CheckOnHostAnswer(cmd, "Unable to check " + address + ": " + e.getMessage());
         }
     }
 
