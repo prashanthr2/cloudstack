@@ -160,9 +160,9 @@ API). Remaining, none of which blocks the next phase:
 
 | # | Item | Why |
 |---|---|---|
-| p7 | add the same pool again after it was removed (the share is still mounted) | confirms that Proxmox reuses the leftover mount |
+| p7 | add the same pool again after it was removed (the share is still mounted), written exactly as before | the pool gets the same uuid (it is derived from server and path), and Proxmox reuses the leftover mount at `/mnt/<uuid>` |
 | S8 | confirm the share is mounted at `/mnt/<pool uuid>` (`findmnt -t nfs,nfs4` on a node) | the `path` option was never checked directly |
-| p8 | add a pool with NFS mount options set in CloudStack (for example `vers=3`) and check them in `mount` on a node | the options travel through CloudStack's pool details; only unit tested so far |
+| p8 | add a pool with NFS mount options set in CloudStack (for example `vers=3`) and check them in `mount` on a node; **unmount any leftover mount of that share first, or use another export**, otherwise the old mount and its options are reused | the options travel through CloudStack's pool details; only unit tested so far |
 | S2 | with the `pveaudit` token and the `PVEDatastoreAdmin` role on `/storage`: adding and removing a pool works; without the role it fails with 403 | so far everything ran with the unrestricted `root@pam!cloudstack` token; the privileges come from the source only |
 | S5 | creating a storage with an id that exists, through the API, gives "already defined" | from the source only; the plugin tolerates it and is unit tested |
 | S7 | re-run with the exact error message | needed for the Phase 3 volume design, not for Phase 2 |

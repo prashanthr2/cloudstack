@@ -225,6 +225,12 @@ functionality fails loudly instead of being accepted silently.
   nodes, unlike KVM where removing the pool unmounts it, until `umount /mnt/<pool uuid>` is run on each node. This is left as it
   is on purpose: Proxmox has no API to unmount a storage, so the plugin would need root access to the nodes, and it would do
   more than Proxmox does itself. Re-adding the same pool reuses the mount.
+- **Adding the same share again.** CloudStack derives an NFS pool's uuid from the server and path as typed
+  (`nameUUIDFromBytes(host + path)`), so the same share always gets the same uuid, hence the same entry id and mount point. Proxmox
+  mounts a storage only if nothing is mounted from that `server:export` at that mount point (`nfs_is_mounted`), so a mount left
+  from an earlier pool is reused. A different spelling (a hostname instead of an IP, a trailing slash) gives a new uuid and a second
+  mount of the same share. Because the leftover mount is reused as it is, **mount options given later do not apply until the
+  share is unmounted** from the nodes.
 - Capacity statistics come from the node's view of the entry. Pool types other than NFS are refused.
 - A host that (re)connects gets its cluster's pools re-checked, because Proxmox is on `StoragePoolMonitor`'s hypervisor list.
 - Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).
