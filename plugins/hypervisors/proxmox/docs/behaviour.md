@@ -170,7 +170,8 @@ hypervisor's HA with explicit skips in CloudStack. Proxmox follows the VMware mo
 ## 7. Commands the resource answers
 
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
-`GetHostStatsCommand`. Every other command is answered with an "unsupported" result, so missing
+`GetHostStatsCommand`, `UpdateHostPasswordCommand`, and for primary storage `CreateStoragePoolCommand`,
+`ModifyStoragePoolCommand`, `DeleteStoragePoolCommand`, `GetStorageStatsCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
 ## 8. Changing the token of added hosts
@@ -202,6 +203,27 @@ functionality fails loudly instead of being accepted silently.
   already saved. The Proxmox resource turns a 401 into "Proxmox rejected the API token ..." and a 403 into "does not have the
   permissions CloudStack needs". This applies to every hypervisor that answers `UpdateHostPasswordCommand` with details.
 - The password is stored encrypted when database encryption is on, like at add time.
+
+## 9. Primary storage (NFS, cluster scope)
+
+**Code:** `ProxmoxResource` (storage handlers), `ProxmoxStorageNames`, `ProxmoxApiClient` (storage calls),
+`StoragePoolMonitor` (core, one line). The design and the reasoning are in [design-phase2-storage.md](design-phase2-storage.md).
+
+- A CloudStack NFS pool becomes **one cluster-wide Proxmox storage entry** named `cs-<pool uuid>` (hyphens kept), mounted by
+  every node at `/mnt/<pool uuid>` (the place the KVM agent mounts it), with `content=images`.
+- `CreateStoragePoolCommand` does nothing, as on KVM. The entry is created by the first `ModifyStoragePoolCommand` (it is the one
+  that carries the pool's mount options, `nfsmountopts`); the commands for the other hosts find the entry, and a creation race
+  between two hosts is tolerated.
+- An existing entry for the same share is reused (a trailing `/` on the export is ignored). One that points at a different
+  server or export is **refused** with a message and left untouched.
+- Each host's command waits (up to 15 x 2 s) until its node reports the storage active, then answers with the node's capacity and
+  available bytes and the mount point. A node that never mounts the share answers with an explanation, so one host failing does
+  not hide the others.
+- Taking one host out of a pool (`ModifyStoragePoolCommand` with add=false) leaves the entry alone: it is cluster-wide.
+  `DeleteStoragePoolCommand` removes the entry and can be repeated by every host without error.
+- Capacity statistics come from the node's view of the entry. Pool types other than NFS are refused.
+- A host that (re)connects gets its cluster's pools re-checked, because Proxmox is on `StoragePoolMonitor`'s hypervisor list.
+- Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).
 
 ## Known gaps and open questions
 

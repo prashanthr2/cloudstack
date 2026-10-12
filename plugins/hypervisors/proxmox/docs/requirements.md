@@ -9,7 +9,8 @@ CloudStack needs only the Proxmox API at this stage. Open these before adding a 
 
 | From | To | Port | Used for | Since |
 |---|---|---|---|---|
-| Management server | **every** Proxmox node | TCP 8006 (HTTPS) | Proxmox REST API: discovery, host status, VM list | Phase 1 |
+| Management server | **every** Proxmox node | TCP 8006 (HTTPS) | Proxmox REST API: discovery, host status, VM list, storage | Phase 1 |
+| **Every** Proxmox node | the NFS server of the primary storage | NFS: TCP 2049; NFSv3 also needs the portmapper and mount ports as for any NFS client | the nodes mount the share themselves, the management server does not | Phase 2 |
 
 - The management server talks to the cluster through any node's API, and keeps the address of every node to fail over.
   It therefore has to reach **all** nodes, not only the one used to add the cluster.
@@ -20,8 +21,9 @@ CloudStack needs only the Proxmox API at this stage. Open these before adding a 
 - Ports used between the Proxmox nodes themselves (cluster communication, SSH between nodes) are Proxmox's own
   requirement and are not CloudStack's concern.
 
-Later phases will add to this table (NFS from the Proxmox nodes to the storage server, the console connection, and
-whatever the system VM work needs); it is updated with each phase.
+The NFS export must allow all the Proxmox nodes (CloudStack configures the storage on them; nothing is mounted on the management
+server). Later phases will add to this table (the console connection, and whatever the system VM work needs); it is updated
+with each phase.
 
 ## 2. TLS
 
@@ -132,7 +134,19 @@ of type `token`, both with propagate on):
 | `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | lists the VMs (a test VM created with `qm create` showed up) |
 
 At this stage everything is read-only and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is enough.
-The privileges needed for VM, storage and network management are listed here as those features are added.
+### Permissions for primary storage (Phase 2, **to verify**: check S2 in design-phase2-storage.md)
+
+| API call | Used for | Privilege (expected) |
+|---|---|---|
+| `GET /storage` | find the pool's entry | `Datastore.Audit` (part of `PVEAuditor`) |
+| `POST /storage` | create the entry | `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`) |
+| `DELETE /storage/{id}` | remove the entry | `Datastore.Allocate` on `/storage` |
+| `GET /nodes/{node}/storage/{id}/status` | state and capacity on a node | `Datastore.Audit` |
+
+Privileges are granted through a **role** on a **path**, not one by one; for the storage calls give the token a role that contains
+`Datastore.Allocate` (the built-in `PVEDatastoreAdmin`) on `/storage`, for example
+`pveum acl modify /storage --tokens '<token id>' --roles PVEDatastoreAdmin`. The privileges needed for VM and network management
+are listed here as those features are added.
 
 **A token without permissions looks half-working.** `version` and `nodes` answer 200, `cluster/status` answers 403, node
 status comes back without CPU and memory, and the VM list is empty. If adding a cluster fails with `HTTP 403`, or hosts show

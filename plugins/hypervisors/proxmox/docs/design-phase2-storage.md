@@ -1,6 +1,6 @@
 # Phase 2 design: NFS primary storage
 
-Status: **proposal, for review**. Nothing described here is implemented yet.
+Status: **decisions taken (2026-10-12), Phase 2 implemented and unit tested; lab checks pending.** The first spike results are in section 8.
 
 "Verified in code" means read in this repository. "Expected" means taken from the Proxmox documentation or experience and
 **not yet confirmed on the lab**; each is covered by a check in section 8.
@@ -41,24 +41,30 @@ Afterwards:
 The Proxmox storage entry is cluster-wide: one entry is visible on every node and each node mounts the share itself. That
 fits the CloudStack sequence directly:
 
-| CloudStack step | Proxmox action (expected) |
+| CloudStack step | Proxmox action |
 |---|---|
-| `CreateStoragePoolCommand` to the first host | **Once**, `POST /storage` with `type=nfs`, `storage=<id>`, `server=<NFS host>`, `export=<path>`, `content=images`, `options=<mount options>`. If an entry with that id already exists with the **same** server and export, treat it as success; if it differs, fail with a clear message. |
-| `ModifyStoragePoolCommand(add=true)` to each host | For **that node**: `GET /nodes/{node}/storage/{id}/status`. The node must report the storage active; the answer carries `total` and `avail` as capacity and available bytes, and `localPath` = `/mnt/pve/<id>`. A node that cannot mount the share answers with the Proxmox reason. |
-| `GetStorageStatsCommand` | Same status call; returns capacity and used. |
+| `CreateStoragePoolCommand` to the first host | **Nothing** (as on KVM, where this command is also a no-op). The entry is created by the next step, because only that command carries the pool's mount options. |
+| `ModifyStoragePoolCommand(add=true)` to each host | `GET /storage` to look for the entry. If missing: `POST /storage` with `type=nfs`, `storage=<id>`, `server`, `export`, `content=images`, `path=/mnt/<uuid>` (the mount point) and `options=<nfsmountopts>`. If it exists with the **same** server and export (a trailing `/` is ignored) it is reused; if it points elsewhere the command **fails** with a message, and nothing is changed. If another host's command creates it at the same moment, the second finds it and carries on. Then the node's status (`GET /nodes/{node}/storage/{id}/status`) is polled (up to 15 x 2 s) until it is `active`; the answer carries `total` and `avail` as capacity and available bytes, and `localPath` = `/mnt/<uuid>`. A node that never mounts the share answers with an explanation. |
+| `ModifyStoragePoolCommand(add=false)` | Left alone: the entry is cluster-wide and is removed with the pool. |
+| `GetStorageStatsCommand` | The status call for this node; returns total and used. |
 | `DeleteStoragePoolCommand` | `DELETE /storage/{id}`; "not found" counts as success so the call can be repeated for each host. |
 
-**Storage id.** The CloudStack pool uuid (`047ccc61-dc29-...`) cannot be used as is: a Proxmox storage id must start with a
-letter and may be limited in length (check S1). Proposal: `cs-` + the pool uuid without dashes, computed by one function so
-the same id is found again after a restart. If S1 shows a length limit, use `cs-` plus the first 16 hex digits and fail loudly
-on a collision.
+Only NFS pools are accepted; other pool types are refused with a message.
+
+**Storage id.** `cs-<pool uuid>`, keeping the hyphens so an administrator can match it with the pool at a glance. The prefix is
+needed because a CloudStack pool uuid is a name-based UUID that can start with a digit, which a Proxmox storage id cannot (a
+uuid that happens to start with a letter was accepted as it is in S1; the `cs-` form is checked in S1b). One function computes
+it, so the same entry is found again after a restart.
+
+**Mount point.** KVM mounts a pool at `/mnt/<pool uuid>`; the Proxmox entry is given the same mount point through its `path`
+option (S8 checks that Proxmox accepts it). Without it Proxmox would use `/mnt/pve/<id>`.
 
 **NFS parameters** come from the pool: host address and path from `StorageFilerTO` (`getHost()`, `getPath()`), and the mount
 options from the pool details (`nfsmountopts`, passed through unchanged, for example `vers=3`). Proxmox negotiates the NFS
 version when none is given.
 
-**Content type** is `images` only for now, so Proxmox will not offer the share for ISOs, backups or containers. Templates may
-need another type in Phase 3 (S6).
+**Content type** is `images` only (decision), which is what VM disks need, so Proxmox will not offer the share for ISOs, backups or
+containers. Proxmox accepts `import` as a content type on an NFS entry (S6), which may be added in Phase 3 for templates.
 
 **Nodes.** No node restriction, because one CloudStack cluster is one Proxmox cluster.
 
@@ -69,7 +75,7 @@ check S2). The permission set in requirements.md grows with this phase.
 
 | Where | Change | Why |
 |---|---|---|
-| `StoragePoolMonitor.processConnect` | add `Proxmox` to the hypervisor list | without it a host that reconnects (or the whole cluster after a management server restart) does not get its pools re-checked |
+| `StoragePoolMonitor.processConnect` (done, with a unit test that fails without it) | add `Proxmox` to the hypervisor list | without it a host that reconnects (or the whole cluster after a management server restart) does not get its pools re-checked |
 | nothing else for cluster-scope NFS | | the pool lifecycle, `createStoragePool` and `connectHostsToPool` have no other hypervisor conditions for NFS; the UI needs no change for a cluster-scope pool |
 
 Known core limits that do **not** block Phase 2 but matter later (listed in upstream-notes.md when confirmed):
@@ -95,33 +101,68 @@ Known core limits that do **not** block Phase 2 but matter later (listed in upst
 Unit tests with the mocked API client: create (new, same, conflicting entry), per-node status answer with capacity and
 `localPath`, a node whose storage is inactive, delete (present and absent), stats. Lab checks are in section 9.
 
-## 7. Looking ahead: volumes (Phase 3 design to be written after the checks below)
+## 7. Looking ahead: volumes (Phase 3 design to be written)
 
-A Proxmox disk image is a file `images/<vmid>/<name>` and belongs to one VM id, so a volume cannot exist without one. The
-direction, to be confirmed:
-- The **root volume** is created when CloudStack copies the template to the pool, before the VM is started. The resource takes
-  `GET /cluster/nextid`, creates the disk under that id, and stores the Proxmox volume id (`<storage>:<vmid>/<file>`) as the
-  CloudStack volume path. When the VM is started it is created with **the same vmid**.
-- **Data volumes** are created when they are attached to a VM, so the owner is known; an unattached volume is only a CloudStack
-  record until then (S7 checks the alternatives).
-- **Templates** are on the secondary NFS store, not on Proxmox. Importing the qcow2 into the primary pool (`import-from`, or
-  `download-url` with the `import` content type) needs checking on this Proxmox version (S6).
+**S7 found that Proxmox will not create a disk image for a VM id that has no VM.** So a CloudStack volume cannot exist on the
+primary storage before a VM does, and the earlier idea of creating the root disk before the VM has to change. The direction,
+to be confirmed in the Phase 3 design:
+- When CloudStack copies a template to the pool to create the **root volume** (before it starts the VM), the resource takes
+  `GET /cluster/nextid` and creates a **VM shell** with that id and the CloudStack instance name (no CPU, memory or network yet),
+  then creates the disk under it. The Proxmox volume id (`<storage>:<vmid>/<file>`) is stored as the CloudStack volume path.
+  `StartCommand` then finishes configuring that same VM instead of creating a new one.
+- **Data volumes** cannot exist before they have a VM either, so they are created when attached; until then a data volume is
+  only a CloudStack record (to be checked against how CloudStack expects `CreateObjectCommand` to behave).
+- **Templates** are on the secondary NFS store, not on Proxmox. Proxmox accepts the `import` content type on an NFS entry (S6);
+  how a qcow2 gets from the secondary store into a VM disk (`import-from`, or `download-url`) is still to be checked.
+- The VM shell appears in the node's VM list while CloudStack still thinks the VM is starting; the power state report must
+  not confuse it (to be checked in Phase 3).
 
-## 8. Checks to run on the lab before building (spikes)
+## 8. Checks on the lab (spikes) and their results
 
-Run on a Proxmox node unless said otherwise. Use a scratch NFS export; remove everything afterwards.
-
-| # | Question | How |
+| # | Question | Result (2026-10-12) |
 |---|---|---|
-| S1 | What does Proxmox accept as a storage id (first character, length)? | `pvesm add nfs cs-0123456789abcdef0123456789abcdef --server <nfs-ip> --export <export> --content images`; then try a 40-character id and an id starting with a digit; `pvesm remove` each |
-| S2 | Which privileges does the API need to create and remove storage? | with a privilege-separated token, try `POST /storage` and `DELETE /storage/<id>` after granting `PVEAuditor` plus `Datastore.Allocate` on `/storage` (and without) |
-| S3 | Do mount options pass through? | add the entry with `--options vers=3` and look at the `mount` output on each node |
-| S4 | Fields of the status call | `pvesh get /nodes/<node>/storage/<id>/status`: `total`, `used`, `avail`, `active`, `enabled` |
-| S5 | Behaviour of creating an entry that exists, with the same and with different parameters | repeat `pvesm add`, and `POST /storage` with a different `export` |
-| S6 | Content types for importing templates | `pvesm status`, and whether `--content import` is accepted for an NFS entry on 8.4 |
-| S7 | Can an image be created for a VM id that has no VM, and handed to a VM later? | `pvesm alloc <id> 9100 vm-9100-disk-0.qcow2 1G --format qcow2` for a non-existent VM, then check how it can be attached to another VM |
+| S1 | Does Proxmox accept a pool uuid as a storage id? | **Yes** for a uuid that starts with a letter (`pvesm add nfs aa577022-b02f-4473-a971-da91d3a82b07 ...`). A uuid starting with a digit and the 39-character `cs-<uuid>` form were not tried: **S1b below.** |
+| S2 | Which privileges does the API need to create and remove storage? | **Open.** How to grant them is explained below. |
+| S3 | Do mount options pass through? | **Yes**, `--options` works. |
+| S4 | Fields of the status call | **Confirmed:** `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`; the figures match the NFS server. |
+| S5 | What does creating an entry that already exists do through the API? | **Open** (needs an API call; see below). |
+| S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
+| S7 | Can a disk image be created for a VM id that has no VM? | **No.** This changes the volume design (section 7). |
+| S1b | Is the 39-character `cs-<uuid>` id, and an id after a digit-leading uuid, accepted? | pending |
+| S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | pending |
 
-I will write the answers into this document.
+### Commands for the open checks
+
+S1b and S8 (as root on a node, with a scratch NFS export; remove the entries afterwards):
+
+```bash
+pvesm add nfs cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf --server <nfs-ip> --export <export> --content images --path /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
+pvesm status
+findmnt /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
+pvesm remove cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf
+```
+
+S5, through the API with the unrestricted `root@pam!cloudstack` token (set `T` with `read -rs`, and `H` to a node address):
+
+```bash
+curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=cs-spike -d type=nfs -d server=<nfs-ip> -d export=<export> -d content=images | jq
+# the same call again, then once more with a different export:
+curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=cs-spike -d type=nfs -d server=<nfs-ip> -d export=/other -d content=images | jq
+curl -ks -X DELETE -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage/cs-spike | jq
+```
+
+S2: a privilege such as `Datastore.Allocate` is not assigned on its own; it is part of a **role**, and a role is granted to a user or
+token on a **path**. The built-in role `PVEDatastoreAdmin` contains the datastore privileges. In the web UI: Datacenter ->
+Permissions -> Add -> API Token Permission, Path `/storage`, the token, Role `PVEDatastoreAdmin`. From the shell:
+
+```bash
+pveum acl modify /storage --tokens 'pveaudit@pam!cloudstack' --roles PVEDatastoreAdmin
+pveum role list        # shows the privileges of each role
+```
+
+then repeat the `POST /storage` and `DELETE` calls above with the **`pveaudit` token**: expect 403 before the role is granted and
+success after (grant the role to the user as well if the token still gets 403). Remove the permission afterwards if the token
+should stay read-only.
 
 ## 9. Lab test plan for Phase 2
 
@@ -132,11 +173,14 @@ I will write the answers into this document.
 5. Remove the pool: the Proxmox entry disappears.
 6. Capacity shown in CloudStack follows the NFS server's usage.
 
-## 10. Decisions for the reviewer
+## 10. Decisions
 
-1. Storage id scheme `cs-<uuid without dashes>` (final form after S1).
-2. Cluster-scope pools only for now.
-3. `content=images` only.
-4. Volumes and templates move to Phase 3, with the VM.
-5. The one core change (`StoragePoolMonitor` list).
-6. Which NFS server and export to use for the lab primary storage (it must allow all three Proxmox nodes).
+| # | Decision |
+|---|---|
+| 1 | Storage id `cs-<uuid>` with the hyphens kept (final form after S1b) |
+| 2 | Cluster-scope pools only |
+| 3 | `content=images` |
+| 4 | Volumes and templates in Phase 3, with the VM |
+| 5 | The `StoragePoolMonitor` core change |
+| 6 | No lab-specific storage details are needed: the pool is added from CloudStack and CloudStack configures it on the Proxmox nodes; the mount point is `/mnt/<uuid>` as on KVM |
+

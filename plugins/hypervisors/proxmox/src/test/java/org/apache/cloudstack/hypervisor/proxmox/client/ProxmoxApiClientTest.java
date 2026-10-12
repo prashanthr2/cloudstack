@@ -75,4 +75,40 @@ public class ProxmoxApiClientTest {
         String version = ProxmoxApiClient.shortVersion("pve-manager/" + "9".repeat(60) + "/abc");
         assertEquals(32, version.length());
     }
+
+    @Test
+    public void storageEntriesAreParsedWithTheirMountPointAndOptions() throws Exception {
+        JsonNode data = new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"data\":[{\"storage\":\"local\",\"type\":\"dir\",\"path\":\"/var/lib/vz\","
+                + "\"content\":\"iso,images\"},{\"storage\":\"cs-1\",\"type\":\"nfs\",\"server\":\"10.0.32.4\",\"export\":\"/acs/p\","
+                + "\"path\":\"/mnt/1\",\"content\":\"images\",\"options\":\"vers=3\"}]}").get("data");
+
+        java.util.List<ProxmoxApiClient.StorageConfig> storages = ProxmoxApiClient.parseStorages(data);
+
+        assertEquals(2, storages.size());
+        assertEquals("nfs", storages.get(1).getType());
+        assertEquals("10.0.32.4", storages.get(1).getServer());
+        assertEquals("/acs/p", storages.get(1).getExport());
+        assertEquals("/mnt/1", storages.get(1).getPath());
+        assertEquals("vers=3", storages.get(1).getOptions());
+        assertNull(storages.get(0).getServer());
+    }
+
+    @Test
+    public void storageStatusIsParsedFromTheNodesAnswer() throws Exception {
+        JsonNode data = new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"data\":{\"active\":1,\"enabled\":1,\"shared\":1,\"type\":\"nfs\","
+                + "\"total\":4293893554176,\"used\":3483397783552,\"avail\":810495770624}}").get("data");
+
+        ProxmoxApiClient.StorageStatus status = ProxmoxApiClient.parseStorageStatus(data);
+
+        assertTrue(status.isActive());
+        assertEquals(4293893554176L, status.getTotalBytes());
+        assertEquals(3483397783552L, status.getUsedBytes());
+        assertEquals(810495770624L, status.getAvailableBytes());
+    }
+
+    @Test
+    public void aStorageThatIsNotMountedOnTheNodeIsNotActive() throws Exception {
+        JsonNode data = new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"data\":{\"active\":0,\"enabled\":1}}").get("data");
+        assertTrue(!ProxmoxApiClient.parseStorageStatus(data).isActive());
+    }
 }

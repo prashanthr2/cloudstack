@@ -116,3 +116,28 @@ Every planned check has passed on the lab: registration, discovery, capacity and
 failover between node addresses, TLS setting, host name forms, cluster identity, adding again, minimal token permissions, and
 the token update. Known limits are in behaviour.md ("Known gaps") and upstream-notes.md.
 
+## Phase 2 (NFS primary storage): spikes and status (2026-10-12)
+
+Spike results on the lab (details in design-phase2-storage.md, section 8):
+
+| # | Result |
+|---|---|
+| S1 | A pool uuid starting with a letter is accepted as a storage id; the `cs-<uuid>` form and a digit-leading uuid are still to be checked (S1b) |
+| S3 | `--options` passes through to the mount |
+| S4 | the status call returns `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`, matching the NFS server |
+| S6 | `import` is accepted as a content type on an NFS entry |
+| S7 | a disk image cannot be created for a VM id that has no VM: the volume design needs a VM shell (design section 7) |
+| S2, S5, S1b, S8 | pending (commands in the design document) |
+
+Implementation status: the storage handlers, the API client calls and the `StoragePoolMonitor` change are written and unit tested
+(plugin: 64 tests; `StoragePoolMonitorTest` has a test that fails without the core change). **Not yet run on the lab.** Lab checks:
+
+| # | Check | Expected |
+|---|---|---|
+| p1 | add a cluster-scope NFS pool from CloudStack | pool `Up` with capacity; `cs-<uuid>` visible on all three nodes in Proxmox, mounted at `/mnt/<uuid>` |
+| p2 | restart the management server | the pool stays attached; hosts keep their storage |
+| p3 | power a node off and on | the node reconnects and its storage is checked again |
+| p4 | add a pool with a wrong server or an export the nodes may not use | a clear message with the Proxmox reason, no half-created pool |
+| p5 | remove the pool | the Proxmox entry is gone |
+| p6 | compare the capacity with the NFS server | it matches |
+

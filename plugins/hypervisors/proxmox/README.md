@@ -4,7 +4,8 @@ Native Proxmox VE support for CloudStack, as a hypervisor type of its own (`Prox
 extensions framework.
 
 **Status:** prototype, work in progress. Phase 1 (registration, discovery, host lifecycle, failure detection) is done
-and tested in a lab. VM lifecycle, storage, networking, migration and HA are not implemented yet.
+and tested in a lab. Phase 2 (NFS primary storage pools) is implemented and unit tested, lab checks pending. VM lifecycle,
+volumes, networking, migration and HA are not implemented yet.
 See [docs/requirements.md](docs/requirements.md) for what has to be in place (ports, TLS, API token),
 [docs/behaviour.md](docs/behaviour.md) for every behaviour and the reasoning behind it, and
 [docs/test-log.md](docs/test-log.md) for what was tested and the bugs the tests found, ,

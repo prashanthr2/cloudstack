@@ -117,7 +117,8 @@ public class StoragePoolMonitor implements Listener {
         if (scCmd.getHypervisorType() == HypervisorType.XenServer || scCmd.getHypervisorType() ==  HypervisorType.KVM ||
                 scCmd.getHypervisorType() == HypervisorType.VMware || scCmd.getHypervisorType() ==  HypervisorType.Simulator ||
                 scCmd.getHypervisorType() == HypervisorType.Ovm || scCmd.getHypervisorType() == HypervisorType.Hyperv ||
-                scCmd.getHypervisorType() == HypervisorType.LXC || scCmd.getHypervisorType() == HypervisorType.Ovm3) {
+                scCmd.getHypervisorType() == HypervisorType.LXC || scCmd.getHypervisorType() == HypervisorType.Ovm3 ||
+                scCmd.getHypervisorType() == HypervisorType.Proxmox) {
             String sags[] = _storageManager.getStorageAccessGroups(null, null, null, host.getId());
 
             List<StoragePoolVO> pools = new ArrayList<>();

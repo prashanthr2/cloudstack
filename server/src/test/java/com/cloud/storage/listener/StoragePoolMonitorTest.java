@@ -94,4 +94,20 @@ public class StoragePoolMonitorTest {
 
         storagePoolMonitor.processConnect(host, cmd, false);
     }
+
+    @Test
+    public void testProcessConnectConnectsAProxmoxHostToTheClusterPools() throws Exception {
+        HostVO hostMock = Mockito.mock(HostVO.class);
+        StartupRoutingCommand startupRoutingCommand = Mockito.mock(StartupRoutingCommand.class);
+        Mockito.when(hostMock.getDataCenterId()).thenReturn(1L);
+        Mockito.when(hostMock.getPodId()).thenReturn(1L);
+        Mockito.when(hostMock.getClusterId()).thenReturn(1L);
+        Mockito.when(startupRoutingCommand.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
+        Mockito.when(poolDao.findStoragePoolsByEmptyStorageAccessGroups(1L, 1L, 1L, ScopeType.CLUSTER, null)).thenReturn(Collections.singletonList(pool));
+        Mockito.doReturn(true).when(storageManager).connectHostToSharedPool(hostMock, 123L);
+
+        storagePoolMonitor.processConnect(hostMock, startupRoutingCommand, false);
+
+        Mockito.verify(storageManager, Mockito.times(1)).connectHostToSharedPool(Mockito.eq(hostMock), Mockito.eq(pool.getId()));
+    }
 }

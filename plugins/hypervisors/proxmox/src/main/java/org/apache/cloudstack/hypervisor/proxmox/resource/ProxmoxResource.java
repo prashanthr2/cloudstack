@@ -24,6 +24,7 @@ import java.util.Map;
 
 import javax.naming.ConfigurationException;
 
+import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
@@ -38,12 +39,18 @@ import com.cloud.agent.api.CheckHealthCommand;
 import com.cloud.agent.api.CheckNetworkAnswer;
 import com.cloud.agent.api.CheckNetworkCommand;
 import com.cloud.agent.api.Command;
+import com.cloud.agent.api.CreateStoragePoolCommand;
+import com.cloud.agent.api.DeleteStoragePoolCommand;
 import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
+import com.cloud.agent.api.GetStorageStatsAnswer;
+import com.cloud.agent.api.GetStorageStatsCommand;
 import com.cloud.agent.api.HostStatsEntry;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.MaintainAnswer;
 import com.cloud.agent.api.MaintainCommand;
+import com.cloud.agent.api.ModifyStoragePoolAnswer;
+import com.cloud.agent.api.ModifyStoragePoolCommand;
 import com.cloud.agent.api.PingCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
@@ -51,11 +58,14 @@ import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
+import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
+import com.cloud.agent.api.to.StorageFilerTO;
 import com.cloud.host.Host;
 import com.cloud.hypervisor.Hypervisor;
 import com.cloud.network.Networks;
 import com.cloud.resource.ServerResource;
+import com.cloud.storage.Storage;
 import com.cloud.vm.VirtualMachine;
 
 /**
@@ -68,6 +78,10 @@ public class ProxmoxResource implements ServerResource {
     public static final String DETAIL_ENDPOINT = "endpoint";
     public static final String DETAIL_ENDPOINTS = "endpoints";
     protected static final String CAPABILITIES = "hvm";
+    /** A new storage entry is mounted by the node a moment after it is added, so its status is polled for a while. */
+    protected static final int STORAGE_ACTIVATION_ATTEMPTS = 15;
+    protected static final long STORAGE_ACTIVATION_WAIT_MS = 2000;
+    protected static final String STORAGE_CONTENT = "images";
 
     protected Logger logger = LogManager.getLogger(getClass());
 
@@ -204,6 +218,16 @@ public class ProxmoxResource implements ServerResource {
                 return execute((GetHostStatsCommand) cmd);
             } else if (cmd instanceof UpdateHostPasswordCommand) {
                 return execute((UpdateHostPasswordCommand) cmd);
+            } else if (cmd instanceof CreateStoragePoolCommand) {
+                // As on KVM nothing is done here: the storage entry is created, with the pool's mount options, when the
+                // pool is connected to a host (ModifyStoragePoolCommand), which follows for every host.
+                return new Answer(cmd, true, "The Proxmox storage entry is created when the pool is connected to the hosts");
+            } else if (cmd instanceof ModifyStoragePoolCommand) {
+                return execute((ModifyStoragePoolCommand) cmd);
+            } else if (cmd instanceof DeleteStoragePoolCommand) {
+                return execute((DeleteStoragePoolCommand) cmd);
+            } else if (cmd instanceof GetStorageStatsCommand) {
+                return execute((GetStorageStatsCommand) cmd);
             }
             return Answer.createUnsupportedCommandAnswer(cmd);
         } catch (ProxmoxApiException e) {
@@ -257,6 +281,129 @@ public class ProxmoxResource implements ServerResource {
         client = candidate;
         logger.info("Proxmox node {} now uses the updated API token", node);
         return new Answer(cmd, true, "The connection to Proxmox node " + node + " uses the new API token");
+    }
+
+    /**
+     * Connects this node to an NFS primary storage pool. The storage entry is cluster-wide, so the first call (from whichever host
+     * CloudStack asks first) creates it and the others find it; each call then waits until this node has it mounted and reports
+     * the capacity.
+     */
+    private Answer execute(ModifyStoragePoolCommand cmd) {
+        StorageFilerTO pool = cmd.getPool();
+        if (pool.getType() != Storage.StoragePoolType.NetworkFilesystem) {
+            return new ModifyStoragePoolAnswer(cmd, false, "Only NFS primary storage is supported for Proxmox, not " + pool.getType());
+        }
+        if (!cmd.getAdd()) {
+            // The entry belongs to the whole Proxmox cluster and is removed by DeleteStoragePoolCommand.
+            return new ModifyStoragePoolAnswer(cmd, true, "The Proxmox storage entry is cluster-wide and is left in place");
+        }
+        String id = ProxmoxStorageNames.storageId(pool.getUuid());
+        String mountPath = ProxmoxStorageNames.mountPath(pool.getUuid());
+        String options = cmd.getDetails() == null ? null : cmd.getDetails().get(ApiConstants.NFS_MOUNT_OPTIONS);
+        try {
+            String conflict = ensureStorage(id, pool.getHost(), pool.getPath(), mountPath, options);
+            if (conflict != null) {
+                return new ModifyStoragePoolAnswer(cmd, false, conflict);
+            }
+            ProxmoxApiClient.StorageStatus status = waitForStorage(id);
+            if (status == null) {
+                return new ModifyStoragePoolAnswer(cmd, false, String.format("Proxmox node %s did not mount %s:%s as storage %s within %d seconds; "
+                        + "check that the NFS server exports it to this node", node, pool.getHost(), pool.getPath(), id,
+                        STORAGE_ACTIVATION_ATTEMPTS * STORAGE_ACTIVATION_WAIT_MS / 1000));
+            }
+            ModifyStoragePoolAnswer answer = new ModifyStoragePoolAnswer(cmd, status.getTotalBytes(), status.getAvailableBytes(), new HashMap<>());
+            answer.setPoolInfo(new StoragePoolInfo(pool.getUuid(), pool.getHost(), pool.getPath(), mountPath, pool.getType(),
+                    status.getTotalBytes(), status.getAvailableBytes()));
+            return answer;
+        } catch (ProxmoxApiException e) {
+            logger.error("Unable to connect storage {} on Proxmox node {}: {}", id, node, e.getMessage());
+            return new ModifyStoragePoolAnswer(cmd, false, e.getMessage());
+        }
+    }
+
+    /**
+     * Makes sure the cluster has the storage entry for a pool.
+     *
+     * @return null when the entry exists with the expected server and export, otherwise the reason it cannot be used
+     */
+    private String ensureStorage(String id, String server, String export, String mountPath, String options) {
+        ProxmoxApiClient.StorageConfig existing = client.findStorage(id);
+        if (existing == null) {
+            try {
+                client.createNfsStorage(id, server, export, mountPath, STORAGE_CONTENT, options);
+                logger.info("Created Proxmox storage {} for {}:{}", id, server, export);
+                return null;
+            } catch (ProxmoxApiException e) {
+                // another host's command may have created it a moment ago
+                existing = client.findStorage(id);
+                if (existing == null) {
+                    throw e;
+                }
+            }
+        }
+        return describeConflict(existing, id, server, export);
+    }
+
+    static String describeConflict(ProxmoxApiClient.StorageConfig existing, String id, String server, String export) {
+        if (!"nfs".equals(existing.getType()) || !StringUtils.equals(existing.getServer(), server)
+                || !StringUtils.equals(StringUtils.removeEnd(existing.getExport(), "/"), StringUtils.removeEnd(export, "/"))) {
+            return String.format("Proxmox already has a storage entry %s for %s:%s (type %s); it does not match %s:%s", id, existing.getServer(),
+                    existing.getExport(), existing.getType(), server, export);
+        }
+        return null;
+    }
+
+    /** Waits until this node reports the storage active; returns its status, or null if it never became active. */
+    private ProxmoxApiClient.StorageStatus waitForStorage(String id) {
+        ProxmoxApiClient.StorageStatus status = null;
+        for (int attempt = 0; attempt < STORAGE_ACTIVATION_ATTEMPTS; attempt++) {
+            try {
+                status = client.getStorageStatus(node, id);
+                if (status.isActive()) {
+                    return status;
+                }
+            } catch (ProxmoxApiException e) {
+                logger.debug("Storage {} is not ready on node {} yet: {}", id, node, e.getMessage());
+            }
+            pause(STORAGE_ACTIVATION_WAIT_MS);
+        }
+        return null;
+    }
+
+    protected void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Removes a pool's storage entry from the Proxmox cluster. Safe to repeat: CloudStack sends it to several hosts. */
+    private Answer execute(DeleteStoragePoolCommand cmd) {
+        String id = ProxmoxStorageNames.storageId(cmd.getPool().getUuid());
+        try {
+            if (client.findStorage(id) == null) {
+                return new Answer(cmd, true, "Proxmox storage " + id + " is already gone");
+            }
+            client.deleteStorage(id);
+            logger.info("Removed Proxmox storage {}", id);
+            return new Answer(cmd, true, "Removed Proxmox storage " + id);
+        } catch (ProxmoxApiException e) {
+            logger.error("Unable to remove storage {}: {}", id, e.getMessage());
+            return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    private Answer execute(GetStorageStatsCommand cmd) {
+        if (cmd.getStorageId() == null || cmd.getStore() != null) {
+            return Answer.createUnsupportedCommandAnswer(cmd);
+        }
+        try {
+            ProxmoxApiClient.StorageStatus status = client.getStorageStatus(node, ProxmoxStorageNames.storageId(cmd.getStorageId()));
+            return new GetStorageStatsAnswer(cmd, status.getTotalBytes(), status.getUsedBytes());
+        } catch (ProxmoxApiException e) {
+            return new GetStorageStatsAnswer(cmd, e.getMessage());
+        }
     }
 
     /** The reason a token was refused, in words an operator can act on. It never contains the token. */

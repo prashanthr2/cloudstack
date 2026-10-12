@@ -404,6 +404,155 @@ public class ProxmoxApiClient implements Closeable {
         return vms;
     }
 
+    /** A storage entry as configured for the cluster (GET /storage). Fields not set on the entry are null. */
+    public static class StorageConfig {
+        private final String id;
+        private final String type;
+        private final String server;
+        private final String export;
+        private final String path;
+        private final String content;
+        private final String options;
+
+        public StorageConfig(String id, String type, String server, String export, String path, String content, String options) {
+            this.id = id;
+            this.type = type;
+            this.server = server;
+            this.export = export;
+            this.path = path;
+            this.content = content;
+            this.options = options;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public String getServer() {
+            return server;
+        }
+
+        public String getExport() {
+            return export;
+        }
+
+        /** The local mount point on the nodes. */
+        public String getPath() {
+            return path;
+        }
+
+        public String getContent() {
+            return content;
+        }
+
+        public String getOptions() {
+            return options;
+        }
+    }
+
+    /** All storage entries of the cluster. */
+    public List<StorageConfig> listStorages() {
+        return parseStorages(get("/storage"));
+    }
+
+    static List<StorageConfig> parseStorages(JsonNode data) {
+        List<StorageConfig> storages = new ArrayList<>();
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                storages.add(new StorageConfig(entry.path("storage").asText(null), entry.path("type").asText(null),
+                        entry.path("server").asText(null), entry.path("export").asText(null), entry.path("path").asText(null),
+                        entry.path("content").asText(null), entry.path("options").asText(null)));
+            }
+        }
+        return storages;
+    }
+
+    /** The entry with the given id, or null when there is none. */
+    public StorageConfig findStorage(String id) {
+        for (StorageConfig storage : listStorages()) {
+            if (id.equals(storage.getId())) {
+                return storage;
+            }
+        }
+        return null;
+    }
+
+    /** Adds an NFS storage entry for the whole cluster; every node mounts the share at {@code mountPath}. */
+    public void createNfsStorage(String id, String server, String export, String mountPath, String content, String options) {
+        Map<String, String> form = new java.util.LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "nfs");
+        form.put("server", server);
+        form.put("export", export);
+        form.put("content", content);
+        if (StringUtils.isNotBlank(mountPath)) {
+            form.put("path", mountPath);
+        }
+        if (StringUtils.isNotBlank(options)) {
+            form.put("options", options);
+        }
+        post("/storage", form);
+    }
+
+    /** Removes a storage entry from the cluster configuration (the share itself is not touched). */
+    public void deleteStorage(String id) {
+        delete("/storage/" + id);
+    }
+
+    /** State and capacity of a storage entry on one node. */
+    public static class StorageStatus {
+        private final boolean active;
+        private final boolean enabled;
+        private final long totalBytes;
+        private final long usedBytes;
+        private final long availableBytes;
+
+        public StorageStatus(boolean active, boolean enabled, long totalBytes, long usedBytes, long availableBytes) {
+            this.active = active;
+            this.enabled = enabled;
+            this.totalBytes = totalBytes;
+            this.usedBytes = usedBytes;
+            this.availableBytes = availableBytes;
+        }
+
+        /** True when the node has the storage mounted and usable. */
+        public boolean isActive() {
+            return active;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public long getTotalBytes() {
+            return totalBytes;
+        }
+
+        public long getUsedBytes() {
+            return usedBytes;
+        }
+
+        public long getAvailableBytes() {
+            return availableBytes;
+        }
+    }
+
+    public StorageStatus getStorageStatus(String node, String id) {
+        return parseStorageStatus(get("/nodes/" + node + "/storage/" + id + "/status"));
+    }
+
+    static StorageStatus parseStorageStatus(JsonNode data) {
+        if (data == null || data.isNull() || data.isMissingNode()) {
+            throw new ProxmoxApiException("No storage status returned");
+        }
+        return new StorageStatus(data.path("active").asInt(0) == 1, data.path("enabled").asInt(1) == 1, data.path("total").asLong(0),
+                data.path("used").asLong(0), data.path("avail").asLong(0));
+    }
+
     @Override
     public void close() {
         try {
