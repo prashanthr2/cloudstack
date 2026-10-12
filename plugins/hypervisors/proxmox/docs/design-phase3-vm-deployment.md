@@ -37,7 +37,7 @@ the host the VM will run on. So the root volume is created on one node and the V
 
 | Topic | Fact |
 |---|---|
-| Getting a qcow2 onto a node | Only through the API: **`POST /nodes/{node}/storage/{storage}/download-url`** (an HTTP(S) URL; content `import`; the file lands directly in the storage's `import/` directory; needs `Datastore.AllocateTemplate` on the storage and `Sys.Audit`/`Sys.Modify` on `/` or `Sys.AccessNetwork` on the node) or an upload. Files must end in `.qcow2`, `.raw`, `.vmdk`, `.ova`. **Listing is not recursive.** |
+| Getting a qcow2 onto a node | A read-only `nfs` entry on the secondary export with `content-dirs import=<folder>` (S9-6); otherwise only through the API: **`POST /nodes/{node}/storage/{storage}/download-url`** (an HTTP(S) URL; content `import`; the file lands directly in the storage's `import/` directory; needs `Datastore.AllocateTemplate` on the storage and `Sys.Audit`/`Sys.Modify` on `/` or `Sys.AccessNetwork` on the node) or an upload (not used). Files must end in `.qcow2`, `.raw`, `.vmdk`, `.ova`. **Listing is not recursive and a volume name cannot contain a folder (S9-5).** |
 | Import into a VM disk | `scsi0=<storage>:0,import-from=<storage>:import/<file>.qcow2,format=qcow2` in a VM **create** or **config update**. The size is taken from the source. The source must be an `import` (or `images`) volume of a storage; **an absolute path is for `root@pam` only, and an API token never counts as `root@pam`**. The source is checked as untrusted (no backing file, no data file). |
 | Disk before its VM | A disk can be allocated for a VM id that has no VM, and a VM created later accepts it (lab, S7). But the only API that **fills** a disk from an image is the VM-level `import-from`. The storage-level copy API is experimental and documented as failing. |
 | Clone | `POST .../qemu/{vmid}/clone` (full copy, or linked clone from a *template* VM on qcow2/NFS). Creates the new VM together with its disks. |
@@ -53,30 +53,36 @@ Not in the mirrors, so only known from experience and **to verify**: the task st
 
 ## 4. The design
 
-### 4.1 Template on primary: let the node download it
+### 4.1 Template on primary: a read-only entry per template
 
-The management server cannot mount the secondary store, and the only API route onto a node is a download or an upload. So the
-`CopyCommand` for a template is answered by asking **Proxmox to download the template itself**:
+The management server cannot mount the secondary store, and a token cannot import from an absolute path. What does work (spikes S9-2, S9-6)
+is a Proxmox **`nfs` storage entry on the secondary export, limited to one template's folder**:
 
-1. Make sure the pool's storage entry has the content types `images,import` (Phase 2 created it with `images` only; the entry is
-   updated with `PUT /storage/{id}` when needed; it is idempotent).
-2. `POST /nodes/{node}/storage/<cs-uuid>/download-url` with `content=import`, `url` = the template's **original URL**
-   (`TemplateObjectTO.origUrl`), `filename=<template uuid>.qcow2`, the checksum and algorithm when CloudStack has them, and
-   `verify-certificates` as configured. Wait for the task to finish (section 4.7).
-3. Answer `CopyCmdAnswer(TemplateObjectTO{path = "import/<template uuid>.qcow2", size = source size, physicalSize, format = QCOW2})`.
-   Running it again for a template that is already there only checks the file and answers.
+1. The `CopyCommand` carries the secondary store (`NfsTO`: server, export, NFS version) and the template's path
+   (`template/tmpl/<account id>/<template id>/<uuid>.qcow2`). The plugin creates, if it does not exist yet, the entry
+   `cst-<template uuid>` (the id must start with a letter): `type nfs`, `server`, `export`, `content=import`,
+   `content-dirs import=template/tmpl/<account id>/<template id>`, `options=vers=<n>,ro`. Proxmox mounts it on the nodes as needed.
+2. It reads the entry's listing (`GET /nodes/{node}/storage/cst-<uuid>/content?content=import`) to confirm the file is visible and to
+   get its size.
+3. Answer `CopyCmdAnswer(TemplateObjectTO{path = "cst-<uuid>:import/<uuid>.qcow2", size, format = QCOW2})`; nothing is copied yet.
+   Running it again just finds the entry.
+4. When CloudStack deletes the template from the pool (`DeleteCommand` for a template), the entry is removed.
 
-**Limits, stated plainly:** this works for templates **registered by URL that the Proxmox nodes can reach**. A template created from a
-volume or snapshot, or uploaded, has no usable `origUrl`; those need another route (the SSVM's extract URL, or the secondary store mounted
-by the nodes; to be designed later). For the prototype the templates are registered by URL from a web server in the lab.
+Why one entry per template: the entry can map `import` to **one** folder (`content-dirs`), and a volume name cannot contain a folder
+(S9-5: `unable to parse directory volume name`). The cost is one storage entry (and one NFS mount, which stays after the entry is removed,
+as in test p5) per template in use.
+
+**Limits:** NFS secondary stores only; the template must be on the secondary store (any registration method, uploaded or created from a
+volume or snapshot, works the same). Not yet proven: creating the entry with the token through the API, and the mount on every node
+(checks S9-7, S9-8).
 
 ### 4.2 Root volume: the VM is born with its disk
 
 Because the only way to fill a disk is the VM-level import, the **root volume copy creates the VM**:
 
 1. `vmid` = `GET /cluster/nextid`.
-2. `POST /nodes/{node}/qemu` with `vmid`, `name` = the instance name (`VolumeObjectTO.vmName`), a small `memory`, and
-   `scsi0=<cs-uuid>:0,import-from=<cs-uuid>:import/<template uuid>.qcow2,format=qcow2`. Wait for the task.
+2. `POST /nodes/{node}/qemu` (values URL-encoded) with `vmid`, `name` = the instance name (`VolumeObjectTO.vmName`), a small `memory`, and
+   `scsi0=<cs-uuid>:0,import-from=cst-<template uuid>:import/<template uuid>.qcow2,format=qcow2` (the template path from 4.1). Wait for the task.
 3. If the root disk is larger than the template's, `PUT .../resize disk=scsi0 size=<bytes>`.
 4. Answer `CopyCmdAnswer(VolumeObjectTO{path = "<vmid>/vm-<vmid>-disk-0.qcow2", size, format = QCOW2})`. The volume path therefore carries the
    vmid, which is how later commands find the VM; the disk is owned by that VM, so destroying the VM removes it.
@@ -140,12 +146,11 @@ limit is proposed (`proxmox.task.timeout`).
 `ProxmoxHypervisorGuru` sets `os` and `platformEmulator` (looked up in `guest_os_hypervisor` for `Proxmox`, with a built-in fallback from
 the OS name, so no large SQL is needed), and merges the service offering details into the VM details as `ExternalHypervisorGuru` does.
 
-### 4.9 Privileges the CloudStack token needs (to verify, P5)
+### 4.9 Privileges the CloudStack token needs (confirmed in S9-2, S9-3, S9-4, except where marked)
 
-`VM.Allocate`, `VM.Config.CPU`, `.Memory`, `.Disk`, `.Network`, `.Options`, `.HWType`, `VM.PowerMgmt`, `VM.Audit`, `VM.Migrate` (4.3),
-`Datastore.AllocateSpace`, `Datastore.AllocateTemplate`, `Datastore.Allocate` (storage entries, Phase 2), `Sys.Audit` on `/`, and `SDN.Use`
-for the bridge if the lab shows it is needed. In built-in roles: `PVEVMAdmin` + `PVEDatastoreAdmin` + `PVEAuditor` (+ `PVESDNUser`), for the
-token **and** its user.
+Roles for **both the user and the token**: `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, and **`PVESDNUser` on
+`/sdn/zones/localnetwork`** (a plain bridge needs `SDN.Use` on `/sdn/zones/localnetwork/<bridge>/<vlan tag>`). `VM.Migrate` is part of
+`PVEVMAdmin` (the offline move in 4.3 is still to verify). Every configuration value must be URL-encoded in the request.
 
 ## 5. Core changes needed (verified in code)
 
@@ -172,90 +177,27 @@ carries a fallback); `getHypervisorTypeFromFormat(QCOW2)` returns KVM (affects v
 
 ## 7. Risks and open questions
 
-- The node-side download requires the template URL to be reachable from the Proxmox nodes; other templates are unsupported in 3a.
+- One storage entry and one NFS mount per template in use; the number of templates is expected to be small. The entry grows the
+  cluster's `storage.cfg`; mounts stay behind when an entry is removed.
 - A large template imported per deploy is a full copy; first deploy time depends on the NFS server.
 - VM and disk exist on the node that received the volume command; the offline move at start is assumed to work on shared storage.
-- The privileges for a plain bridge are unknown (P5); if `SDN.Use` is needed it is granted on the `localnetwork` zone.
+- `SDN.Use` on `/sdn/zones/localnetwork` is required (S9-3) and must be part of the documented token setup.
 - Task polling and `nextid` come from Proxmox parts not in the mirrors (P0).
 
-## 8. Checks to run on the lab before building
+## 8. Checks
 
-Use the unrestricted `root@pam!cloudstack` token for P0 to P4 and the `pveaudit` token for P5. `<id>` is the storage entry of your pool
-(`pvesm status`), `<node>` and `<node2>` two Proxmox nodes, `<url>` a template qcow2 served over HTTP from a machine the nodes can reach
-(for example `python3 -m http.server 8000` in the folder with the file, on the management VM).
+Done (see test-log.md, "Phase 3 spikes"): S9-0 to S9-6, i.e. the import from secondary by token, the NIC on `vmbr1` with `SDN.Use`, start,
+stop, destroy, and the per-template `nfs` entry.
 
-**P0 and P1, download the template through the API** (also shows the task status format and the next id):
+Still to run before building:
 
-```bash
-pvesm set <id> --content images,import
-```
-
-```bash
-curl -ks -X POST -H "Authorization: PVEAPIToken=$TR" https://$H:8006/api2/json/nodes/<node>/storage/<id>/download-url -d content=import -d url=<url> -d filename=p1-test.qcow2 | jq
-```
-
-That returns a task id. Then, with the id (it contains `:`, so quote it):
-
-```bash
-curl -ks -H "Authorization: PVEAPIToken=$TR" "https://$H:8006/api2/json/nodes/<node>/tasks/<task-id>/status" | jq
-```
-
-Repeat the status call until it says stopped, and record the output. Then `pvesm list <id> --content import`, and:
-
-```bash
-curl -ks -H "Authorization: PVEAPIToken=$TR" https://$H:8006/api2/json/cluster/nextid | jq
-```
-
-Also try one **wrong URL** and record the task's final status (that text becomes the error shown to the administrator).
-
-**P2, create a VM with the imported disk, in one call:**
-
-```bash
-qm create 9200 --name p2-test --memory 512 --scsi0 <id>:0,import-from=<id>:import/p1-test.qcow2,format=qcow2
-```
-
-```bash
-qm config 9200
-```
-
-Note how long it took and the disk's size in `pvesm list <id>`.
-
-**P3, resize, NIC and start:**
-
-```bash
-qm resize 9200 scsi0 +1G
-```
-
-```bash
-qm set 9200 --net0 virtio=02:00:00:aa:bb:01,bridge=vmbr1,tag=100,firewall=0 --scsihw virtio-scsi-single --boot order=scsi0
-```
-
-```bash
-qm start 9200
-```
-
-```bash
-qm status 9200
-```
-
-**P4, stop and move a stopped VM to another node:**
-
-```bash
-qm stop 9200
-```
-
-```bash
-qm migrate 9200 <node2>
-```
-
-Record whether it works and how long it takes (the VM's disk is on the shared NFS entry). Clean up with `qm destroy 9200 --purge` on the node that now holds it, then
-`pvesm free <id>:import/p1-test.qcow2`.
-
-**P5, the same create with a non-root token.** Give the `pveaudit` user **and** token `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`
-(see section 8 of design-phase2-storage.md for the command pattern), then repeat P2 and P3's `net0` through the API with that token
-(`POST /nodes/<node>/qemu` with `vmid=9201 name=p5-test memory=512 scsi0=<id>:0,import-from=<id>:import/p1-test.qcow2,format=qcow2
-net0=virtio,bridge=vmbr1,tag=100` and `PUT .../config` with a `net0`). Record **every** permission error text; if the `net0` call is refused for the bridge, grant
-`PVESDNUser` on `/sdn/zones/localnetwork` (the zone Proxmox lists for local bridges) to user and token and retry.
+- **S9-7:** create the per-template `nfs` entry with the **token** through `POST /storage` (needs `Datastore.Allocate`; include
+  `content-dirs` and `options`), and remove it with `DELETE /storage/<id>`.
+- **S9-8:** with the entry created, check `findmnt` on a second node and create the VM with `POST /nodes/<second node>/qemu`, to confirm a
+  node that did not receive the command can import (the entry is cluster-wide).
+- **P4:** stop a VM and move it offline to another node (`POST .../qemu/<vmid>/migrate`), with its disk on the shared NFS pool.
+- **Timing:** how long a full import takes for the lab's template (put `time` in front of `qm create`).
+- `GET /cluster/nextid` (not in the mirrored source) and the task `log` call for the error text of a failed task.
 
 ## 9. Lab test plan for 3a
 
@@ -269,7 +211,7 @@ net0=virtio,bridge=vmbr1,tag=100` and `PUT .../config` with a `net0`). Record **
 
 ## 10. Decisions for the reviewer
 
-1. Template to primary by a node-side download of the template's original URL (4.1), with the stated limit.
+1. Template to primary by a read-only per-template `nfs` entry on the secondary store (4.1); the entry is removed when the template is deleted from the pool.
 2. The VM is created together with its root disk, at root-volume time (4.2), and moved offline to the deployment node when needed (4.3).
 3. Console, data volumes, resize, ISO and migration are outside 3a.
 4. Core changes: image format (2 places), template space, traffic label (DAO and 4 branches), `hypervisor_capabilities` row.

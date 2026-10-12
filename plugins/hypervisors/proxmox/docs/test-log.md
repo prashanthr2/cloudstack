@@ -184,6 +184,9 @@ Lab: Proxmox 8.4.21, secondary NFS mounted by hand at `/mnt/secstorage` on one n
 | S9-3 | `PUT .../config` with `net0=virtio=<mac>,bridge=vmbr1,tag=100,firewall=0` by token | Refused first: `Permission check failed (/sdn/zones/localnetwork/vmbr1/100, SDN.Use)`. **Pass** after `pveum acl modify /sdn/zones/localnetwork --users <user> --tokens <token> --roles PVESDNUser`. So a plain bridge needs `SDN.Use`, checked per bridge and VLAN tag |
 | S9-4 | start, stop, destroy (`?purge=1`) by token | **Pass.** Each returns a UPID (`UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<vmid>:<user>!<token>:`); `qm status` showed `running`; after destroy the VM configuration was gone |
 
+| S9-5 | one `dir` entry for the whole store with `content-dirs import=template` and a nested volume id `import/tmpl/1/4/<file>` | **Refused:** `unable to parse directory volume name`. The volume name must be a plain file name directly in the entry's `import` folder, so one entry per template folder is needed |
+| S9-6 | `nfs` entry `cst-test` (`--server`, `--export` = the secondary export, `--content import --content-dirs import=template/tmpl/1/4 --options vers=3,ro`), created as root; then the **token** creates a VM with `import-from=cst-test:import/<uuid>.qcow2` | **Pass.** The listing shows the template (`qcow2`, `import`, 1769537536 bytes); the VM was created; after `DELETE ...?purge=1` and `pvesm remove cst-test` the primary pool was empty (no disk left behind). Not yet tested: creating the entry by token through the API, and the mount on a second node |
+
 Notes:
 
 - A config value sent as `-d net0=virtio=...` without URL encoding gave `no sdn vnet ID specified`; the same value URL-encoded
