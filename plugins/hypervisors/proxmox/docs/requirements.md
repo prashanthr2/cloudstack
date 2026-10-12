@@ -103,9 +103,10 @@ When adding a host:
 ### Creating a token
 
 Run on a Proxmox node. A dedicated user with a token whose rights are limited with privilege separation is recommended.
-Grant the role to the token as well as to the user (the effective rights of a privilege-separated token cannot exceed
-those of its user). A token that had only the user's role got no access, and the setup with the role on both worked; whether
-the user's own entry is strictly required was not tested separately. The commands below are the Proxmox VE 8 syntax. The
+Grant the role to the token as well as to the user: for a privilege-separated token, Proxmox computes the owning user's permissions
+and **intersects** them with the token's (pve-access-control, `RPCEnvironment::permissions`; `root@pam` is the exception), so
+the token only gets what **both** have. A token that had only the user's role got no access, and the setup with the role on both
+worked. The commands below are the Proxmox VE 8 syntax. The
 lab used the `pam` realm (`pveaudit@pam!cloudstack`); `@pve`, Proxmox's own user database, is the usual choice for a
 service account because no matching operating system account is needed on every node. Tokens do not use a password, so
 either realm works.

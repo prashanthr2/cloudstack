@@ -162,38 +162,106 @@ What the source says:
 - built-in roles are generated from privilege groups: `PVEDatastoreAdmin` = `Datastore.Allocate`, `AllocateTemplate`,
   `AllocateSpace`, `Audit`; `PVEAuditor` = every `*.Audit` privilege.
 
-### Commands for the open checks
+### How to run the remaining checks
 
-S1b and S8 (as root on a node, with a scratch NFS export; remove the entries afterwards):
-
-```bash
-pvesm add nfs cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf --server <nfs-ip> --export <export> --content images --path /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
-pvesm status
-findmnt /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
-pvesm remove cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf
-```
-
-S5, through the API with the unrestricted `root@pam!cloudstack` token (set `T` with `read -rs`, and `H` to a node address):
+Variables used below (type secrets with `read -rs`, never paste them into chat; nothing here prints a secret):
 
 ```bash
-curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=spike-test -d type=nfs -d server=<nfs-ip> -d export=<export> -d content=images | jq
-# the same call again, then once more with a different export:
-curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=spike-test -d type=nfs -d server=<nfs-ip> -d export=/other -d content=images | jq
-curl -ks -X DELETE -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage/spike-test | jq
+H=10.0.35.25                                    # any Proxmox node
+EXPORT=/acs/primary/ref-trl-12294-k-Ma9-prashanth-reddy/primary   # a scratch export; not the one used by the live pool
+read -rs TR     # root token:  root@pam!cloudstack=<secret>
+read -rs TA     # audit token: pveaudit@pam!cloudstack=<secret>
 ```
 
-S2: a privilege such as `Datastore.Allocate` is not assigned on its own; it is part of a **role**, and a role is granted to a user or
-token on a **path**. The built-in role `PVEDatastoreAdmin` contains the datastore privileges. In the web UI: Datacenter ->
-Permissions -> Add -> API Token Permission, Path `/storage`, the token, Role `PVEDatastoreAdmin`. From the shell:
+Proxmox leaves a share mounted after its entry is removed, so each check ends with an `umount` (run on every node that shows the
+mount in `findmnt -t nfs,nfs4`).
+
+**S5: creating an id that already exists** (root token, so permissions do not interfere):
 
 ```bash
-pveum acl modify /storage --tokens 'pveaudit@pam!cloudstack' --roles PVEDatastoreAdmin
-pveum role list        # shows the privileges of each role
+curl -ks -i -X POST -H "Authorization: PVEAPIToken=$TR" https://$H:8006/api2/json/storage -d storage=spike-s5 -d type=nfs -d server=10.0.32.4 -d export=$EXPORT -d content=images | head -n 1
 ```
 
-then repeat the `POST /storage` and `DELETE` calls above with the **`pveaudit` token**: expect 403 before the role is granted and
-success after (grant the role to the user as well if the token still gets 403). Remove the permission afterwards if the token
-should stay read-only.
+Expect `HTTP/1.1 200 OK`. Run the **same** command again, then once more with `-d export=$EXPORT-other`: expect an error whose first
+line says `storage ID 'spike-s5' already defined`. Record the exact first lines. Clean up:
+
+```bash
+curl -ks -i -X DELETE -H "Authorization: PVEAPIToken=$TR" https://$H:8006/api2/json/storage/spike-s5 | head -n 1
+```
+
+then `umount /mnt/pve/spike-s5` on the nodes that have it.
+
+**S2: privileges for adding and removing storage** (the `pveaudit` user has `PVEAuditor` on `/`, and so does its token):
+
+1. Without the datastore role, create must be refused:
+
+   ```bash
+   curl -ks -i -X POST -H "Authorization: PVEAPIToken=$TA" https://$H:8006/api2/json/storage -d storage=spike-s2 -d type=nfs -d server=10.0.32.4 -d export=$EXPORT -d content=images | head -n 1
+   ```
+
+   Expect `403` and a message like `Permission check failed (/storage, Datastore.Allocate)`.
+
+2. Give the **token only** the datastore role, then repeat the call above:
+
+   ```bash
+   pveum acl modify /storage --tokens 'pveaudit@pam!cloudstack' --roles PVEDatastoreAdmin
+   ```
+
+   The Proxmox source says the token still gets nothing, because a token's rights are intersected with its owning user's. Expect `403` again.
+
+3. Give the **user** the role as well, then repeat the call once more:
+
+   ```bash
+   pveum acl modify /storage --users pveaudit@pam --roles PVEDatastoreAdmin
+   ```
+
+   Expect `200`. Then remove the entry with the same token (expect `200`):
+
+   ```bash
+   curl -ks -i -X DELETE -H "Authorization: PVEAPIToken=$TA" https://$H:8006/api2/json/storage/spike-s2 | head -n 1
+   ```
+
+4. Clean up the permissions you added, and the mount:
+
+   ```bash
+   pveum acl delete /storage --tokens 'pveaudit@pam!cloudstack' --roles PVEDatastoreAdmin
+   pveum acl delete /storage --users pveaudit@pam --roles PVEDatastoreAdmin
+   ```
+
+   then `umount /mnt/pve/spike-s2` where it is mounted.
+
+**S7: a disk before its VM** (as root on a node; the entry needs `images` among its content types):
+
+```bash
+pvesm add nfs spike-s7 --server 10.0.32.4 --export $EXPORT --content images
+pvesm alloc spike-s7 9100 vm-9100-disk-0.qcow2 1G --format qcow2
+pvesm list spike-s7
+```
+
+Record the **exact text** printed by each command, especially any error. If the disk was allocated, attach it to a VM created afterwards
+with the **same** id, which is how the root volume would be used:
+
+```bash
+qm create 9100 --name s7-test --memory 128 --scsi0 spike-s7:9100/vm-9100-disk-0.qcow2
+qm config 9100
+```
+
+Then a disk allocated under a **different** id, which is what an unattached data volume would be:
+
+```bash
+pvesm alloc spike-s7 9101 vm-9101-disk-0.qcow2 1G --format qcow2
+qm set 9100 --scsi1 spike-s7:9101/vm-9101-disk-0.qcow2
+```
+
+Record whether each works and the exact message if not. Clean up:
+
+```bash
+qm destroy 9100 --purge
+pvesm free spike-s7:9101/vm-9101-disk-0.qcow2
+pvesm remove spike-s7
+```
+
+then `umount /mnt/pve/spike-s7` where it is mounted.
 
 ## 9. Lab test plan for Phase 2
 
