@@ -9,7 +9,8 @@ volumes, networking, migration and HA are not implemented yet.
 See [docs/requirements.md](docs/requirements.md) for what has to be in place (ports, TLS, API token),
 [docs/behaviour.md](docs/behaviour.md) for every behaviour and the reasoning behind it, and
 [docs/test-log.md](docs/test-log.md) for what was tested and the bugs the tests found, ,
-[docs/design-phase2-storage.md](docs/design-phase2-storage.md) for the NFS storage design (proposal), and
+[docs/design-phase2-storage.md](docs/design-phase2-storage.md) for the NFS storage design (proposal),
+[docs/design-phase3-vm-deployment.md](docs/design-phase3-vm-deployment.md) for the VM deployment design (proposal), and
 [docs/upstream-notes.md](docs/upstream-notes.md) for observations about CloudStack itself that are not changed here.
 
 ## How it works
