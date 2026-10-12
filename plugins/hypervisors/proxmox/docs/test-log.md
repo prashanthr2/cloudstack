@@ -126,8 +126,9 @@ Spike results on the lab (details in design-phase2-storage.md, section 8):
 | S3 | `--options` passes through to the mount |
 | S4 | the status call returns `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`, matching the NFS server |
 | S6 | `import` is accepted as a content type on an NFS entry |
-| S7 | a disk image cannot be created for a VM id that has no VM: the volume design needs a VM shell (design section 7) |
-| S2, S5, S1b, S8 | pending (commands in the design document) |
+| S7 | reported as "cannot create a disk for a VM id with no VM", but the error was not recorded and the Proxmox source says it should work (`vdisk_alloc` does not check the VM): to be re-run with the exact message; the volume design has two shapes depending on it (design section 7) |
+| S2, S5 | answered from the Proxmox source (design section 8, "Source reading"); lab confirmation pending |
+| S1b, S8 | pending (commands in the design document) |
 
 Implementation status: the storage handlers, the API client calls and the `StoragePoolMonitor` change are written and unit tested
 (plugin: 64 tests; `StoragePoolMonitorTest` has a test that fails without the core change). **Not yet run on the lab.** Lab checks:

@@ -134,14 +134,14 @@ of type `token`, both with propagate on):
 | `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | lists the VMs (a test VM created with `qm create` showed up) |
 
 At this stage everything is read-only and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is enough.
-### Permissions for primary storage (Phase 2, **to verify**: check S2 in design-phase2-storage.md)
+### Permissions for primary storage (Phase 2; from the Proxmox source, lab confirmation pending: check S2 in design-phase2-storage.md)
 
 | API call | Used for | Privilege (expected) |
 |---|---|---|
-| `GET /storage` | find the pool's entry | `Datastore.Audit` (part of `PVEAuditor`) |
-| `POST /storage` | create the entry | `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`) |
+| `GET /storage` | find the pool's entry | `Datastore.Audit` or `Datastore.AllocateSpace` on the entry (a caller without either gets an **empty list**; `PVEAuditor` has `Datastore.Audit`) |
+| `POST /storage` | create the entry | `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`; not in `PVEAuditor`) |
 | `DELETE /storage/{id}` | remove the entry | `Datastore.Allocate` on `/storage` |
-| `GET /nodes/{node}/storage/{id}/status` | state and capacity on a node | `Datastore.Audit` |
+| `GET /nodes/{node}/storage/{id}/status` | state and capacity on a node | `Datastore.Audit` or `Datastore.AllocateSpace` on the entry |
 
 Privileges are granted through a **role** on a **path**, not one by one; for the storage calls give the token a role that contains
 `Datastore.Allocate` (the built-in `PVEDatastoreAdmin`) on `/storage`, for example

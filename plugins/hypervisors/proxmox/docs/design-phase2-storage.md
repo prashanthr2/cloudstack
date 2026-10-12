@@ -69,8 +69,13 @@ containers. Proxmox accepts `import` as a content type on an NFS entry (S6), whi
 
 **Nodes.** No node restriction, because one CloudStack cluster is one Proxmox cluster.
 
-**Permissions.** Creating and removing storage needs more than `PVEAuditor` (expected: `Datastore.Allocate` on `/storage`;
-check S2). The permission set in requirements.md grows with this phase.
+**Permissions** (from the Proxmox source, see "Source reading" in section 8): creating, changing and removing a storage entry need
+`Datastore.Allocate` on `/storage`, which `PVEAuditor` does not have; the built-in `PVEDatastoreAdmin` role does. The permission set
+in requirements.md grows with this phase.
+
+**Errors.** The create call activates the storage on the node that serves the API request and undoes the entry if mounting fails,
+so a failed create comes back with the mount error. Creating an id that exists fails with "storage ID '...' already defined",
+which is why the handler looks the entry up first and tolerates a race.
 
 ## 4. Core changes needed (verified in code)
 
@@ -104,33 +109,50 @@ Unit tests with the mocked API client: create (new, same, conflicting entry), pe
 
 ## 7. Looking ahead: volumes (Phase 3 design to be written)
 
-**S7 found that Proxmox will not create a disk image for a VM id that has no VM.** So a CloudStack volume cannot exist on the
-primary storage before a VM does, and the earlier idea of creating the root disk before the VM has to change. The direction,
-to be confirmed in the Phase 3 design:
-- When CloudStack copies a template to the pool to create the **root volume** (before it starts the VM), the resource takes
-  `GET /cluster/nextid` and creates a **VM shell** with that id and the CloudStack instance name (no CPU, memory or network yet),
-  then creates the disk under it. The Proxmox volume id (`<storage>:<vmid>/<file>`) is stored as the CloudStack volume path.
-  `StartCommand` then finishes configuring that same VM instead of creating a new one.
-- **Data volumes** cannot exist before they have a VM either, so they are created when attached; until then a data volume is
-  only a CloudStack record (to be checked against how CloudStack expects `CreateObjectCommand` to behave).
-- **Templates** are on the secondary NFS store, not on Proxmox. Proxmox accepts the `import` content type on an NFS entry (S6);
-  how a qcow2 gets from the secondary store into a VM disk (`import-from`, or `download-url`) is still to be checked.
-- The VM shell appears in the node's VM list while CloudStack still thinks the VM is starting; the power state report must
-  not confuse it (to be checked in Phase 3).
+A Proxmox disk image is a file `images/<vmid>/<name>` and is owned by one VM id. Whether a disk can be created **before** its VM
+depends on S7, so Phase 3 has two possible shapes:
+
+- **A (preferred, if S7 works):** when CloudStack copies the template to the pool to create the **root volume**, the resource takes
+  `GET /cluster/nextid`, allocates the disk with `POST /nodes/{node}/storage/{id}/content` (`vmid`, `filename`, `size`, `format`),
+  and stores the Proxmox volume id (`<storage>:<vmid>/<file>`) as the CloudStack volume path. `StartCommand` later creates the VM
+  **with the same vmid** and references that volume. The source shows no VM check in the storage layer; whether `qemu-server`
+  accepts attaching a disk that already carries the VM's id still has to be read (Phase 3).
+- **B (fallback, if a disk cannot exist without a VM):** create an empty **VM shell** with the id and the CloudStack instance name
+  when the template is copied, allocate the disk under it, and let `StartCommand` finish configuring that VM.
+
+Either way: **data volumes** need an owner VM id too, so they are created when attached unless A allows creating them earlier; and
+**templates** live on the secondary NFS store, so importing a qcow2 into a VM disk (`import-from`, or `download-url` with the
+`import` content type, which an NFS entry accepts, S6) is still to be designed.
 
 ## 8. Checks on the lab (spikes) and their results
 
 | # | Question | Result (2026-10-12) |
 |---|---|---|
 | S1 | Does Proxmox accept a pool uuid as a storage id? | **Only if it starts with a letter**: `aa577022-...` was accepted; `1a577022-b02f-4473-a971-da91d3a82b07` was refused with "contains illegal characters". Hence the `cs-` prefix. |
-| S2 | Which privileges does the API need to create and remove storage? | **Open.** How to grant them is explained below. |
+| S2 | Which privileges does the API need to create and remove storage? | **From the source:** `Datastore.Allocate` on `/storage` for create, change and delete; `Datastore.Audit` or `Datastore.AllocateSpace` on the entry to list it or read its status; `Datastore.AllocateSpace` to allocate a disk. Lab confirmation with the `pveaudit` token still pending (steps below). |
 | S3 | Do mount options pass through? | **Yes**, `--options` works. |
 | S4 | Fields of the status call | **Confirmed:** `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`; the figures match the NFS server. |
-| S5 | What does creating an entry that already exists do through the API? | **Open** (needs an API call; see below). |
+| S5 | What does creating an entry that already exists do through the API? | **From the source:** it fails with "storage ID ... already defined" and changes nothing. Lab confirmation pending. |
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
-| S7 | Can a disk image be created for a VM id that has no VM? | **No.** This changes the volume design (section 7). |
+| S7 | Can a disk image be created for a VM id that has no VM? | **Unclear.** Reported "no" on the lab, but the error message was not recorded. The source says it works: `vdisk_alloc` and `alloc_image` create `images/<vmid>/<name>` without checking that the VM exists. **Re-run and record the exact error** (the entry used must have `images` among its content types). |
 | S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | pending |
 | S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | pending |
+
+### Source reading
+
+The Proxmox VE source mirrors (`github.com/proxmox/...`) were read for the questions above, at the newest 8.x versions in their
+history, since the lab runs 8.4.21: `pve-storage` 8.3.6, `qemu-server` 8.3.13, `pve-access-control` 8.2.2, `pve-common` 8.3.1. The
+clones on `master` are Proxmox VE 9 code and were **not** used for these answers. The exact package versions on the lab were not
+available (only `pve-manager 8.4.21`), so the source is a second opinion: where it and a lab run disagree, the lab wins.
+What the source says:
+- storage id: `^[a-z][a-z0-9\-\_\.]*[a-z0-9]$` (case-insensitive), no length limit in that schema;
+- `POST`, `PUT` and `DELETE /storage`: `Datastore.Allocate` on `/storage`; `GET /storage` lists entries on which the caller has
+  `Datastore.Audit` or `Datastore.AllocateSpace`; the status call needs the same on the entry;
+- creating an existing id: "storage ID '...' already defined"; the create call activates the storage on the serving node and
+  rolls back on error;
+- the NFS plugin takes `server`, `export`, `path` (fixed at creation), `options`, `content`, `nodes`;
+- built-in roles are generated from privilege groups: `PVEDatastoreAdmin` = `Datastore.Allocate`, `AllocateTemplate`,
+  `AllocateSpace`, `Audit`; `PVEAuditor` = every `*.Audit` privilege.
 
 ### Commands for the open checks
 
