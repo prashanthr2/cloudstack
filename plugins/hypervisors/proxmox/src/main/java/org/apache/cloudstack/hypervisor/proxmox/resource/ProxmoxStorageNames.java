@@ -17,23 +17,24 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 /**
- * How a CloudStack primary storage pool is named on the Proxmox side. Both names are derived from the pool uuid, the way the KVM
- * agent names the libvirt pool and its mount point, so the same entry is found again after a restart and an administrator can
- * match everything by the pool uuid.
+ * How a CloudStack primary storage pool is named on the Proxmox side. Both names are derived from the pool uuid, so the same
+ * entry is found again after a restart and an administrator can match everything by the pool uuid.
  */
 public final class ProxmoxStorageNames {
+    /**
+     * A Proxmox storage id has to start with a letter (checked on the lab: an id starting with a digit is refused with "contains
+     * illegal characters"), while a CloudStack pool uuid, a name-based UUID, starts with a digit in about 60 % of the cases. The
+     * hyphens of the uuid are kept so an administrator can match the entry with the pool at a glance.
+     */
+    public static final String STORAGE_ID_PREFIX = "cs-";
     /** The same place the KVM agent mounts a pool, /mnt/&lt;pool uuid&gt;. */
     public static final String MOUNT_PATH_PREFIX = "/mnt/";
 
     private ProxmoxStorageNames() {
     }
 
-    /**
-     * The Proxmox storage id is the pool uuid, as the libvirt pool is named on KVM. Note that Proxmox may refuse an id that
-     * starts with a digit while a pool uuid can; the add then fails with Proxmox's own message (see design-phase2-storage.md, S1b).
-     */
     public static String storageId(String poolUuid) {
-        return poolUuid;
+        return STORAGE_ID_PREFIX + poolUuid;
     }
 
     public static String mountPath(String poolUuid) {

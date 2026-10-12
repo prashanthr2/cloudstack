@@ -122,7 +122,7 @@ Spike results on the lab (details in design-phase2-storage.md, section 8):
 
 | # | Result |
 |---|---|
-| S1 | A pool uuid starting with a letter is accepted as a storage id; a uuid starting with a digit (about 60 % of pool uuids) is still to be checked (S1b) |
+| S1 | A pool uuid starting with a letter is accepted as a storage id; one starting with a digit is **refused** ("contains illegal characters"), so the id is `cs-<uuid>`; that 39-character form is still to be checked (S1b) |
 | S3 | `--options` passes through to the mount |
 | S4 | the status call returns `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`, matching the NFS server |
 | S6 | `import` is accepted as a content type on an NFS entry |
@@ -134,7 +134,7 @@ Implementation status: the storage handlers, the API client calls and the `Stora
 
 | # | Check | Expected |
 |---|---|---|
-| p1 | add a cluster-scope NFS pool from CloudStack | pool `Up` with capacity; an entry named by the pool uuid visible on all three nodes in Proxmox, mounted at `/mnt/<uuid>` |
+| p1 | add a cluster-scope NFS pool from CloudStack | pool `Up` with capacity; an entry named `cs-<pool uuid>` visible on all three nodes in Proxmox, mounted at `/mnt/<uuid>` |
 | p2 | restart the management server | the pool stays attached; hosts keep their storage |
 | p3 | power a node off and on | the node reconnects and its storage is checked again |
 | p4 | add a pool with a wrong server or an export the nodes may not use | a clear message with the Proxmox reason, no half-created pool |

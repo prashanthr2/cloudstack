@@ -17,15 +17,23 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
 public class ProxmoxStorageNamesTest {
 
     @Test
-    public void theStorageIdIsThePoolUuidAsTheLibvirtPoolIsOnKvm() {
-        assertEquals("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", ProxmoxStorageNames.storageId("047ccc61-dc29-3d58-9c73-dd1ab2c100cf"));
-        assertEquals("aa577022-b02f-4473-a971-da91d3a82b07", ProxmoxStorageNames.storageId("aa577022-b02f-4473-a971-da91d3a82b07"));
+    public void theStorageIdKeepsTheUuidWithItsHyphens() {
+        assertEquals("cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf", ProxmoxStorageNames.storageId("047ccc61-dc29-3d58-9c73-dd1ab2c100cf"));
+        assertEquals("cs-aa577022-b02f-4473-a971-da91d3a82b07", ProxmoxStorageNames.storageId("aa577022-b02f-4473-a971-da91d3a82b07"));
+    }
+
+    @Test
+    public void theStorageIdAlwaysStartsWithALetterBecauseProxmoxRefusesADigit() {
+        for (String uuid : new String[] {"1a577022-b02f-4473-a971-da91d3a82b07", "047ccc61-dc29-3d58-9c73-dd1ab2c100cf", "ef577022-b02f-4473-a971-da91d3a82b07"}) {
+            assertTrue(uuid, Character.isLetter(ProxmoxStorageNames.storageId(uuid).charAt(0)));
+        }
     }
 
     @Test
