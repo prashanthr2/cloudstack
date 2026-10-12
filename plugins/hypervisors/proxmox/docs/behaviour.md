@@ -220,7 +220,9 @@ functionality fails loudly instead of being accepted silently.
   available bytes and the mount point. A node that never mounts the share answers with an explanation, so one host failing does
   not hide the others.
 - Taking one host out of a pool (`ModifyStoragePoolCommand` with add=false) leaves the entry alone: it is cluster-wide.
-  `DeleteStoragePoolCommand` removes the entry and can be repeated by every host without error.
+  `DeleteStoragePoolCommand` removes the entry and can be repeated by every host without error. **Proxmox does not unmount the
+  share when an entry is removed**, so `/mnt/<pool uuid>` stays mounted on the nodes (unlike KVM, where removing the pool unmounts
+  it) until `umount /mnt/<pool uuid>` is run on each node or the node reboots.
 - Capacity statistics come from the node's view of the entry. Pool types other than NFS are refused.
 - A host that (re)connects gets its cluster's pools re-checked, because Proxmox is on `StoragePoolMonitor`'s hypervisor list.
 - Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).

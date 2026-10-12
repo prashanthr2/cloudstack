@@ -47,7 +47,7 @@ fits the CloudStack sequence directly:
 | `ModifyStoragePoolCommand(add=true)` to each host | `GET /storage` to look for the entry. If missing: `POST /storage` with `type=nfs`, `storage=<id>`, `server`, `export`, `content=images`, `path=/mnt/<uuid>` (the mount point) and `options=<nfsmountopts>`. If it exists with the **same** server and export (a trailing `/` is ignored) it is reused; if it points elsewhere the command **fails** with a message, and nothing is changed. If another host's command creates it at the same moment, the second finds it and carries on. Then the node's status (`GET /nodes/{node}/storage/{id}/status`) is polled (up to 15 x 2 s) until it is `active`; the answer carries `total` and `avail` as capacity and available bytes, and `localPath` = `/mnt/<uuid>`. A node that never mounts the share answers with an explanation. |
 | `ModifyStoragePoolCommand(add=false)` | Left alone: the entry is cluster-wide and is removed with the pool. |
 | `GetStorageStatsCommand` | The status call for this node; returns total and used. |
-| `DeleteStoragePoolCommand` | `DELETE /storage/{id}`; "not found" counts as success so the call can be repeated for each host. |
+| `DeleteStoragePoolCommand` | `DELETE /storage/{id}`; "not found" counts as success so the call can be repeated for each host. **This removes the entry only: Proxmox does not unmount the share** (its delete handler never deactivates the storage), so the mount at `/mnt/<uuid>` stays on every node until it is unmounted by an administrator or the node reboots. |
 
 Only NFS pools are accepted; other pool types are refused with a message.
 
@@ -97,6 +97,9 @@ Known core limits that do **not** block Phase 2 but matter later (listed in upst
   are connected.
 - A node that comes back after being down: `StoragePoolMonitor` (once Proxmox is on its list) sends the command again and the
   node's storage status is re-checked.
+- **After a pool is removed the share stays mounted on the Proxmox nodes** (lab check p5, and the Proxmox source). This differs from
+  KVM, where removing the pool unmounts it. Proxmox has no API to unmount a storage; unmounting would need access to the node
+  (for example the SSH access planned for the system VM phase). Until then it is documented, with the manual cleanup.
 - Removing a pool needs at least one connected host that answers: `deleteDataStore` sends the command to each host record until
   one succeeds and throws "Failed to delete storage pool on host" if none does (verified in code). With every host
   disconnected the pool cannot be removed until a host is back.

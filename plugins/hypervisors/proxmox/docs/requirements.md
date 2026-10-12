@@ -22,7 +22,8 @@ CloudStack needs only the Proxmox API at this stage. Open these before adding a 
   requirement and are not CloudStack's concern.
 
 The NFS export must allow all the Proxmox nodes (CloudStack configures the storage on them; nothing is mounted on the management
-server). Later phases will add to this table (the console connection, and whatever the system VM work needs); it is updated
+server). When a pool is removed from CloudStack, Proxmox leaves the share mounted at `/mnt/<pool uuid>` on every node; unmount it
+with `umount /mnt/<pool uuid>` (and `rmdir` the directory) before unexporting or deleting the share. Later phases will add to this table (the console connection, and whatever the system VM work needs); it is updated
 with each phase.
 
 ## 2. TLS

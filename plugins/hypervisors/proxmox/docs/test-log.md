@@ -135,10 +135,20 @@ Implementation status: the storage handlers, the API client calls and the `Stora
 
 | # | Check | Expected |
 |---|---|---|
-| p1 | add a cluster-scope NFS pool from CloudStack | pool `Up` with capacity; an entry named `cs-<pool uuid>` visible on all three nodes in Proxmox, mounted at `/mnt/<uuid>` |
-| p2 | restart the management server | the pool stays attached; hosts keep their storage |
-| p3 | power a node off and on | the node reconnects and its storage is checked again |
-| p4 | add a pool with a wrong server or an export the nodes may not use | a clear message with the Proxmox reason, no half-created pool |
-| p5 | remove the pool | the Proxmox entry is gone |
-| p6 | compare the capacity with the NFS server | it matches |
+| p1 | add a cluster-scope NFS pool from CloudStack | pool `Up` with capacity; an entry named `cs-<pool uuid>` visible on all three nodes in Proxmox, mounted at `/mnt/<uuid>` **Pass (2026-10-12)** |
+| p2 | restart the management server | the pool stays attached; hosts keep their storage **Pass (2026-10-12): the pools were attached again after a management server restart** |
+| p3 | power a node off and on | the node reconnects and its storage is checked again **Pass (2026-10-12)** |
+| p4 | add a pool with a wrong server or an export the nodes may not use | a clear message with the Proxmox reason, no half-created pool **Pass (2026-10-12): the add fails with an error (the message was not recorded)** |
+| p5 | remove the pool | the Proxmox entry is gone ****Partly** (2026-10-12): the pool is removed from CloudStack and the Proxmox entry is deleted, but the NFS share stays mounted on the nodes, which is how Proxmox behaves (see below)** |
+| p6 | compare the capacity with the NFS server | it matches **Pass (2026-10-12)** |
+
+### Notes on p5 (removing the pool)
+
+- Removing a pool from CloudStack succeeded and the CloudStack record is gone, but the NFS share was still mounted on the Proxmox
+  nodes. This is Proxmox's behaviour: its `DELETE /storage/{id}` handler (pve-storage 8.3.6) runs the plugin's delete hook and
+  removes the entry from the configuration, and never deactivates the storage, so nothing is unmounted. On KVM CloudStack removes
+  the libvirt pool and the mount goes with it.
+- To clean up by hand, on each node, once the share is not in use: `umount /mnt/<pool uuid>` and `rmdir /mnt/<pool uuid>`.
+- Still to confirm on the lab that the Proxmox *entry* itself is gone (`pvesm status`, `/etc/pve/storage.cfg`) and that
+  adding the same pool again afterwards works (Proxmox reuses a share that is already mounted at the same place).
 
