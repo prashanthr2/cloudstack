@@ -209,7 +209,7 @@ functionality fails loudly instead of being accepted silently.
 **Code:** `ProxmoxResource` (storage handlers), `ProxmoxStorageNames`, `ProxmoxApiClient` (storage calls),
 `StoragePoolMonitor` (core, one line). The design and the reasoning are in [design-phase2-storage.md](design-phase2-storage.md).
 
-- A CloudStack NFS pool becomes **one cluster-wide Proxmox storage entry** named `cs-<pool uuid>` (hyphens kept), mounted by
+- A CloudStack NFS pool becomes **one cluster-wide Proxmox storage entry** named by the **pool uuid** (as the libvirt pool is on KVM), mounted by
   every node at `/mnt/<pool uuid>` (the place the KVM agent mounts it), with `content=images`.
 - `CreateStoragePoolCommand` does nothing, as on KVM. The entry is created by the first `ModifyStoragePoolCommand` (it is the one
   that carries the pool's mount options, `nfsmountopts`); the commands for the other hosts find the entry, and a creation race

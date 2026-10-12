@@ -17,17 +17,15 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
 public class ProxmoxStorageNamesTest {
 
     @Test
-    public void theStorageIdKeepsTheUuidWithItsHyphensAndStartsWithALetter() {
-        String id = ProxmoxStorageNames.storageId("047ccc61-dc29-3d58-9c73-dd1ab2c100cf");
-        assertEquals("cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf", id);
-        assertTrue("a Proxmox storage id has to start with a letter", Character.isLetter(id.charAt(0)));
+    public void theStorageIdIsThePoolUuidAsTheLibvirtPoolIsOnKvm() {
+        assertEquals("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", ProxmoxStorageNames.storageId("047ccc61-dc29-3d58-9c73-dd1ab2c100cf"));
+        assertEquals("aa577022-b02f-4473-a971-da91d3a82b07", ProxmoxStorageNames.storageId("aa577022-b02f-4473-a971-da91d3a82b07"));
     }
 
     @Test

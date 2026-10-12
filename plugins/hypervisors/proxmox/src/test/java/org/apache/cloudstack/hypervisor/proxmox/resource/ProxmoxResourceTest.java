@@ -269,7 +269,7 @@ public class ProxmoxResourceTest {
     // ---- primary storage
 
     private static final String POOL_UUID = "047ccc61-dc29-3d58-9c73-dd1ab2c100cf";
-    private static final String STORAGE_ID = "cs-" + POOL_UUID;
+    private static final String STORAGE_ID = POOL_UUID;
 
     private StoragePool pool(Storage.StoragePoolType type) {
         StoragePool pool = mock(StoragePool.class);

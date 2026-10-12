@@ -51,10 +51,11 @@ fits the CloudStack sequence directly:
 
 Only NFS pools are accepted; other pool types are refused with a message.
 
-**Storage id.** `cs-<pool uuid>`, keeping the hyphens so an administrator can match it with the pool at a glance. The prefix is
-needed because a CloudStack pool uuid is a name-based UUID that can start with a digit, which a Proxmox storage id cannot (a
-uuid that happens to start with a letter was accepted as it is in S1; the `cs-` form is checked in S1b). One function computes
-it, so the same entry is found again after a restart.
+**Storage id.** The pool uuid itself, with its hyphens (decision): this is how the KVM agent names the libvirt pool, and an
+administrator can match the Proxmox entry, the mount point and the CloudStack pool by the same uuid. One function computes it, so the
+same entry is found again after a restart. **Risk:** a CloudStack pool uuid is a name-based UUID and about 60 % of them start with a
+digit, which Proxmox may refuse as a storage id (a uuid starting with a letter was accepted in S1). If a digit-leading id is
+refused, the add of such a pool fails with Proxmox's message and a fallback is needed (S1b decides this).
 
 **Mount point.** KVM mounts a pool at `/mnt/<pool uuid>`; the Proxmox entry is given the same mount point through its `path`
 option (S8 checks that Proxmox accepts it). Without it Proxmox would use `/mnt/pve/<id>`.
@@ -121,14 +122,14 @@ to be confirmed in the Phase 3 design:
 
 | # | Question | Result (2026-10-12) |
 |---|---|---|
-| S1 | Does Proxmox accept a pool uuid as a storage id? | **Yes** for a uuid that starts with a letter (`pvesm add nfs aa577022-b02f-4473-a971-da91d3a82b07 ...`). A uuid starting with a digit and the 39-character `cs-<uuid>` form were not tried: **S1b below.** |
+| S1 | Does Proxmox accept a pool uuid as a storage id? | **Yes** for a uuid that starts with a letter (`pvesm add nfs aa577022-b02f-4473-a971-da91d3a82b07 ...`). A uuid starting with a digit was not tried: **S1b below.** |
 | S2 | Which privileges does the API need to create and remove storage? | **Open.** How to grant them is explained below. |
 | S3 | Do mount options pass through? | **Yes**, `--options` works. |
 | S4 | Fields of the status call | **Confirmed:** `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`; the figures match the NFS server. |
 | S5 | What does creating an entry that already exists do through the API? | **Open** (needs an API call; see below). |
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
 | S7 | Can a disk image be created for a VM id that has no VM? | **No.** This changes the volume design (section 7). |
-| S1b | Is the 39-character `cs-<uuid>` id, and an id after a digit-leading uuid, accepted? | pending |
+| S1b | Is a storage id that **starts with a digit** (as about 60 % of pool uuids do) accepted? | pending: decides whether the plain uuid works for every pool |
 | S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | pending |
 
 ### Commands for the open checks
@@ -136,19 +137,19 @@ to be confirmed in the Phase 3 design:
 S1b and S8 (as root on a node, with a scratch NFS export; remove the entries afterwards):
 
 ```bash
-pvesm add nfs cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf --server <nfs-ip> --export <export> --content images --path /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
+pvesm add nfs 047ccc61-dc29-3d58-9c73-dd1ab2c100cf --server <nfs-ip> --export <export> --content images --path /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
 pvesm status
 findmnt /mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf
-pvesm remove cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf
+pvesm remove 047ccc61-dc29-3d58-9c73-dd1ab2c100cf
 ```
 
 S5, through the API with the unrestricted `root@pam!cloudstack` token (set `T` with `read -rs`, and `H` to a node address):
 
 ```bash
-curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=cs-spike -d type=nfs -d server=<nfs-ip> -d export=<export> -d content=images | jq
+curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=spike-test -d type=nfs -d server=<nfs-ip> -d export=<export> -d content=images | jq
 # the same call again, then once more with a different export:
-curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=cs-spike -d type=nfs -d server=<nfs-ip> -d export=/other -d content=images | jq
-curl -ks -X DELETE -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage/cs-spike | jq
+curl -ks -X POST -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage -d storage=spike-test -d type=nfs -d server=<nfs-ip> -d export=/other -d content=images | jq
+curl -ks -X DELETE -H "Authorization: PVEAPIToken=$T" https://$H:8006/api2/json/storage/spike-test | jq
 ```
 
 S2: a privilege such as `Datastore.Allocate` is not assigned on its own; it is part of a **role**, and a role is granted to a user or
@@ -177,7 +178,7 @@ should stay read-only.
 
 | # | Decision |
 |---|---|
-| 1 | Storage id `cs-<uuid>` with the hyphens kept (final form after S1b) |
+| 1 | Storage id = the pool uuid, like the libvirt pool name on KVM (works for every pool only if S1b shows digit-leading ids are accepted) |
 | 2 | Cluster-scope pools only |
 | 3 | `content=images` |
 | 4 | Volumes and templates in Phase 3, with the VM |
