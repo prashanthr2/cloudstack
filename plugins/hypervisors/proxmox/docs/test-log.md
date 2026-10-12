@@ -128,7 +128,8 @@ Spike results on the lab (details in design-phase2-storage.md, section 8):
 | S6 | `import` is accepted as a content type on an NFS entry |
 | S7 | reported as "cannot create a disk for a VM id with no VM", but the error was not recorded and the Proxmox source says it should work (`vdisk_alloc` does not check the VM): to be re-run with the exact message; the volume design has two shapes depending on it (design section 7) |
 | S2, S5 | answered from the Proxmox source (design section 8, "Source reading"); lab confirmation pending |
-| S1b, S8 | pending (commands in the design document) |
+| S1b | confirmed by p1 (`cs-<uuid>` created through the API) |
+| S8 | confirmed: the CloudStack pool is mounted at `/mnt/<pool uuid>` (`findmnt -t nfs,nfs4` on a node) |
 
 Implementation status: the storage handlers, the API client calls and the `StoragePoolMonitor` change are written and unit tested
 (plugin: 64 tests; `StoragePoolMonitorTest` has a test that fails without the core change). **Not yet run on the lab.** Lab checks:
@@ -161,8 +162,13 @@ API). Remaining, none of which blocks the next phase:
 | # | Item | Why |
 |---|---|---|
 | p7 | add the same pool again after it was removed (the share is still mounted), written exactly as before | the pool gets the same uuid (it is derived from server and path), and Proxmox reuses the leftover mount at `/mnt/<uuid>` **Pass** (2026-10-12): same uuid and same Proxmox entry, and `findmnt -t nfs,nfs4` shows a single mount for it, so the leftover mount was reused |
-| S8 | confirm the share is mounted at `/mnt/<pool uuid>` (`findmnt -t nfs,nfs4` on a node) | the `path` option was never checked directly |
 | p8 | try to set NFS mount options on a Proxmox pool through the API: `details[0].nfsmountopts=vers=3` | **Expected: refused.** CloudStack core only allows NFS mount options for KVM and the simulator (`StorageManagerImpl.checkNFSMountOptionsForCreate` / `ForUpdate`), and the UI field is shown for KVM only, so mount options are not supported for Proxmox pools; the check confirms the refusal and its message |
 | S2 | with the `pveaudit` token and the `PVEDatastoreAdmin` role on `/storage`: adding and removing a pool works; without the role it fails with 403 | so far everything ran with the unrestricted `root@pam!cloudstack` token; the privileges come from the source only |
 | S5 | creating a storage with an id that exists, through the API, gives "already defined" | from the source only; the plugin tolerates it and is unit tested |
 | S7 | re-run with the exact error message | needed for the Phase 3 volume design, not for Phase 2 |
+
+Observed with the `findmnt` check (2026-10-12): besides the pool's own mount at `/mnt/<pool uuid>`, the nodes still had mounts left by the
+spike entries that were added and removed by hand, some under `/mnt/pve/<id>` and one under `/mnt/<uuid>`. This is the same effect as p5
+(Proxmox does not unmount a share when an entry is removed), seen with entries created without CloudStack. One of those ids was about
+80 characters long and was accepted, which agrees with the Proxmox source having no length limit for a storage id.
+

@@ -144,7 +144,7 @@ Either way: **data volumes** need an owner VM id too, so they are created when a
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
 | S7 | Can a disk image be created for a VM id that has no VM? | **Unclear.** Reported "no" on the lab, but the error message was not recorded. The source says it works: `vdisk_alloc` and `alloc_image` create `images/<vmid>/<name>` without checking that the VM exists. **Re-run and record the exact error** (the entry used must have `images` among its content types). |
 | S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | **Yes**: lab check p1 created `cs-<uuid>` through the API. |
-| S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | pending |
+| S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | **Yes**: the pool added from CloudStack is mounted at `/mnt/<pool uuid>` on the nodes (`findmnt`, 2026-10-12); spike entries added by hand with `--path` were also mounted where they were told to be. |
 
 ### Source reading
 
