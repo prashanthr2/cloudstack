@@ -166,3 +166,8 @@ Observed with the `findmnt` check (2026-10-12): besides the pool's own mount at 
 spike entries that were added and removed by hand, some under `/mnt/pve/<id>` and one under `/mnt/<uuid>`. This is the same effect as p5
 (Proxmox does not unmount a share when an entry is removed), seen with entries created without CloudStack. One of those ids was about
 80 characters long and was accepted, which agrees with the Proxmox source having no length limit for a storage id.
+
+S7 clean-up (2026-10-12): `qm destroy 9100 --purge` printed only "purging VM 9100 from related configurations", and the disk of another
+id (9101) that had been attached to it was still there afterwards: `pvesm free spike-s7:9101/vm-9101-disk-0.qcow2` removed it. Deleting a
+VM therefore removes the disks it owns but not an attached disk owned by another id.
+

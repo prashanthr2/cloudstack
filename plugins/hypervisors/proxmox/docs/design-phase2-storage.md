@@ -123,9 +123,11 @@ and attached to a VM created later, so the root volume does not need a placehold
   the disk with `POST /nodes/{node}/storage/{id}/content` (`vmid`, `filename`, `size`, `format`; needs `Datastore.AllocateSpace`) and
   stores the Proxmox volume id (`<storage>:<vmid>/<file>`) as the CloudStack volume path. `StartCommand` later creates the VM **with
   the same vmid** and references that volume.
-- A **data volume** can also be allocated before it is attached, under any id (S7 attached a disk of another id to a VM). Whether to
-  allocate it under the id of the VM it will be attached to, or under a neutral id, and how Proxmox treats a disk it does not own
-  when the VM is deleted, moved or snapshotted, is for the Phase 3 design to settle (the cleanup of the S7 run shows part of it).
+- A **data volume** can also be allocated before it is attached, under any id (S7 attached a disk of another id to a VM). **Deleting a
+  VM does not delete a disk owned by another id:** after `qm destroy 9100 --purge` the attached disk owned by 9101 still existed and
+  had to be freed with `pvesm free` (lab, 2026-10-12). So CloudStack's own volume deletion has to remove such disks explicitly, and
+  a disk owned by the VM itself goes with the VM, so deleting it again must not be an error. How Proxmox treats a foreign-owned disk
+  when the VM is moved or snapshotted is for the Phase 3 design to settle.
 - **Templates** are on the secondary NFS store, not on Proxmox. Importing a qcow2 into a VM disk (`import-from`, or `download-url`
   with the `import` content type, which an NFS entry accepts, S6) is still to be designed.
 
