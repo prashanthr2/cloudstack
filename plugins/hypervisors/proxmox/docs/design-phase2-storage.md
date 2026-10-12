@@ -1,6 +1,6 @@
 # Phase 2 design: NFS primary storage
 
-Status: **decisions taken (2026-10-12), Phase 2 implemented and unit tested; lab checks pending.** The first spike results are in section 8.
+Status: **Phase 2 is complete (2026-10-12): implemented, unit tested, and checked on the lab.** The spike results are in section 8.
 
 "Verified in code" means read in this repository. "Expected" means taken from the Proxmox documentation or experience and
 **not yet confirmed on the lab**; each is covered by a check in section 8.
@@ -117,20 +117,17 @@ Unit tests with the mocked API client: create (new, same, conflicting entry), pe
 
 ## 7. Looking ahead: volumes (Phase 3 design to be written)
 
-A Proxmox disk image is a file `images/<vmid>/<name>` and is owned by one VM id. Whether a disk can be created **before** its VM
-depends on S7, so Phase 3 has two possible shapes:
-
-- **A (preferred, if S7 works):** when CloudStack copies the template to the pool to create the **root volume**, the resource takes
-  `GET /cluster/nextid`, allocates the disk with `POST /nodes/{node}/storage/{id}/content` (`vmid`, `filename`, `size`, `format`),
-  and stores the Proxmox volume id (`<storage>:<vmid>/<file>`) as the CloudStack volume path. `StartCommand` later creates the VM
-  **with the same vmid** and references that volume. The source shows no VM check in the storage layer; whether `qemu-server`
-  accepts attaching a disk that already carries the VM's id still has to be read (Phase 3).
-- **B (fallback, if a disk cannot exist without a VM):** create an empty **VM shell** with the id and the CloudStack instance name
-  when the template is copied, allocate the disk under it, and let `StartCommand` finish configuring that VM.
-
-Either way: **data volumes** need an owner VM id too, so they are created when attached unless A allows creating them earlier; and
-**templates** live on the secondary NFS store, so importing a qcow2 into a VM disk (`import-from`, or `download-url` with the
-`import` content type, which an NFS entry accepts, S6) is still to be designed.
+A Proxmox disk image is a file `images/<vmid>/<name>` and belongs to a VM id. S7 showed that a disk **can** be created before its VM
+and attached to a VM created later, so the root volume does not need a placeholder VM:
+- When CloudStack copies the template to the pool to create the **root volume**, the resource takes `GET /cluster/nextid`, allocates
+  the disk with `POST /nodes/{node}/storage/{id}/content` (`vmid`, `filename`, `size`, `format`; needs `Datastore.AllocateSpace`) and
+  stores the Proxmox volume id (`<storage>:<vmid>/<file>`) as the CloudStack volume path. `StartCommand` later creates the VM **with
+  the same vmid** and references that volume.
+- A **data volume** can also be allocated before it is attached, under any id (S7 attached a disk of another id to a VM). Whether to
+  allocate it under the id of the VM it will be attached to, or under a neutral id, and how Proxmox treats a disk it does not own
+  when the VM is deleted, moved or snapshotted, is for the Phase 3 design to settle (the cleanup of the S7 run shows part of it).
+- **Templates** are on the secondary NFS store, not on Proxmox. Importing a qcow2 into a VM disk (`import-from`, or `download-url`
+  with the `import` content type, which an NFS entry accepts, S6) is still to be designed.
 
 ## 8. Checks on the lab (spikes) and their results
 
@@ -142,7 +139,7 @@ Either way: **data volumes** need an owner VM id too, so they are created when a
 | S4 | Fields of the status call | **Confirmed:** `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`; the figures match the NFS server. |
 | S5 | What does creating an entry that already exists do through the API? | **Confirmed on the lab (2026-10-12):** the first create succeeds; creating the same id again, also with a different export, fails with "storage ID ... already defined" and changes nothing. |
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
-| S7 | Can a disk image be created for a VM id that has no VM? | **Unclear.** Reported "no" on the lab, but the error message was not recorded. The source says it works: `vdisk_alloc` and `alloc_image` create `images/<vmid>/<name>` without checking that the VM exists. **Re-run and record the exact error** (the entry used must have `images` among its content types). |
+| S7 | Can a disk image be created for a VM id that has no VM? | **Yes** (lab, 2026-10-12). `pvesm alloc` for id 9100 with no such VM worked; `qm create 9100 ... --scsi0 <storage>:9100/vm-9100-disk-0.qcow2` then accepted the disk, and so did attaching a disk allocated under another id (9101) with `qm set 9100 --scsi1 ...`. An earlier attempt reported "no"; the message was not kept and was probably an entry without `images` in its content types. |
 | S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | **Yes**: lab check p1 created `cs-<uuid>` through the API. |
 | S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | **Yes**: the pool added from CloudStack is mounted at `/mnt/<pool uuid>` on the nodes (`findmnt`, 2026-10-12); spike entries added by hand with `--path` were also mounted where they were told to be. |
 
