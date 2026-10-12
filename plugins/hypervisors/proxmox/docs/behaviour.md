@@ -221,8 +221,10 @@ functionality fails loudly instead of being accepted silently.
   not hide the others.
 - Taking one host out of a pool (`ModifyStoragePoolCommand` with add=false) leaves the entry alone: it is cluster-wide.
   `DeleteStoragePoolCommand` removes the entry and can be repeated by every host without error. **Proxmox does not unmount the
-  share when an entry is removed**, so `/mnt/<pool uuid>` stays mounted on the nodes (unlike KVM, where removing the pool unmounts
-  it) until `umount /mnt/<pool uuid>` is run on each node or the node reboots.
+  share when an entry is removed** (nor does removing a storage in Proxmox itself), so `/mnt/<pool uuid>` stays mounted on the
+  nodes, unlike KVM where removing the pool unmounts it, until `umount /mnt/<pool uuid>` is run on each node. This is left as it
+  is on purpose: Proxmox has no API to unmount a storage, so the plugin would need root access to the nodes, and it would do
+  more than Proxmox does itself. Re-adding the same pool reuses the mount.
 - Capacity statistics come from the node's view of the entry. Pool types other than NFS are refused.
 - A host that (re)connects gets its cluster's pools re-checked, because Proxmox is on `StoragePoolMonitor`'s hypervisor list.
 - Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).

@@ -99,7 +99,9 @@ Known core limits that do **not** block Phase 2 but matter later (listed in upst
   node's storage status is re-checked.
 - **After a pool is removed the share stays mounted on the Proxmox nodes** (lab check p5, and the Proxmox source). This differs from
   KVM, where removing the pool unmounts it. Proxmox has no API to unmount a storage; unmounting would need access to the node
-  (for example the SSH access planned for the system VM phase). Until then it is documented, with the manual cleanup.
+  (for example the SSH access planned for the system VM phase). **Decision: leave it.** Removing a storage in Proxmox itself leaves the mount
+too, so the plugin behaves like Proxmox; it is documented, with the manual cleanup, and can be revisited if SSH access to the nodes
+becomes part of the design.
 - Removing a pool needs at least one connected host that answers: `deleteDataStore` sends the command to each host record until
   one succeeds and throws "Failed to delete storage pool on host" if none does (verified in code). With every host
   disconnected the pool cannot be removed until a host is back.
@@ -138,7 +140,7 @@ Either way: **data volumes** need an owner VM id too, so they are created when a
 | S5 | What does creating an entry that already exists do through the API? | **From the source:** it fails with "storage ID ... already defined" and changes nothing. Lab confirmation pending. |
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
 | S7 | Can a disk image be created for a VM id that has no VM? | **Unclear.** Reported "no" on the lab, but the error message was not recorded. The source says it works: `vdisk_alloc` and `alloc_image` create `images/<vmid>/<name>` without checking that the VM exists. **Re-run and record the exact error** (the entry used must have `images` among its content types). |
-| S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | pending |
+| S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | **Yes**: lab check p1 created `cs-<uuid>` through the API. |
 | S8 | Does the `path` option set the mount point (`/mnt/<uuid>`)? | pending |
 
 ### Source reading

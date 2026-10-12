@@ -139,16 +139,30 @@ Implementation status: the storage handlers, the API client calls and the `Stora
 | p2 | restart the management server | the pool stays attached; hosts keep their storage **Pass (2026-10-12): the pools were attached again after a management server restart** |
 | p3 | power a node off and on | the node reconnects and its storage is checked again **Pass (2026-10-12)** |
 | p4 | add a pool with a wrong server or an export the nodes may not use | a clear message with the Proxmox reason, no half-created pool **Pass (2026-10-12): the add fails with an error (the message was not recorded)** |
-| p5 | remove the pool | the Proxmox entry is gone ****Partly** (2026-10-12): the pool is removed from CloudStack and the Proxmox entry is deleted, but the NFS share stays mounted on the nodes, which is how Proxmox behaves (see below)** |
+| p5 | remove the pool | the Proxmox entry is gone ****Pass** (2026-10-12): the pool is removed from CloudStack and its entry is gone from Proxmox (confirmed on a node: not in `pvesm status`, not in `/etc/pve/storage.cfg`). The share stays mounted, which is also what happens when a storage is removed in Proxmox itself (see below) |
 | p6 | compare the capacity with the NFS server | it matches **Pass (2026-10-12)** |
 
 ### Notes on p5 (removing the pool)
 
-- Removing a pool from CloudStack succeeded and the CloudStack record is gone, but the NFS share was still mounted on the Proxmox
-  nodes. This is Proxmox's behaviour: its `DELETE /storage/{id}` handler (pve-storage 8.3.6) runs the plugin's delete hook and
-  removes the entry from the configuration, and never deactivates the storage, so nothing is unmounted. On KVM CloudStack removes
-  the libvirt pool and the mount goes with it.
+- Removing a pool from CloudStack removes the Proxmox entry. The NFS share is **left mounted** on the nodes. This is not specific to
+  CloudStack: Proxmox's own removal of a storage leaves the mount too (observed on the lab; and in the source, the
+  `DELETE /storage/{id}` handler of pve-storage 8.3.6 removes the entry from the configuration and never deactivates the storage).
+  KVM differs, because CloudStack removes the libvirt pool and the mount goes with it.
+- **Why it is left alone:** Proxmox has no API call to unmount a storage, so doing it would need root access to the nodes (for
+  example over SSH), which this phase does not require; and a plugin that unmounts what Proxmox itself leaves mounted would be
+  doing more than Proxmox. Re-adding the same pool reuses the mount.
 - To clean up by hand, on each node, once the share is not in use: `umount /mnt/<pool uuid>` and `rmdir /mnt/<pool uuid>`.
-- Still to confirm on the lab that the Proxmox *entry* itself is gone (`pvesm status`, `/etc/pve/storage.cfg`) and that
-  adding the same pool again afterwards works (Proxmox reuses a share that is already mounted at the same place).
 
+### What is left for Phase 2 (2026-10-12)
+
+Done: the implementation, the unit tests, and lab checks p1 to p6 (S1b is confirmed by p1, which created `cs-<uuid>` through the
+API). Remaining, none of which blocks the next phase:
+
+| # | Item | Why |
+|---|---|---|
+| p7 | add the same pool again after it was removed (the share is still mounted) | confirms that Proxmox reuses the leftover mount |
+| S8 | confirm the share is mounted at `/mnt/<pool uuid>` (`findmnt -t nfs,nfs4` on a node) | the `path` option was never checked directly |
+| p8 | add a pool with NFS mount options set in CloudStack (for example `vers=3`) and check them in `mount` on a node | the options travel through CloudStack's pool details; only unit tested so far |
+| S2 | with the `pveaudit` token and the `PVEDatastoreAdmin` role on `/storage`: adding and removing a pool works; without the role it fails with 403 | so far everything ran with the unrestricted `root@pam!cloudstack` token; the privileges come from the source only |
+| S5 | creating a storage with an id that exists, through the API, gives "already defined" | from the source only; the plugin tolerates it and is unit tested |
+| S7 | re-run with the exact error message | needed for the Phase 3 volume design, not for Phase 2 |
