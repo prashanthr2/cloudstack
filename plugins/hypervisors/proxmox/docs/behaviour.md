@@ -233,6 +233,8 @@ functionality fails loudly instead of being accepted silently.
   share is unmounted** from the nodes.
 - Capacity statistics come from the node's view of the entry. Pool types other than NFS are refused.
 - A host that (re)connects gets its cluster's pools re-checked, because Proxmox is on `StoragePoolMonitor`'s hypervisor list.
+- **NFS mount options cannot be set on a Proxmox pool**: core allows `nfsmountopts` for KVM and the simulator only, so the add or update
+  is refused for Proxmox (the resource would pass them on if they were ever present). Left out on purpose; see the design.
 - Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).
 
 ## Known gaps and open questions

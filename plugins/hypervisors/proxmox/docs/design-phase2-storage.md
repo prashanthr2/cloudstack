@@ -60,9 +60,12 @@ found again after a restart. The 39-character form itself is checked in S1b.
 **Mount point.** KVM mounts a pool at `/mnt/<pool uuid>`; the Proxmox entry is given the same mount point through its `path`
 option (S8 checks that Proxmox accepts it). Without it Proxmox would use `/mnt/pve/<id>`.
 
-**NFS parameters** come from the pool: host address and path from `StorageFilerTO` (`getHost()`, `getPath()`), and the mount
-options from the pool details (`nfsmountopts`, passed through unchanged, for example `vers=3`). Proxmox negotiates the NFS
-version when none is given.
+**NFS parameters** come from the pool: host address and path from `StorageFilerTO` (`getHost()`, `getPath()`). Proxmox negotiates
+the NFS version when none is given. **Mount options are not supported for Proxmox pools:** CloudStack core refuses `nfsmountopts`
+on create and on update for every hypervisor except KVM and the simulator (`StorageManagerImpl`), and the UI shows the field for
+KVM only. The resource would pass `nfsmountopts` to Proxmox's `options` if it were ever present (unit tested), but it never is.
+Supporting it would need a core change for both checks and, because Proxmox does not remount a share it finds mounted, the
+leftover mount would also have to be unmounted for a changed option to apply; it is left out on purpose.
 
 **Content type** is `images` only (decision), which is what VM disks need, so Proxmox will not offer the share for ISOs, backups or
 containers. Proxmox accepts `import` as a content type on an NFS entry (S6), which may be added in Phase 3 for templates.
