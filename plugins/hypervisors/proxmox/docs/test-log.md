@@ -171,3 +171,22 @@ S7 clean-up (2026-10-12): `qm destroy 9100 --purge` printed only "purging VM 910
 id (9101) that had been attached to it was still there afterwards: `pvesm free spike-s7:9101/vm-9101-disk-0.qcow2` removed it. Deleting a
 VM therefore removes the disks it owns but not an attached disk owned by another id.
 
+
+## Phase 3 spikes (VM deployment), 2026-10-12
+
+Lab: Proxmox 8.4.21, secondary NFS mounted by hand at `/mnt/secstorage` on one node (`vers=3,ro`), primary entry `cs-<uuid>`.
+
+| # | What | Result |
+|---|---|---|
+| S9-0 | layout of the CloudStack secondary store | `template/tmpl/<account id>/<template id>/<uuid>.qcow2` next to `template.properties` |
+| S9-1 | `qm create ... scsi0=<pool>:0,import-from=/mnt/secstorage/<path>.qcow2,format=qcow2` as **root** | **Pass.** The disk was created in `images/<vmid>/` and written in full (8 GiB written for an 8 GiB template, `preallocation=metadata`), so each deploy is a full copy |
+| S9-2 | the same by **API token** with `import-from=<storage>:import/<file>` from a `dir` entry on `/mnt/secstorage` with `content=import` and `content-dirs import=template/tmpl/1/4` | **Pass.** Task exit status `OK`; the VM and its disk were created. Token roles: `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage` (user and token) |
+| S9-3 | `PUT .../config` with `net0=virtio=<mac>,bridge=vmbr1,tag=100,firewall=0` by token | Refused first: `Permission check failed (/sdn/zones/localnetwork/vmbr1/100, SDN.Use)`. **Pass** after `pveum acl modify /sdn/zones/localnetwork --users <user> --tokens <token> --roles PVESDNUser`. So a plain bridge needs `SDN.Use`, checked per bridge and VLAN tag |
+| S9-4 | start, stop, destroy (`?purge=1`) by token | **Pass.** Each returns a UPID (`UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<vmid>:<user>!<token>:`); `qm status` showed `running`; after destroy the VM configuration was gone |
+
+Notes:
+
+- A config value sent as `-d net0=virtio=...` without URL encoding gave `no sdn vnet ID specified`; the same value URL-encoded
+  (`--data-urlencode`) worked. The client must URL-encode every value.
+- Absolute-path `import-from` is refused for tokens (source reading); it worked here only as root on the node's shell.
+- The task status call (`GET /nodes/<node>/tasks/<upid>/status`) returns `status` (`running` or `stopped`) and `exitstatus` (`OK` or an error text).
