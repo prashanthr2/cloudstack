@@ -136,7 +136,7 @@ of type `token`, both with propagate on):
 | `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | lists the VMs (a test VM created with `qm create` showed up) |
 
 At this stage everything is read-only and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is enough.
-### Permissions for primary storage (Phase 2; from the Proxmox source, lab confirmation pending: check S2 in design-phase2-storage.md)
+### Permissions for primary storage (Phase 2; from the Proxmox source, create and delete confirmed on the lab)
 
 | API call | Used for | Privilege (expected) |
 |---|---|---|
@@ -145,9 +145,13 @@ At this stage everything is read-only and the built-in `PVEAuditor` role (it con
 | `DELETE /storage/{id}` | remove the entry | `Datastore.Allocate` on `/storage` |
 | `GET /nodes/{node}/storage/{id}/status` | state and capacity on a node | `Datastore.Audit` or `Datastore.AllocateSpace` on the entry |
 
+Confirmed on the lab with a privilege-separated token: with only `PVEAuditor` creating storage is refused (403); `PVEDatastoreAdmin` on
+`/storage` for the token alone is still refused; with the role on the **user as well** as the token, create and delete work.
+
 Privileges are granted through a **role** on a **path**, not one by one; for the storage calls give the token a role that contains
 `Datastore.Allocate` (the built-in `PVEDatastoreAdmin`) on `/storage`, for example
-`pveum acl modify /storage --tokens '<token id>' --roles PVEDatastoreAdmin`. The privileges needed for VM and network management
+`pveum acl modify /storage --tokens '<token id>' --roles PVEDatastoreAdmin` **and** the same for the owning user
+(`--users <user>`). The privileges needed for VM and network management
 are listed here as those features are added.
 
 **A token without permissions looks half-working.** `version` and `nodes` answer 200, `cluster/status` answers 403, node

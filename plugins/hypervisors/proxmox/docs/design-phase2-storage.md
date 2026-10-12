@@ -137,10 +137,10 @@ Either way: **data volumes** need an owner VM id too, so they are created when a
 | # | Question | Result (2026-10-12) |
 |---|---|---|
 | S1 | Does Proxmox accept a pool uuid as a storage id? | **Only if it starts with a letter**: `aa577022-...` was accepted; `1a577022-b02f-4473-a971-da91d3a82b07` was refused with "contains illegal characters". Hence the `cs-` prefix. |
-| S2 | Which privileges does the API need to create and remove storage? | **From the source:** `Datastore.Allocate` on `/storage` for create, change and delete; `Datastore.Audit` or `Datastore.AllocateSpace` on the entry to list it or read its status; `Datastore.AllocateSpace` to allocate a disk. Lab confirmation with the `pveaudit` token still pending (steps below). |
+| S2 | Which privileges does the API need to create and remove storage? | **Confirmed on the lab (2026-10-12):** with only `PVEAuditor`, creating is refused (403); granting `PVEDatastoreAdmin` on `/storage` to the **token only** is still refused; granting it to the **user as well** makes create and delete work. So `Datastore.Allocate` on `/storage` is needed, on the token **and** its owning user (the token's rights are intersected with the user's). |
 | S3 | Do mount options pass through? | **Yes**, `--options` works. |
 | S4 | Fields of the status call | **Confirmed:** `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`; the figures match the NFS server. |
-| S5 | What does creating an entry that already exists do through the API? | **From the source:** it fails with "storage ID ... already defined" and changes nothing. Lab confirmation pending. |
+| S5 | What does creating an entry that already exists do through the API? | **Confirmed on the lab (2026-10-12):** the first create succeeds; creating the same id again, also with a different export, fails with "storage ID ... already defined" and changes nothing. |
 | S6 | Can `import` be a content type on an NFS entry? | **Yes**, accepted. |
 | S7 | Can a disk image be created for a VM id that has no VM? | **Unclear.** Reported "no" on the lab, but the error message was not recorded. The source says it works: `vdisk_alloc` and `alloc_image` create `images/<vmid>/<name>` without checking that the VM exists. **Re-run and record the exact error** (the entry used must have `images` among its content types). |
 | S1b | Is the 39-character `cs-<uuid>` id (also with a digit after the prefix) accepted? | **Yes**: lab check p1 created `cs-<uuid>` through the API. |

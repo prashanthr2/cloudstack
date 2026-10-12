@@ -127,7 +127,8 @@ Spike results on the lab (details in design-phase2-storage.md, section 8):
 | S4 | the status call returns `active`, `avail`, `content`, `enabled`, `shared`, `total`, `type`, `used`, matching the NFS server |
 | S6 | `import` is accepted as a content type on an NFS entry |
 | S7 | reported as "cannot create a disk for a VM id with no VM", but the error was not recorded and the Proxmox source says it should work (`vdisk_alloc` does not check the VM): to be re-run with the exact message; the volume design has two shapes depending on it (design section 7) |
-| S2, S5 | answered from the Proxmox source (design section 8, "Source reading"); lab confirmation pending |
+| S2 | confirmed on the lab: `PVEAuditor` alone cannot create storage (403); `PVEDatastoreAdmin` on `/storage` for the token alone is still refused; for the token **and** its user it works |
+| S5 | confirmed on the lab: creating an existing id, also with a different export, fails with "storage ID ... already defined" |
 | S1b | confirmed by p1 (`cs-<uuid>` created through the API) |
 | S8 | confirmed: the CloudStack pool is mounted at `/mnt/<pool uuid>` (`findmnt -t nfs,nfs4` on a node) |
 
@@ -163,8 +164,6 @@ API). Remaining, none of which blocks the next phase:
 |---|---|---|
 | p7 | add the same pool again after it was removed (the share is still mounted), written exactly as before | the pool gets the same uuid (it is derived from server and path), and Proxmox reuses the leftover mount at `/mnt/<uuid>` **Pass** (2026-10-12): same uuid and same Proxmox entry, and `findmnt -t nfs,nfs4` shows a single mount for it, so the leftover mount was reused |
 | p8 | try to set NFS mount options on a Proxmox pool through the API: `details[0].nfsmountopts=vers=3` | **Expected: refused.** CloudStack core only allows NFS mount options for KVM and the simulator (`StorageManagerImpl.checkNFSMountOptionsForCreate` / `ForUpdate`), and the UI field is shown for KVM only, so mount options are not supported for Proxmox pools; the check confirms the refusal and its message **Pass** (2026-10-12): `cmk create storagepool ... details[0].nfsmountopts=vers=3` on a Proxmox cluster is refused with "NFS options can not be set for the hypervisor type Proxmox" (HTTP 530) |
-| S2 | with the `pveaudit` token and the `PVEDatastoreAdmin` role on `/storage`: adding and removing a pool works; without the role it fails with 403 | so far everything ran with the unrestricted `root@pam!cloudstack` token; the privileges come from the source only |
-| S5 | creating a storage with an id that exists, through the API, gives "already defined" | from the source only; the plugin tolerates it and is unit tested |
 | S7 | re-run with the exact error message | needed for the Phase 3 volume design, not for Phase 2 |
 
 Observed with the `findmnt` check (2026-10-12): besides the pool's own mount at `/mnt/<pool uuid>`, the nodes still had mounts left by the
