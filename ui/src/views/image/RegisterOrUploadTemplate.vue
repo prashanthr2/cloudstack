@@ -985,6 +985,12 @@ export default {
             description: 'VHD'
           })
           break
+        case 'Proxmox':
+          format.push({
+            id: 'QCOW2',
+            description: 'QCOW2'
+          })
+          break
         case 'Simulator':
           format.push({
             id: 'VHD',

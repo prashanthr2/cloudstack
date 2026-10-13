@@ -266,6 +266,8 @@ Details that are easy to get wrong:
   reserved by Proxmox, so a create that fails with "already exists" is retried with a new id (3 attempts).
 - Token privileges needed on top of storage: see design-phase3-vm-deployment.md, 4.9 (`PVEVMAdmin`, `PVESDNUser` on
   `/sdn/zones/localnetwork`).
+- **UI:** the register and upload template form lists the formats per hypervisor in `RegisterOrUploadTemplate.vue`; Proxmox offers `QCOW2`
+  only (found on the lab: the list was empty). The UI needs a rebuild or the dev server to show it.
 - Not yet handled (answered as unsupported): data volumes, attach and detach, resize, ISO, snapshots, console, live migration, VM stats.
 
 ## Known gaps and open questions
