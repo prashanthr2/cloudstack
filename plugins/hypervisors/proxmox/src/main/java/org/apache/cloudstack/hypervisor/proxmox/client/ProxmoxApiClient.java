@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,8 @@ public class ProxmoxApiClient implements Closeable {
     public static final int DEFAULT_PORT = 8006;
     public static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 5;
     public static final int DEFAULT_READ_TIMEOUT_SECONDS = 15;
+    /** How often a running task is looked at. */
+    static final long TASK_POLL_MILLIS = 1000;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final List<String> baseUrls;
@@ -483,7 +486,7 @@ public class ProxmoxApiClient implements Closeable {
 
     /** Adds an NFS storage entry for the whole cluster; every node mounts the share at {@code mountPath}. */
     public void createNfsStorage(String id, String server, String export, String mountPath, String content, String options) {
-        Map<String, String> form = new java.util.LinkedHashMap<>();
+        Map<String, String> form = new LinkedHashMap<>();
         form.put("storage", id);
         form.put("type", "nfs");
         form.put("server", server);
@@ -551,6 +554,266 @@ public class ProxmoxApiClient implements Closeable {
         }
         return new StorageStatus(data.path("active").asInt(0) == 1, data.path("enabled").asInt(1) == 1, data.path("total").asLong(0),
                 data.path("used").asLong(0), data.path("avail").asLong(0));
+    }
+
+    /**
+     * Adds a read-only NFS entry that exposes one folder as "import" content, so that a VM can be created from the qcow2 files in it
+     * ({@code import-from=<id>:import/<file>}). A volume name cannot contain a folder, hence one entry per template folder.
+     *
+     * @param folder the folder inside the export that holds the file, e.g. "template/tmpl/1/4"
+     */
+    public void createImportStorage(String id, String server, String export, String folder, String options) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "nfs");
+        form.put("server", server);
+        form.put("export", export);
+        form.put("content", "import");
+        form.put("content-dirs", "import=" + folder);
+        if (StringUtils.isNotBlank(options)) {
+            form.put("options", options);
+        }
+        post("/storage", form);
+    }
+
+    /** A file in the "import" content of a storage entry. */
+    public static class ImportVolume {
+        private final String volumeId;
+        private final String format;
+        private final long sizeBytes;
+
+        public ImportVolume(String volumeId, String format, long sizeBytes) {
+            this.volumeId = volumeId;
+            this.format = format;
+            this.sizeBytes = sizeBytes;
+        }
+
+        /** For example "cst-3f2a:import/6ddd9e96.qcow2". */
+        public String getVolumeId() {
+            return volumeId;
+        }
+
+        public String getFormat() {
+            return format;
+        }
+
+        public long getSizeBytes() {
+            return sizeBytes;
+        }
+    }
+
+    public List<ImportVolume> listImportVolumes(String node, String storageId) {
+        List<ImportVolume> volumes = new ArrayList<>();
+        JsonNode data = get("/nodes/" + node + "/storage/" + storageId + "/content?content=import");
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                volumes.add(new ImportVolume(entry.path("volid").asText(null), entry.path("format").asText(null), entry.path("size").asLong(0)));
+            }
+        }
+        return volumes;
+    }
+
+    /** The next free VM id of the cluster. Not reserved: another caller can be given the same id, so a create may have to be retried. */
+    public long nextVmId() {
+        JsonNode data = get("/cluster/nextid");
+        if (data == null || !(data.isNumber() || data.isTextual())) {
+            throw new ProxmoxApiException("Proxmox did not return a free VM id");
+        }
+        return data.asLong();
+    }
+
+    /** Where a VM is and what it is doing, from the cluster-wide resource list. */
+    public static class VmLocation {
+        private final long vmid;
+        private final String name;
+        private final String node;
+        private final String status;
+
+        public VmLocation(long vmid, String name, String node, String status) {
+            this.vmid = vmid;
+            this.name = name;
+            this.node = node;
+            this.status = status;
+        }
+
+        public long getVmid() {
+            return vmid;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public String getNode() {
+            return node;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public boolean isRunning() {
+            return "running".equals(status);
+        }
+    }
+
+    /** All QEMU VMs of the cluster (templates left out), wherever they are. */
+    public List<VmLocation> listClusterVms() {
+        List<VmLocation> vms = new ArrayList<>();
+        JsonNode data = get("/cluster/resources?type=vm");
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                if (!"qemu".equals(entry.path("type").asText()) || entry.path("template").asInt(0) == 1) {
+                    continue;
+                }
+                vms.add(new VmLocation(entry.path("vmid").asLong(), entry.path("name").asText(null), entry.path("node").asText(null),
+                        entry.path("status").asText("unknown")));
+            }
+        }
+        return vms;
+    }
+
+    /** The VM with the given id, or null. */
+    public VmLocation findVm(long vmid) {
+        for (VmLocation vm : listClusterVms()) {
+            if (vm.getVmid() == vmid) {
+                return vm;
+            }
+        }
+        return null;
+    }
+
+    /** The VM with the given name (the CloudStack instance name), or null. */
+    public VmLocation findVmByName(String name) {
+        for (VmLocation vm : listClusterVms()) {
+            if (name.equals(vm.getName())) {
+                return vm;
+            }
+        }
+        return null;
+    }
+
+    /** Creates a VM; returns the task id. {@code params} are the Proxmox options (name, memory, scsi0 ...). */
+    public String createVm(String node, long vmid, Map<String, String> params) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("vmid", Long.toString(vmid));
+        form.putAll(params);
+        return taskId(post("/nodes/" + node + "/qemu", form));
+    }
+
+    /** Changes the configuration of a VM (applied at once while it is stopped). */
+    public void updateVmConfig(String node, long vmid, Map<String, String> params) {
+        put("/nodes/" + node + "/qemu/" + vmid + "/config", params);
+    }
+
+    /** Grows a disk to {@code size} (for example "20G"; Proxmox never shrinks a disk). */
+    public void resizeDisk(String node, long vmid, String disk, String size) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("disk", disk);
+        form.put("size", size);
+        put("/nodes/" + node + "/qemu/" + vmid + "/resize", form);
+    }
+
+    public String startVm(String node, long vmid) {
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/start", null));
+    }
+
+    /** Hard stop, like pulling the power. */
+    public String stopVm(String node, long vmid) {
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/stop", null));
+    }
+
+    /** Asks the guest to shut down; after {@code timeoutSeconds} the VM is stopped by force. */
+    public String shutdownVm(String node, long vmid, int timeoutSeconds) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("timeout", Integer.toString(timeoutSeconds));
+        form.put("forceStop", "1");
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/shutdown", form));
+    }
+
+    public String rebootVm(String node, long vmid) {
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/reboot", null));
+    }
+
+    /** Deletes a VM and the disks it owns (a disk owned by another VM id is kept). */
+    public String destroyVm(String node, long vmid) {
+        return taskId(delete("/nodes/" + node + "/qemu/" + vmid + "?purge=1"));
+    }
+
+    /** Moves a VM to another node (a stopped VM on shared storage only moves its configuration). */
+    public String migrateVm(String node, long vmid, String target) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("target", target);
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/migrate", form));
+    }
+
+    private static String taskId(JsonNode data) {
+        if (data == null || !data.isTextual() || !data.asText().startsWith("UPID:")) {
+            throw new ProxmoxApiException("Proxmox did not return a task id");
+        }
+        return data.asText();
+    }
+
+    /**
+     * Waits for a Proxmox task to end. Throws when it fails, with Proxmox's own reason, or when it is still running after
+     * {@code timeoutSeconds} (the task itself is not cancelled).
+     */
+    public void waitForTask(String upid, int timeoutSeconds) {
+        String node = taskNode(upid);
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        while (true) {
+            JsonNode status = get("/nodes/" + node + "/tasks/" + upid + "/status");
+            if ("stopped".equals(status.path("status").asText())) {
+                String exit = status.path("exitstatus").asText("");
+                if (exit.equals("OK") || exit.startsWith("WARNINGS")) {
+                    return;
+                }
+                throw new ProxmoxApiException(String.format("Proxmox task %s failed: %s%s", taskType(upid), exit, taskLogTail(node, upid)));
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new ProxmoxApiException(String.format("Proxmox task %s did not finish within %d seconds", taskType(upid), timeoutSeconds));
+            }
+            pause(TASK_POLL_MILLIS);
+        }
+    }
+
+    protected void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProxmoxApiException("Interrupted while waiting for a Proxmox task");
+        }
+    }
+
+    /** "UPID:node:pid:pstart:starttime:type:id:user:" */
+    static String taskNode(String upid) {
+        String[] parts = upid.split(":");
+        if (parts.length < 6) {
+            throw new ProxmoxApiException("Not a Proxmox task id: " + upid);
+        }
+        return parts[1];
+    }
+
+    static String taskType(String upid) {
+        String[] parts = upid.split(":");
+        return parts.length > 5 ? parts[5] : upid;
+    }
+
+    private String taskLogTail(String node, String upid) {
+        try {
+            JsonNode log = get("/nodes/" + node + "/tasks/" + upid + "/log?limit=500");
+            if (log == null || !log.isArray() || log.size() == 0) {
+                return "";
+            }
+            List<String> lines = new ArrayList<>();
+            for (JsonNode line : log) {
+                lines.add(line.path("t").asText());
+            }
+            return " (" + String.join(" | ", lines.subList(Math.max(0, lines.size() - 5), lines.size())) + ")";
+        } catch (ProxmoxApiException e) {
+            return "";
+        }
     }
 
     @Override
