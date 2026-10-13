@@ -73,8 +73,8 @@ Why one entry per template: the entry can map `import` to **one** folder (`conte
 as in test p5) per template in use.
 
 **Limits:** NFS secondary stores only; the template must be on the secondary store (any registration method, uploaded or created from a
-volume or snapshot, works the same). Not yet proven: creating the entry with the token through the API, and the mount on every node
-(checks S9-7, S9-8).
+volume or snapshot, works the same). Proven in S9-7 and S9-8: the token creates and deletes the entry, and a node that did not receive the command mounts it
+and imports from it.
 
 ### 4.2 Root volume: the VM is born with its disk
 
@@ -186,15 +186,11 @@ carries a fallback); `getHypervisorTypeFromFormat(QCOW2)` returns KVM (affects v
 
 ## 8. Checks
 
-Done (see test-log.md, "Phase 3 spikes"): S9-0 to S9-6, i.e. the import from secondary by token, the NIC on `vmbr1` with `SDN.Use`, start,
-stop, destroy, and the per-template `nfs` entry.
+Done (see test-log.md, "Phase 3 spikes"): S9-0 to S9-8, i.e. the import from secondary by token, the NIC on `vmbr1` with `SDN.Use`, start,
+stop, destroy, the per-template `nfs` entry (created by token, usable from any node).
 
 Still to run before building:
 
-- **S9-7:** create the per-template `nfs` entry with the **token** through `POST /storage` (needs `Datastore.Allocate`; include
-  `content-dirs` and `options`), and remove it with `DELETE /storage/<id>`.
-- **S9-8:** with the entry created, check `findmnt` on a second node and create the VM with `POST /nodes/<second node>/qemu`, to confirm a
-  node that did not receive the command can import (the entry is cluster-wide).
 - **P4:** stop a VM and move it offline to another node (`POST .../qemu/<vmid>/migrate`), with its disk on the shared NFS pool.
 - **Timing:** how long a full import takes for the lab's template (put `time` in front of `qm create`).
 - `GET /cluster/nextid` (not in the mirrored source) and the task `log` call for the error text of a failed task.

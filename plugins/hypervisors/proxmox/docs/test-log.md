@@ -187,9 +187,13 @@ Lab: Proxmox 8.4.21, secondary NFS mounted by hand at `/mnt/secstorage` on one n
 | S9-5 | one `dir` entry for the whole store with `content-dirs import=template` and a nested volume id `import/tmpl/1/4/<file>` | **Refused:** `unable to parse directory volume name`. The volume name must be a plain file name directly in the entry's `import` folder, so one entry per template folder is needed |
 | S9-6 | `nfs` entry `cst-test` (`--server`, `--export` = the secondary export, `--content import --content-dirs import=template/tmpl/1/4 --options vers=3,ro`), created as root; then the **token** creates a VM with `import-from=cst-test:import/<uuid>.qcow2` | **Pass.** The listing shows the template (`qcow2`, `import`, 1769537536 bytes); the VM was created; after `DELETE ...?purge=1` and `pvesm remove cst-test` the primary pool was empty (no disk left behind). Not yet tested: creating the entry by token through the API, and the mount on a second node |
 
+| S9-7 | the **token** creates the per-template `nfs` entry through `POST /storage` (`type=nfs`, `server`, `export`, `content=import`, `content-dirs`, `options=vers=3,ro`) and deletes it with `DELETE /storage/<id>` | **Pass.** Create returned `{"data":{"type":"nfs","storage":"cst-test"}}`. The first delete printed an empty body and the entry was gone (a second delete answered HTTP 500 `storage 'cst-test' does not exist`). Needed `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`); without it: `Permission check failed (/storage, Datastore.Allocate)` |
+| S9-8 | with that entry, the token creates the VM through **another node** (`POST /nodes/<node2>/qemu`, `import-from=cst-test:import/<uuid>.qcow2`) | **Pass.** The VM exists on node 2, stopped, with the 8 GB boot disk, and node 2 has the share mounted (`/mnt/pve/cst-test`, `ro,vers=3`). Both nodes keep the mount after the entry is removed (as in p5). Destroy by token on node 2 returned a task id |
+
 Notes:
 
 - A config value sent as `-d net0=virtio=...` without URL encoding gave `no sdn vnet ID specified`; the same value URL-encoded
   (`--data-urlencode`) worked. The client must URL-encode every value.
 - Absolute-path `import-from` is refused for tokens (source reading); it worked here only as root on the node's shell.
+- Successful `DELETE /storage/<id>` has an empty body; the client must not require JSON there.
 - The task status call (`GET /nodes/<node>/tasks/<upid>/status`) returns `status` (`running` or `stopped`) and `exitstatus` (`OK` or an error text).
