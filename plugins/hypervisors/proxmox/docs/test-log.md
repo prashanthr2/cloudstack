@@ -200,3 +200,12 @@ Notes:
 - Absolute-path `import-from` is refused for tokens (source reading); it worked here only as root on the node's shell.
 - Successful `DELETE /storage/<id>` has an empty body; the client must not require JSON there.
 - The task status call (`GET /nodes/<node>/tasks/<upid>/status`) returns `status` (`running` or `stopped`) and `exitstatus` (`OK` or an error text).
+
+### Phase 3 core changes and SQL (2026-10-13)
+
+- Unit tests: `VolumeDaoImplTest` (a Proxmox volume's format is QCOW2) and `NetworkModelImplTest` (Proxmox reads the KVM traffic label);
+  the engine/schema and server suites touching these classes pass.
+- The upgrade SQL (hypervisor capabilities row, guest OS to `ostype` mapping) was run against a scratch MySQL database with sample
+  guest OS names, twice (the second run adds nothing). It found one wrong mapping, "Other Linux (64-bit)" -> `other`, which was fixed so
+  Linux entries named "Other ..." map to `l26`. BSD, Apple, Novell and DOS guests map to `other`, as `l26` is documented as a Linux kernel.
+- Template space reservation (`getBytesRequiredForTemplate`) needs no change: it only applies to managed storage, and the NFS pool is not.

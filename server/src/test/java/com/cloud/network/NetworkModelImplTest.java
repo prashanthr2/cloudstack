@@ -51,6 +51,7 @@ import com.cloud.dc.DataCenter;
 import com.cloud.dc.DataCenterVO;
 import com.cloud.dc.VlanVO;
 import com.cloud.exception.InvalidParameterValueException;
+import com.cloud.hypervisor.Hypervisor.HypervisorType;
 import com.cloud.network.addr.PublicIp;
 import com.cloud.network.dao.IPAddressVO;
 import com.cloud.network.dao.NetworkDao;
@@ -60,6 +61,8 @@ import com.cloud.network.dao.NetworkVO;
 import com.cloud.network.dao.PhysicalNetworkDao;
 import com.cloud.network.dao.PhysicalNetworkServiceProviderDao;
 import com.cloud.network.dao.PhysicalNetworkServiceProviderVO;
+import com.cloud.network.dao.PhysicalNetworkTrafficTypeDao;
+import com.cloud.network.dao.PhysicalNetworkTrafficTypeVO;
 import com.cloud.network.element.NetworkElement;
 import com.cloud.network.element.VpcVirtualRouterElement;
 import com.cloud.network.vpc.VpcVO;
@@ -451,5 +454,19 @@ public class NetworkModelImplTest {
 
         Mockito.verify(physicalNetworkServiceProviderDao, Mockito.times(1)).listAll();
         Mockito.verify(physicalNetworkServiceProviderDao, Mockito.never()).listBy(Mockito.anyLong());
+    }
+
+    @Test
+    public void proxmoxUsesTheKvmTrafficLabels() {
+        PhysicalNetwork physicalNetwork = mock(PhysicalNetwork.class);
+        when(physicalNetwork.getId()).thenReturn(5L);
+        doReturn(physicalNetwork).when(networkModel).getOnePhysicalNetworkByZoneAndTrafficType(1L, Networks.TrafficType.Guest);
+        PhysicalNetworkTrafficTypeVO traffic = mock(PhysicalNetworkTrafficTypeVO.class);
+        when(traffic.getKvmNetworkLabel()).thenReturn("vmbr1");
+        PhysicalNetworkTrafficTypeDao trafficTypeDao = mock(PhysicalNetworkTrafficTypeDao.class);
+        when(trafficTypeDao.findBy(5L, Networks.TrafficType.Guest)).thenReturn(traffic);
+        networkModel._pNTrafficTypeDao = trafficTypeDao;
+
+        assertEquals("vmbr1", networkModel.getDefaultGuestTrafficLabel(1L, HypervisorType.Proxmox));
     }
 }

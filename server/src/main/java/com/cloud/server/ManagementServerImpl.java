@@ -3129,8 +3129,9 @@ public class ManagementServerImpl extends MutualExclusiveIdsManagerBase implemen
 
         final HypervisorType hypervisorType = HypervisorType.getType(hypervisor);
 
-        if (!(hypervisorType == HypervisorType.KVM || hypervisorType == HypervisorType.XenServer || hypervisorType == HypervisorType.VMware)) {
-            throw new InvalidParameterValueException("Please specify a valid hypervisor : XenServer, KVM or VMware");
+        if (!(hypervisorType == HypervisorType.KVM || hypervisorType == HypervisorType.XenServer || hypervisorType == HypervisorType.VMware
+                || hypervisorType == HypervisorType.Proxmox)) {
+            throw new InvalidParameterValueException("Please specify a valid hypervisor : XenServer, KVM, VMware or Proxmox");
         }
 
         final HypervisorCapabilitiesVO hypervisorCapabilities = _hypervisorCapabilitiesDao.findByHypervisorTypeAndVersion(hypervisorType, hypervisorVersion);

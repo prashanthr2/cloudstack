@@ -385,7 +385,7 @@ public class VolumeDaoImpl extends GenericDaoBase<VolumeVO, Long> implements Vol
     @Override
     public ImageFormat getImageFormat(Long volumeId) {
         HypervisorType type = getHypervisorType(volumeId);
-        if (type.equals(HypervisorType.KVM)) {
+        if (type.equals(HypervisorType.KVM) || type.equals(HypervisorType.Proxmox)) {
             return ImageFormat.QCOW2;
         } else if (type.equals(HypervisorType.XenServer)) {
             return ImageFormat.VHD;

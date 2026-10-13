@@ -117,7 +117,8 @@ public class PhysicalNetworkTrafficTypeDaoImpl extends GenericDaoBase<PhysicalNe
         SearchCriteria<String> sc = null;
         if (hType == HypervisorType.XenServer) {
             sc = xenAllFieldsSearch.create();
-        } else if (hType == HypervisorType.KVM) {
+        } else if (hType == HypervisorType.KVM || hType == HypervisorType.Proxmox) {
+            // a Proxmox node names its bridges the way a KVM host does, so it uses the KVM label
             sc = kvmAllFieldsSearch.create();
         } else if (hType == HypervisorType.VMware) {
             sc = vmWareAllFieldsSearch.create();

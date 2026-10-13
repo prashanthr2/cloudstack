@@ -103,3 +103,32 @@ CREATE TABLE IF NOT EXISTS `cloud`.`instance_boot_group_details` (
 
 -- Add Proxmox to the list of hypervisors
 UPDATE `cloud`.`configuration` SET value = CONCAT(value, ',Proxmox') WHERE name = 'hypervisor.list' AND value NOT LIKE '%Proxmox%';
+
+-- Proxmox capabilities (no per-version rows: the default row applies to every Proxmox version)
+INSERT IGNORE INTO `cloud`.`hypervisor_capabilities`(uuid, hypervisor_type, hypervisor_version, max_guests_limit, security_group_enabled, max_data_volumes_limit, max_hosts_per_cluster, storage_motion_supported, vm_snapshot_enabled) VALUES (UUID(), 'Proxmox', 'default', 1000, 0, 30, 32, 0, 0);
+
+-- Guest OS mappings for Proxmox: the name is the Proxmox "ostype" (other, wxp, w2k, w2k3, w2k8, wvista, win7, win8, win10, win11, l24, l26, solaris)
+INSERT INTO `cloud`.`guest_os_hypervisor` (uuid, hypervisor_type, hypervisor_version, guest_os_name, guest_os_id, created, is_user_defined)
+SELECT UUID(), 'Proxmox', 'default',
+    CASE
+        WHEN os.display_name LIKE 'Windows XP%' THEN 'wxp'
+        WHEN os.display_name LIKE 'Windows 2000%' THEN 'w2k'
+        WHEN os.display_name LIKE 'Windows Server 2003%' THEN 'w2k3'
+        WHEN os.display_name LIKE 'Windows Server 2008%' THEN 'w2k8'
+        WHEN os.display_name LIKE 'Windows Vista%' THEN 'wvista'
+        WHEN os.display_name LIKE 'Windows 7%' THEN 'win7'
+        WHEN os.display_name LIKE 'Windows 8%' OR os.display_name LIKE 'Windows Server 2012%' THEN 'win8'
+        WHEN os.display_name LIKE 'Windows 10%' OR os.display_name LIKE 'Windows Server 2016%' OR os.display_name LIKE 'Windows Server 2019%' THEN 'win10'
+        WHEN os.display_name LIKE 'Windows 11%' OR os.display_name LIKE 'Windows Server 2022%' OR os.display_name LIKE 'Windows Server 2025%' THEN 'win11'
+        WHEN os.display_name LIKE 'Windows%' THEN 'other'
+        WHEN os.display_name LIKE 'Solaris%' OR os.display_name LIKE 'OpenSolaris%' THEN 'solaris'
+        WHEN os.display_name LIKE '%BSD%' OR os.display_name LIKE 'Apple%' OR os.display_name LIKE 'Mac OS%' OR os.display_name LIKE 'Novell%' OR os.display_name LIKE 'DOS%' THEN 'other'
+        WHEN os.display_name LIKE 'Other%' AND os.display_name NOT LIKE '%PV%' AND os.display_name NOT LIKE '%Linux%' AND os.display_name NOT LIKE '%Ubuntu%' THEN 'other'
+        WHEN os.display_name = 'None' THEN 'other'
+        ELSE 'l26'
+    END,
+    os.id, NOW(), 0
+FROM `cloud`.`guest_os` os
+WHERE os.removed IS NULL
+  AND NOT EXISTS (SELECT 1 FROM `cloud`.`guest_os_hypervisor` gh
+                  WHERE gh.hypervisor_type = 'Proxmox' AND gh.hypervisor_version = 'default' AND gh.guest_os_id = os.id);

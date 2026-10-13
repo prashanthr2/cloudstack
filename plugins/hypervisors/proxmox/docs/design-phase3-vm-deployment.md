@@ -164,8 +164,8 @@ Consistent with KVM, XenServer and VMware, the guest OS mapping lives in `guest_
   | Windows 11, Windows Server 2022, Windows Server 2025 | `win11` |
   | Solaris, OpenSolaris | `solaris` |
   | Linux with a 2.4 kernel (none in the stock list) | `l24` |
-  | all other Linux and BSD | `l26` |
-  | anything else, including `Other` | `other` |
+  | BSD, Apple, Novell, DOS, `Other` (not the PV entries), `None`, an unrecognised Windows | `other` |
+  | all other guest OS (Linux, and the `Other PV` entries) | `l26` |
 
   The values are the ones Proxmox lists for the `ostype` option, which says what each enables ("special optimization/features for specific
   operating systems"). New guest OS entries added by later upgrade scripts add a Proxmox row next to the KVM one with
@@ -186,7 +186,6 @@ Roles for **both the user and the token**: `PVEVMAdmin` on `/vms`, `PVEDatastore
 | Where | Change | Why |
 |---|---|---|
 | `VolumeOrchestrator.getSupportedImageFormatForCluster` (and `VolumeDaoImpl.getImageFormat`) | `Proxmox -> QCOW2` | otherwise the volume's format is null |
-| `StorageManagerImpl.getBytesRequiredForTemplate` | add Proxmox | the template's space on the pool is not reserved otherwise |
 | `PhysicalNetworkTrafficTypeDaoImpl.getNetworkTag` and four branches in `NetworkModelImpl` | Proxmox reads the KVM label column | otherwise the NIC has no bridge (an assertion fails with `-ea`) |
 | `schema-42300to2400.sql` | a `hypervisor_capabilities` row for Proxmox (version `default`) | attaching a volume or a VM snapshot dereferences it without a null check; the guest OS lookup uses it for the version fallback |
 | `schema-42300to2400.sql` | `guest_os_hypervisor` rows for Proxmox (4.8) | the guest OS mapping, as for the other hypervisors |

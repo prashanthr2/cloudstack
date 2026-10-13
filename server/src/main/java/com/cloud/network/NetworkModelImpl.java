@@ -1568,7 +1568,7 @@ public class NetworkModelImpl extends ManagerBase implements NetworkModel, Confi
                 String label = null;
                 if (hypervisorType.equals(HypervisorType.XenServer)) {
                     label = mgmtTraffic.getXenNetworkLabel();
-                } else if (hypervisorType.equals(HypervisorType.KVM)) {
+                } else if (hypervisorType.equals(HypervisorType.KVM) || hypervisorType.equals(HypervisorType.Proxmox)) {
                     label = mgmtTraffic.getKvmNetworkLabel();
                 } else if (hypervisorType.equals(HypervisorType.VMware)) {
                     label = mgmtTraffic.getVmwareNetworkLabel();
@@ -1598,7 +1598,7 @@ public class NetworkModelImpl extends ManagerBase implements NetworkModel, Confi
                 String label = null;
                 if (hypervisorType.equals(HypervisorType.XenServer)) {
                     label = storageTraffic.getXenNetworkLabel();
-                } else if (hypervisorType.equals(HypervisorType.KVM)) {
+                } else if (hypervisorType.equals(HypervisorType.KVM) || hypervisorType.equals(HypervisorType.Proxmox)) {
                     label = storageTraffic.getKvmNetworkLabel();
                 } else if (hypervisorType.equals(HypervisorType.VMware)) {
                     label = storageTraffic.getVmwareNetworkLabel();
@@ -2165,7 +2165,7 @@ public class NetworkModelImpl extends ManagerBase implements NetworkModel, Confi
                 String label = null;
                 if (hypervisorType.equals(HypervisorType.XenServer)) {
                     label = publicTraffic.getXenNetworkLabel();
-                } else if (hypervisorType.equals(HypervisorType.KVM)) {
+                } else if (hypervisorType.equals(HypervisorType.KVM) || hypervisorType.equals(HypervisorType.Proxmox)) {
                     label = publicTraffic.getKvmNetworkLabel();
                 } else if (hypervisorType.equals(HypervisorType.VMware)) {
                     label = publicTraffic.getVmwareNetworkLabel();
@@ -2195,7 +2195,7 @@ public class NetworkModelImpl extends ManagerBase implements NetworkModel, Confi
                 String label = null;
                 if (hypervisorType.equals(HypervisorType.XenServer)) {
                     label = guestTraffic.getXenNetworkLabel();
-                } else if (hypervisorType.equals(HypervisorType.KVM)) {
+                } else if (hypervisorType.equals(HypervisorType.KVM) || hypervisorType.equals(HypervisorType.Proxmox)) {
                     label = guestTraffic.getKvmNetworkLabel();
                 } else if (hypervisorType.equals(HypervisorType.VMware)) {
                     label = guestTraffic.getVmwareNetworkLabel();

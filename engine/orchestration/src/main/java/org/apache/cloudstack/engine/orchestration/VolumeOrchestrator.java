@@ -1322,7 +1322,7 @@ public class VolumeOrchestrator extends ManagerBase implements VolumeOrchestrati
     private ImageFormat getSupportedImageFormatForCluster(HypervisorType hyperType) {
         if (hyperType == HypervisorType.XenServer) {
             return ImageFormat.VHD;
-        } else if (hyperType == HypervisorType.KVM) {
+        } else if (hyperType == HypervisorType.KVM || hyperType == HypervisorType.Proxmox) {
             return ImageFormat.QCOW2;
         } else if (hyperType == HypervisorType.VMware) {
             return ImageFormat.OVA;

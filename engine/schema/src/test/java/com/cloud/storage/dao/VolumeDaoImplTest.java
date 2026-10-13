@@ -41,6 +41,8 @@ import org.mockito.Mockito;
 import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnitRunner;
 
+import com.cloud.hypervisor.Hypervisor;
+import com.cloud.storage.Storage;
 import com.cloud.storage.Volume;
 import com.cloud.storage.VolumeVO;
 import com.cloud.utils.db.Filter;
@@ -204,5 +206,12 @@ public class VolumeDaoImplTest {
         Mockito.verify(volumeDao, Mockito.times(1)).searchIncludingRemoved(
                 Mockito.any(SearchCriteria.class), Mockito.any(Filter.class), Mockito.eq(null),
                 Mockito.eq(false));
+    }
+
+    @Test
+    public void getImageFormatOfAProxmoxVolumeIsQcow2() {
+        Mockito.doReturn(Hypervisor.HypervisorType.Proxmox).when(volumeDao).getHypervisorType(5L);
+
+        Assert.assertEquals(Storage.ImageFormat.QCOW2, volumeDao.getImageFormat(5L));
     }
 }
