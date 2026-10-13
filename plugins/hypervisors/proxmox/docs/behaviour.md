@@ -257,6 +257,10 @@ Details that are easy to get wrong:
 
 - **The VM is created at root-volume time, on whichever node got the command.** CloudStack picks a random host of the pool for the volume
   commands, not the host the VM will run on, hence the offline move at start.
+- **CPU:** `sockets=1`, `cores` = the offering's CPU count, and `cpuunits` (Proxmox's CPU weight) = cores x speed as a share of the node's
+  cores x MHz, on a scale of 1 to 10000, the same idea as the shares the KVM plugin sets. Left at Proxmox's default (100) when the offering has no
+  speed. A CPU limit ("limit CPU use") is not mapped yet. The weight is relative, so Proxmox VMs not created by CloudStack, which keep 100, get
+  very little CPU next to CloudStack's VMs when the node is busy.
 - **A NIC's bridge is the zone's KVM traffic label** (the lab: `vmbr1`); the VLAN is the number in the network's broadcast URI. A NIC
   without a label fails the start with a message that says so.
 - **The guest OS mapping** is read from `guest_os_hypervisor` for `Proxmox` (`ostype`), `other` without a row (see the design, 4.8).

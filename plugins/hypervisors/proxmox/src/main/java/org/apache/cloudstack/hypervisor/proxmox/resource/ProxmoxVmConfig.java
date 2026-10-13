@@ -36,6 +36,7 @@ public final class ProxmoxVmConfig {
     /** Used when the guest OS has no mapping: Proxmox's own default for "unspecified OS". */
     public static final String DEFAULT_OS_TYPE = "other";
     private static final long MIB = 1024L * 1024L;
+    private static final int CPU_UNITS_MAX = 10000;
 
     private ProxmoxVmConfig() {
     }
@@ -43,14 +44,20 @@ public final class ProxmoxVmConfig {
     /**
      * The options set on a stopped VM just before it is started. The disks are not part of it: the root disk was attached when the VM
      * was created, together with the root volume.
+     *
+     * @param hostCpuCapacityMhz CPU cores times MHz of the node, to scale the CPU weight; 0 when unknown (the weight is then left at Proxmox's default)
      */
-    public static Map<String, String> startOptions(VirtualMachineTO vm) {
+    public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz) {
         Map<String, String> options = new LinkedHashMap<>();
         if (StringUtils.isNotBlank(vm.getName())) {
             options.put("name", vm.getName());
         }
         options.put("sockets", "1");
         options.put("cores", Integer.toString(vm.getCpus()));
+        Integer cpuUnits = cpuUnits(vm, hostCpuCapacityMhz);
+        if (cpuUnits != null) {
+            options.put("cpuunits", Integer.toString(cpuUnits));
+        }
         options.put("memory", Long.toString(Math.max(1, vm.getMaxRam() / MIB)));
         // CloudStack sizes the VM; Proxmox's memory ballooning would let it shrink below that
         options.put("balloon", "0");
@@ -63,6 +70,20 @@ public final class ProxmoxVmConfig {
             }
         }
         return options;
+    }
+
+    /**
+     * The VM's CPU weight, from the service offering's speed like the KVM plugin does: the CPU the VM asks for (cores times MHz) as a share of
+     * what the node has, on Proxmox's scale of 1 to 10000 (cgroup v2). A VM asking for the whole node gets 10000. Null when the offering
+     * has no speed or the node's capacity is unknown.
+     */
+    static Integer cpuUnits(VirtualMachineTO vm, long hostCpuCapacityMhz) {
+        Integer speed = vm.getMinSpeed() != null ? vm.getMinSpeed() : vm.getSpeed();
+        if (speed == null || speed <= 0 || hostCpuCapacityMhz <= 0) {
+            return null;
+        }
+        double units = Math.ceil((double) vm.getCpus() * speed * CPU_UNITS_MAX / hostCpuCapacityMhz);
+        return (int) Math.max(1, Math.min(CPU_UNITS_MAX, units));
     }
 
     /** {@code virtio=<mac>,bridge=<bridge>,tag=<vlan>,rate=<MB/s>,firewall=0} */

@@ -218,3 +218,15 @@ mapping (`ProxmoxVmConfigTest`), the command handlers (`ProxmoxVmHandlerTest`: t
 and without an offline move, stop, reboot, delete), the guest OS lookup (`ProxmoxHypervisorGuruTest`), and the new `proxmox.task.timeout` setting.
 
 Lab checks for Phase 3a are listed in design-phase3-vm-deployment.md, section 9, and still to be run.
+
+### Phase 3a on the lab (2026-10-13)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | register a QCOW2 template for Proxmox | **Pass.** Ready. Found: the Format list was empty for Proxmox in the UI (`RegisterOrUploadTemplate.vue`); fixed |
+| 2 | deploy a VM on an L2 network | **Pass.** Found: (a) CPU weight showed Proxmox's default 100 instead of following the offering's speed; fixed by setting `cpuunits` (cores x MHz as a share of the node, scale 1 to 10000, like KVM's shares). (b) Each template used leaves one `cst-` storage entry on the cluster (and a mount on every node): not practical for many templates, see the follow-up below |
+| 3 | start on a different node than the one that created the VM | **Pass.** The first deploy already landed on another node and was moved |
+| 4 | reboot, destroy and expunge | **Pass.** The VM and its disk are gone |
+| 5 | second deploy of the same template; stop of an already stopped VM | **Pass.** The entry is reused; the stop job succeeds |
+
+Not yet run: a template folder the nodes cannot read, a zone without a KVM traffic label.

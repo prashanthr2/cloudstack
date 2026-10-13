@@ -54,7 +54,7 @@ public class ProxmoxVmConfigTest {
 
     @Test
     public void aVmIsSizedByCloudStackWithoutBallooning() {
-        Map<String, String> options = ProxmoxVmConfig.startOptions(vm("win10", nic(0, "02:00:00:aa:bb:01", "vmbr1", "vlan://100", null)));
+        Map<String, String> options = ProxmoxVmConfig.startOptions(vm("win10", nic(0, "02:00:00:aa:bb:01", "vmbr1", "vlan://100", null)), 0);
 
         assertEquals("i-2-10-VM", options.get("name"));
         assertEquals("1", options.get("sockets"));
@@ -66,16 +66,49 @@ public class ProxmoxVmConfigTest {
         assertEquals("order=scsi0", options.get("boot"));
     }
 
+    private static VirtualMachineTO vmWithSpeed(int cpus, Integer minSpeed, Integer speed) {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        when(vm.getCpus()).thenReturn(cpus);
+        when(vm.getMinSpeed()).thenReturn(minSpeed);
+        when(vm.getSpeed()).thenReturn(speed);
+        return vm;
+    }
+
+    @Test
+    public void theCpuWeightIsTheShareOfTheNodeTheOfferingAsksFor() {
+        // 2 cores of 1000 MHz on a node of 3 cores x 2400 MHz: 2000 / 7200 of the scale of 10000
+        assertEquals(Integer.valueOf(2778), ProxmoxVmConfig.cpuUnits(vmWithSpeed(2, 1000, 1000), 7200));
+        // a VM asking for the whole node, or more, gets the maximum
+        assertEquals(Integer.valueOf(10000), ProxmoxVmConfig.cpuUnits(vmWithSpeed(3, 2400, 2400), 7200));
+        assertEquals(Integer.valueOf(10000), ProxmoxVmConfig.cpuUnits(vmWithSpeed(8, 3000, 3000), 7200));
+        // a tiny VM still gets a weight
+        assertEquals(Integer.valueOf(2), ProxmoxVmConfig.cpuUnits(vmWithSpeed(1, 1, 1), 7200));
+    }
+
+    @Test
+    public void theMinimumSpeedIsUsedWhenThereIsOneElseTheSpeed() {
+        assertEquals(Integer.valueOf(1389), ProxmoxVmConfig.cpuUnits(vmWithSpeed(1, 1000, 2000), 7200));
+        assertEquals(Integer.valueOf(2778), ProxmoxVmConfig.cpuUnits(vmWithSpeed(1, null, 2000), 7200));
+    }
+
+    @Test
+    public void withoutASpeedOrANodeCapacityTheWeightIsLeftAtProxmoxsDefault() {
+        assertNull(ProxmoxVmConfig.cpuUnits(vmWithSpeed(2, null, null), 7200));
+        assertNull(ProxmoxVmConfig.cpuUnits(vmWithSpeed(2, 1000, 1000), 0));
+        assertNull(ProxmoxVmConfig.cpuUnits(vmWithSpeed(2, 0, 0), 7200));
+        assertNull(ProxmoxVmConfig.startOptions(vm("l26"), 0).get("cpuunits"));
+    }
+
     @Test
     public void aGuestOsWithoutAMappingIsOther() {
-        assertEquals("other", ProxmoxVmConfig.startOptions(vm(null)).get("ostype"));
-        assertEquals("other", ProxmoxVmConfig.startOptions(vm("")).get("ostype"));
+        assertEquals("other", ProxmoxVmConfig.startOptions(vm(null), 0).get("ostype"));
+        assertEquals("other", ProxmoxVmConfig.startOptions(vm(""), 0).get("ostype"));
     }
 
     @Test
     public void everyNicBecomesANumberedVirtioInterface() {
         Map<String, String> options = ProxmoxVmConfig.startOptions(vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", "vlan://100", null),
-                nic(1, "02:00:00:aa:bb:02", "vmbr1", null, null)));
+                nic(1, "02:00:00:aa:bb:02", "vmbr1", null, null)), 0);
 
         assertEquals("virtio=02:00:00:aa:bb:01,bridge=vmbr1,tag=100,firewall=0", options.get("net0"));
         assertEquals("virtio=02:00:00:aa:bb:02,bridge=vmbr1,firewall=0", options.get("net1"));

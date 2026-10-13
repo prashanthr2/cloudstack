@@ -256,13 +256,19 @@ class ProxmoxVmHandler {
                 LOGGER.info("Moving Proxmox VM {} from node {} to {}", vmid, location.getNode(), node);
                 waitFor(client, client.migrateVm(location.getNode(), vmid, node));
             }
-            client.updateVmConfig(node, vmid, ProxmoxVmConfig.startOptions(vm));
+            client.updateVmConfig(node, vmid, ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client)));
             waitFor(client, client.startVm(node, vmid));
             return new StartAnswer(cmd);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not start {}: {}", node, vm.getName(), e.getMessage());
             return new StartAnswer(cmd, e.getMessage());
         }
+    }
+
+    /** What the node can deliver, cores times MHz; 0 when unknown. */
+    private long cpuCapacityMhz(ProxmoxApiClient client) {
+        ProxmoxApiClient.NodeStatus status = client.getNodeStatus(node);
+        return status == null ? 0 : status.getCpus() * status.getCpuMhz();
     }
 
     private static Long rootVmId(VirtualMachineTO vm) {
