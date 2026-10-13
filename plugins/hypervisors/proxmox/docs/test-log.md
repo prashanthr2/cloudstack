@@ -190,6 +190,9 @@ Lab: Proxmox 8.4.21, secondary NFS mounted by hand at `/mnt/secstorage` on one n
 | S9-7 | the **token** creates the per-template `nfs` entry through `POST /storage` (`type=nfs`, `server`, `export`, `content=import`, `content-dirs`, `options=vers=3,ro`) and deletes it with `DELETE /storage/<id>` | **Pass.** Create returned `{"data":{"type":"nfs","storage":"cst-test"}}`. The first delete printed an empty body and the entry was gone (a second delete answered HTTP 500 `storage 'cst-test' does not exist`). Needed `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`); without it: `Permission check failed (/storage, Datastore.Allocate)` |
 | S9-8 | with that entry, the token creates the VM through **another node** (`POST /nodes/<node2>/qemu`, `import-from=cst-test:import/<uuid>.qcow2`) | **Pass.** The VM exists on node 2, stopped, with the 8 GB boot disk, and node 2 has the share mounted (`/mnt/pve/cst-test`, `ro,vers=3`). Both nodes keep the mount after the entry is removed (as in p5). Destroy by token on node 2 returned a task id |
 
+| S9-9 (P4) | the token moves a **stopped** VM to another node: `POST /nodes/<node1>/qemu/<vmid>/migrate target=<node2>` (disk on the shared NFS pool) | **Pass.** Returns a task id; the VM is then listed on node 2, stopped, with its disk. No extra privilege beyond `PVEVMAdmin` |
+| S9-10 | import time for the lab's template | `time qm create ... import-from=...` took **7.6 s** for an 8 GiB disk (1.7 GB template) on the lab's NFS. Dependent on the NFS server and the template's real size |
+
 Notes:
 
 - A config value sent as `-d net0=virtio=...` without URL encoding gave `no sdn vnet ID specified`; the same value URL-encoded

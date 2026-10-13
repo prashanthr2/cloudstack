@@ -97,7 +97,7 @@ added later as an optimisation.
 
 1. Find the VM: the vmid from the root disk's volume path (`<vmid>/...`); fall back to the VM list by name.
 2. If the VM is on another node than the deployment host's node, move it first with an **offline migrate** to that node (a stopped VM on
-   shared storage only moves its configuration; **to verify**, P4).
+   shared storage only moves its configuration; confirmed by token in S9-9).
 3. Configure it with `POST .../config` from the `VirtualMachineTO`:
 
 | CloudStack | Proxmox |
@@ -150,7 +150,7 @@ the OS name, so no large SQL is needed), and merges the service offering details
 
 Roles for **both the user and the token**: `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, and **`PVESDNUser` on
 `/sdn/zones/localnetwork`** (a plain bridge needs `SDN.Use` on `/sdn/zones/localnetwork/<bridge>/<vlan tag>`). `VM.Migrate` is part of
-`PVEVMAdmin` (the offline move in 4.3 is still to verify). Every configuration value must be URL-encoded in the request.
+`PVEVMAdmin` (the offline move in 4.3 is confirmed in S9-9). Every configuration value must be URL-encoded in the request.
 
 ## 5. Core changes needed (verified in code)
 
@@ -186,13 +186,11 @@ carries a fallback); `getHypervisorTypeFromFormat(QCOW2)` returns KVM (affects v
 
 ## 8. Checks
 
-Done (see test-log.md, "Phase 3 spikes"): S9-0 to S9-8, i.e. the import from secondary by token, the NIC on `vmbr1` with `SDN.Use`, start,
-stop, destroy, the per-template `nfs` entry (created by token, usable from any node).
+Done (see test-log.md, "Phase 3 spikes"): S9-0 to S9-10, i.e. the import from secondary by token, the NIC on `vmbr1` with `SDN.Use`, start,
+stop, destroy, the per-template `nfs` entry (created by token, usable from any node), the offline move of a stopped VM by token (S9-9), and the import time (7.6 s for 8 GiB, S9-10).
 
 Still to run before building:
 
-- **P4:** stop a VM and move it offline to another node (`POST .../qemu/<vmid>/migrate`), with its disk on the shared NFS pool.
-- **Timing:** how long a full import takes for the lab's template (put `time` in front of `qm create`).
 - `GET /cluster/nextid` (not in the mirrored source) and the task `log` call for the error text of a failed task.
 
 ## 9. Lab test plan for 3a
