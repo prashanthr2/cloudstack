@@ -224,13 +224,18 @@ Still to run before building:
 
 ## 9. Lab test plan for 3a
 
-1. Register a qcow2 template for hypervisor `Proxmox` by URL; it becomes `Ready` on secondary storage.
-2. Deploy a VM from it on an L2 network (KVM guest label set to `vmbr1`): a Proxmox VM named like the instance exists with an imported disk, the
-   right CPU, memory and `net0`; CloudStack shows it Running.
-3. Stop and start it again, also with the VM started on a different node than the one that holds it.
+Before starting: the new SQL is applied (capabilities row and guest OS rows), the zone's KVM guest traffic label is `vmbr1`, and the token
+has the roles in 4.9 (a `root@pam` token already does).
+
+1. Register a qcow2 template for hypervisor `Proxmox`, format `QCOW2`; it becomes `Ready` on the secondary store.
+2. Deploy a VM from it on an L2 network. In Proxmox there is a `cst-<id>` storage entry for the template's folder, and a VM named like the
+   instance with an imported root disk, the right CPU, memory and `net0` (bridge `vmbr1`, the VLAN tag); CloudStack shows it Running.
+3. Stop and start it again. Repeat until a deploy lands on a different node than the one that created the VM (the log shows
+   "Moving Proxmox VM ... from node ... to ...").
 4. Reboot it. Destroy and expunge it: the Proxmox VM and its disk are gone.
-5. Failure cases: an unreachable template URL, a second deploy of the same template (the downloaded file is reused), a pool without the
-   `import` content type, a stop of a VM that is already stopped.
+5. Failure cases: a template folder the Proxmox nodes cannot read (the answer says what to check), a second deploy of the same template
+   (the entry is reused, nothing is created again), a stop of a VM that is already stopped, a deploy on a network whose zone has no KVM
+   traffic label (the start fails with a message that names the label).
 
 ## 10. Decisions for the reviewer
 
