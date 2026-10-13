@@ -104,7 +104,7 @@ added later as an optimisation.
 |---|---|
 | `cpus` | `cores` (and `sockets=1`) |
 | `maxRam` (bytes) | `memory` (MiB), ballooning off |
-| guest OS (`platformEmulator`, else a mapping from `os`) | `ostype` (`l26`, `win10`, `w2k8`, ...; `l26` or `other` when unknown) |
+| guest OS (`platformEmulator`, from the `guest_os_hypervisor` row for `Proxmox`) | `ostype` (`l26`, `win10`, `w2k8`, ...; `other` when there is no row, as KVM falls back to the display name) |
 | disks | `scsi<deviceId>=<cs-uuid>:<path>`, `scsihw=virtio-scsi-single`, `boot=order=scsi0` |
 | nics | `net<deviceId>=virtio=<mac>,bridge=<traffic label>,tag=<vlan id>,rate=<Mbps / 8>,firewall=0` (no `tag` for an untagged network) |
 | name | unchanged (the instance name) |
@@ -141,10 +141,22 @@ and, on failure, the task log for the reason (which becomes the answer text). Im
 the commands' own timeouts come from CloudStack (the template copy has its own long setting), and a global plugin setting for the polling
 limit is proposed (`proxmox.task.timeout`).
 
-### 4.8 The hypervisor guru
+### 4.8 The hypervisor guru and the guest OS mapping
 
-`ProxmoxHypervisorGuru` sets `os` and `platformEmulator` (looked up in `guest_os_hypervisor` for `Proxmox`, with a built-in fallback from
-the OS name, so no large SQL is needed), and merges the service offering details into the VM details as `ExternalHypervisorGuru` does.
+Consistent with KVM, XenServer and VMware, the guest OS mapping lives in `guest_os_hypervisor`, with `hypervisor_type = 'Proxmox'`,
+`hypervisor_version = 'default'` and `guest_os_name` = the Proxmox `ostype`. The lookup is the same call KVM uses
+(`findByOsIdAndHypervisor`, which falls back to the `default` version through `hypervisor_capabilities`).
+
+- **Rows:** `schema-42300to2400.sql` inserts one row per existing guest OS (`INSERT ... SELECT` from `guest_os`, `INSERT IGNORE`-style
+  guard against duplicates) with the `ostype` chosen from the display name: `Windows 11` -> `win11`; `Windows 10` and
+  `Windows Server 2016/2019/2022` -> `win10`; `Windows 8` and `Windows Server 2012` -> `win8`; `Windows 7` -> `win7`;
+  `Windows Server 2008`, `Vista` -> `w2k8`; `Windows Server 2003` -> `w2k3`; `Windows XP` -> `wxp`; `Windows 2000` -> `w2k`; `Solaris` ->
+  `solaris`; `Other` (not the PV entries) -> `other`; everything else (all Linux and BSD) -> `l26`. New guest OS entries added by later
+  upgrade scripts add a Proxmox row next to the KVM one with `ADD_GUEST_OS_AND_HYPERVISOR_MAPPING`.
+- **Guru:** `ProxmoxHypervisorGuru` sets `os` (display name) and `platformEmulator` (the row's name, or `other` when there is none),
+  as `KVMGuru.configureVmOsDescription` does, and merges the service offering details into the VM details as `ExternalHypervisorGuru` does.
+- **API:** `addGuestOsMapping` accepts only KVM, XenServer and VMware, so administrators could not add or fix Proxmox mappings; see
+  section 5.
 
 ### 4.9 Privileges the CloudStack token needs (confirmed in S9-2, S9-3, S9-4, except where marked)
 
@@ -159,11 +171,12 @@ Roles for **both the user and the token**: `PVEVMAdmin` on `/vms`, `PVEDatastore
 | `VolumeOrchestrator.getSupportedImageFormatForCluster` (and `VolumeDaoImpl.getImageFormat`) | `Proxmox -> QCOW2` | otherwise the volume's format is null |
 | `StorageManagerImpl.getBytesRequiredForTemplate` | add Proxmox | the template's space on the pool is not reserved otherwise |
 | `PhysicalNetworkTrafficTypeDaoImpl.getNetworkTag` and four branches in `NetworkModelImpl` | Proxmox reads the KVM label column | otherwise the NIC has no bridge (an assertion fails with `-ea`) |
-| `schema-42300to2400.sql` | a `hypervisor_capabilities` row for Proxmox | attaching a volume or a VM snapshot dereferences it without a null check |
+| `schema-42300to2400.sql` | a `hypervisor_capabilities` row for Proxmox (version `default`) | attaching a volume or a VM snapshot dereferences it without a null check; the guest OS lookup uses it for the version fallback |
+| `schema-42300to2400.sql` | `guest_os_hypervisor` rows for Proxmox (4.8) | the guest OS mapping, as for the other hypervisors |
+| `ManagementServerImpl.addGuestOsMapping` | accept Proxmox in the hypervisor check | otherwise mappings cannot be added or changed through the API |
 | later (3b/3c) | resize list in `VolumeApiServiceImpl`; console branch; migration list in `UserVmManagerImpl` | see section 6 |
 
-Known core limits that do not block 3a: the "add guest OS mapping" API refuses non-KVM types (rows can only come from SQL, so the guru
-carries a fallback); `getHypervisorTypeFromFormat(QCOW2)` returns KVM (affects volume upload and some API responses).
+Known core limits that do not block 3a: `getHypervisorTypeFromFormat(QCOW2)` returns KVM (affects volume upload and some API responses).
 
 ## 6. Not in 3a
 
@@ -209,4 +222,4 @@ Still to run before building:
 2. The VM is created together with its root disk, at root-volume time (4.2), and moved offline to the deployment node when needed (4.3).
 3. Console, data volumes, resize, ISO and migration are outside 3a.
 4. Core changes: image format (2 places), template space, traffic label (DAO and 4 branches), `hypervisor_capabilities` row.
-5. Guest OS: a built-in fallback instead of a large SQL mapping.
+5. Guest OS: `guest_os_hypervisor` rows for Proxmox in the upgrade script (4.8), plus Proxmox accepted by `addGuestOsMapping`, so it behaves like the other hypervisors.
