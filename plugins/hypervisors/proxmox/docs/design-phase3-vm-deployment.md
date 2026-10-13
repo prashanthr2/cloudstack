@@ -147,12 +147,29 @@ Consistent with KVM, XenServer and VMware, the guest OS mapping lives in `guest_
 `hypervisor_version = 'default'` and `guest_os_name` = the Proxmox `ostype`. The lookup is the same call KVM uses
 (`findByOsIdAndHypervisor`, which falls back to the `default` version through `hypervisor_capabilities`).
 
-- **Rows:** `schema-42300to2400.sql` inserts one row per existing guest OS (`INSERT ... SELECT` from `guest_os`, `INSERT IGNORE`-style
-  guard against duplicates) with the `ostype` chosen from the display name: `Windows 11` -> `win11`; `Windows 10` and
-  `Windows Server 2016/2019/2022` -> `win10`; `Windows 8` and `Windows Server 2012` -> `win8`; `Windows 7` -> `win7`;
-  `Windows Server 2008`, `Vista` -> `w2k8`; `Windows Server 2003` -> `w2k3`; `Windows XP` -> `wxp`; `Windows 2000` -> `w2k`; `Solaris` ->
-  `solaris`; `Other` (not the PV entries) -> `other`; everything else (all Linux and BSD) -> `l26`. New guest OS entries added by later
-  upgrade scripts add a Proxmox row next to the KVM one with `ADD_GUEST_OS_AND_HYPERVISOR_MAPPING`.
+- **Rows:** `schema-42300to2400.sql` inserts one row per existing guest OS (`INSERT ... SELECT` from `guest_os`, with a guard against
+  duplicates) with the `ostype` chosen from the display name, following the Proxmox documentation of the option
+  (`other`, `wxp`, `w2k`, `w2k3`, `w2k8`, `wvista`, `win7`, `win8`, `win10`, `win11`, `l24`, `l26`, `solaris`; default `other`):
+
+  | CloudStack guest OS (display name starts with) | `ostype` |
+  |---|---|
+  | Windows XP | `wxp` |
+  | Windows 2000 | `w2k` |
+  | Windows Server 2003 | `w2k3` |
+  | Windows Server 2008 (including R2) | `w2k8` |
+  | Windows Vista | `wvista` |
+  | Windows 7 | `win7` |
+  | Windows 8, Windows Server 2012 (including R2) | `win8` |
+  | Windows 10, Windows Server 2016, Windows Server 2019 | `win10` |
+  | Windows 11, Windows Server 2022, Windows Server 2025 | `win11` |
+  | Solaris, OpenSolaris | `solaris` |
+  | Linux with a 2.4 kernel (none in the stock list) | `l24` |
+  | all other Linux and BSD | `l26` |
+  | anything else, including `Other` | `other` |
+
+  The values are the ones Proxmox lists for the `ostype` option, which says what each enables ("special optimization/features for specific
+  operating systems"). New guest OS entries added by later upgrade scripts add a Proxmox row next to the KVM one with
+  `ADD_GUEST_OS_AND_HYPERVISOR_MAPPING`.
 - **Guru:** `ProxmoxHypervisorGuru` sets `os` (display name) and `platformEmulator` (the row's name, or `other` when there is none),
   as `KVMGuru.configureVmOsDescription` does, and merges the service offering details into the VM details as `ExternalHypervisorGuru` does.
 - **API:** `addGuestOsMapping` accepts only KVM, XenServer and VMware, so administrators could not add or fix Proxmox mappings; see
