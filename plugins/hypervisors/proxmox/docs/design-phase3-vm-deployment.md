@@ -220,6 +220,13 @@ stop, destroy, the per-template `nfs` entry (created by token, usable from any n
 
 Still to run before building:
 
+- **S10 (open question from the lab): too many storage entries.** 4.1 creates one `cst-` entry per template, and every node mounts each one;
+  that does not scale to many templates (found in Phase 3a check 2). Candidates: (1) one `nfs` entry per **account folder** of the secondary
+  store with `content=images` and `content-dirs images=template/tmpl/<account>`, so a template is the volume `<template id>/<file>`
+  (to test: does Proxmox accept that volume name, as a token, on a read-only mount, and what does a template id that equals a real VM
+  id do); (2) remove the entry after the VM is created (race between overlapping deploys; mounts stay behind); (3) copy the template
+  once onto the primary pool through `download-url` (extra space). Another way, with one entry per secondary store, is an absolute path
+  in `import-from`, which only `root@pam` may use (a root login instead of the token, or SSH as root).
 - `GET /cluster/nextid` (not in the mirrored source) and the task `log` call for the error text of a failed task.
 
 ## 9. Lab test plan for 3a

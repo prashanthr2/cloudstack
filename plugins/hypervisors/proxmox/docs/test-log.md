@@ -230,3 +230,9 @@ Lab checks for Phase 3a are listed in design-phase3-vm-deployment.md, section 9,
 | 5 | second deploy of the same template; stop of an already stopped VM | **Pass.** The entry is reused; the stop job succeeds |
 
 Not yet run: a template folder the nodes cannot read, a zone without a KVM traffic label.
+
+### Open spike S10: fewer storage entries for templates
+
+Planned, not run. Question: can one entry per account folder (`content=images`, `content-dirs images=template/tmpl/<account>`) serve all
+templates of that account as `<template id>/<file>` volumes, for a token creating a VM with `import-from`? Details and alternatives:
+design-phase3-vm-deployment.md, section 8.
