@@ -16,6 +16,9 @@
 // under the License.
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
+
 /**
  * How a CloudStack primary storage pool is named on the Proxmox side. Both names are derived from the pool uuid, so the same
  * entry is found again after a restart and an administrator can match everything by the pool uuid.
@@ -30,6 +33,12 @@ public final class ProxmoxStorageNames {
     /** The same place the KVM agent mounts a pool, /mnt/&lt;pool uuid&gt;. */
     public static final String MOUNT_PATH_PREFIX = "/mnt/";
 
+    /**
+     * A read-only entry that exposes one template's folder on the secondary store, so a VM disk can be imported from the template file.
+     * Same letter-first rule as above.
+     */
+    public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
+
     private ProxmoxStorageNames() {
     }
 
@@ -39,5 +48,17 @@ public final class ProxmoxStorageNames {
 
     public static String mountPath(String poolUuid) {
         return MOUNT_PATH_PREFIX + poolUuid;
+    }
+
+    /**
+     * The entry for the template folder {@code folder} of the NFS export {@code server:export}. Derived from the three values, so every
+     * command for the same template finds the same entry, on any management server and after a restart.
+     */
+    public static String templateStorageId(String server, String export, String folder) {
+        return TEMPLATE_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static boolean isTemplateStorageId(String id) {
+        return id != null && id.startsWith(TEMPLATE_STORAGE_ID_PREFIX);
     }
 }

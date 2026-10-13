@@ -50,6 +50,7 @@ import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.GetStorageStatsAnswer;
 import com.cloud.agent.api.GetStorageStatsCommand;
+import com.cloud.agent.api.GetVncPortCommand;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.ModifyStoragePoolAnswer;
 import com.cloud.agent.api.ModifyStoragePoolCommand;
@@ -57,7 +58,6 @@ import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
-import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
@@ -180,7 +180,7 @@ public class ProxmoxResourceTest {
 
     @Test
     public void unsupportedCommandsAreRejectedNotSilentlyAccepted() {
-        Answer answer = resource.executeRequest(mock(StartCommand.class));
+        Answer answer = resource.executeRequest(new GetVncPortCommand(1L, "i-2-10-VM"));
         assertFalse(answer.getResult());
     }
 

@@ -39,6 +39,11 @@ public class ProxmoxConfig implements Configurable {
                     + "CA that signed the Proxmox certificates (by default the Proxmox cluster CA, /etc/pve/pve-root-ca.pem) must "
                     + "be in the management server's Java truststore", true);
 
+    public static final ConfigKey<Integer> TaskTimeout = new ConfigKey<>("Advanced", Integer.class,
+            "proxmox.task.timeout", "600",
+            "Seconds to wait for a Proxmox task (creating a VM from a template, starting or stopping it ...) to finish. A task that is "
+                    + "still running afterwards is reported as failed to CloudStack but is not cancelled in Proxmox", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -46,6 +51,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout};
     }
 }

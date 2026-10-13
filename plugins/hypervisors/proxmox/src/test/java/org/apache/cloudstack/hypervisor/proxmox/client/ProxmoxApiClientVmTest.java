@@ -274,6 +274,18 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
+    public void aVmsConfigurationIsReadAsOptionNamesAndValues() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/config", "{\"data\":{\"name\":\"i-2-10-VM\",\"memory\":512,"
+                + "\"scsi0\":\"cs-1:9204/vm-9204-disk-0.qcow2,size=8G\"}}");
+
+        Map<String, String> config = client.getVmConfig("pve1", 9204);
+
+        assertEquals("i-2-10-VM", config.get("name"));
+        assertEquals("512", config.get("memory"));
+        assertEquals("cs-1:9204/vm-9204-disk-0.qcow2,size=8G", config.get("scsi0"));
+    }
+
+    @Test
     public void deletingAStorageAcceptsAnEmptyAnswer() {
         answer("DELETE /api2/json/storage/cst-2", "");
 

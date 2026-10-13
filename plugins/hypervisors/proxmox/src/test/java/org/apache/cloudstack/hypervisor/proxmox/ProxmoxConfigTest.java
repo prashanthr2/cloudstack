@@ -33,6 +33,11 @@ public class ProxmoxConfigTest {
     }
 
     @Test
+    public void proxmoxTasksMayTakeTenMinutesByDefault() {
+        assertEquals(600, (int) ProxmoxConfig.TaskTimeout.value());
+    }
+
+    @Test
     public void theTlsCertificateIsNotVerifiedUnlessTheOperatorTurnsThatOn() {
         // consistent with the VMware and XenServer plugins, which accept any server certificate
         assertFalse(ProxmoxConfig.ApiVerifyTls.value());
@@ -41,10 +46,12 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(3, config.getConfigKeys().length);
+        assertEquals(4, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.TaskTimeout));
+        assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiConnectTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiReadTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiVerifyTls.isDynamic());

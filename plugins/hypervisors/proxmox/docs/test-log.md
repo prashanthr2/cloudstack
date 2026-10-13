@@ -209,3 +209,12 @@ Notes:
   guest OS names, twice (the second run adds nothing). It found one wrong mapping, "Other Linux (64-bit)" -> `other`, which was fixed so
   Linux entries named "Other ..." map to `l26`. BSD, Apple, Novell and DOS guests map to `other`, as `l26` is documented as a Linux kernel.
 - Template space reservation (`getBytesRequiredForTemplate`) needs no change: it only applies to managed storage, and the NFS pool is not.
+
+### Phase 3a implementation (2026-10-13)
+
+Unit tests: the plugin has 132 tests, all passing (JDK 17, checkstyle clean). New: client calls for VMs, tasks and import storage
+(`ProxmoxApiClientVmTest`, against a fake Proxmox that answers by "METHOD path", including URL encoding of every option), the VM option
+mapping (`ProxmoxVmConfigTest`), the command handlers (`ProxmoxVmHandlerTest`: template entry, root volume, id clash and cleanup, start with
+and without an offline move, stop, reboot, delete), the guest OS lookup (`ProxmoxHypervisorGuruTest`), and the new `proxmox.task.timeout` setting.
+
+Lab checks for Phase 3a are listed in design-phase3-vm-deployment.md, section 9, and still to be run.

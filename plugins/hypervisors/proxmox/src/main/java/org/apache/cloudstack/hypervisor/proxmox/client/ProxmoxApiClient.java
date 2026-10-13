@@ -701,6 +701,16 @@ public class ProxmoxApiClient implements Closeable {
         return taskId(post("/nodes/" + node + "/qemu", form));
     }
 
+    /** The configuration of a VM as Proxmox reports it: option name to value (for example "scsi0" to the disk option). */
+    public Map<String, String> getVmConfig(String node, long vmid) {
+        Map<String, String> config = new LinkedHashMap<>();
+        JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/config");
+        if (data != null && data.isObject()) {
+            data.fields().forEachRemaining(field -> config.put(field.getKey(), field.getValue().asText()));
+        }
+        return config;
+    }
+
     /** Changes the configuration of a VM (applied at once while it is stopped). */
     public void updateVmConfig(String node, long vmid, Map<String, String> params) {
         put("/nodes/" + node + "/qemu/" + vmid + "/config", params);

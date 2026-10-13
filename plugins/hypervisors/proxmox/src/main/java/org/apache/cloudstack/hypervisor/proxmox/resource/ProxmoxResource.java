@@ -28,6 +28,8 @@ import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.storage.command.CopyCommand;
+import org.apache.cloudstack.storage.command.DeleteCommand;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -54,10 +56,13 @@ import com.cloud.agent.api.ModifyStoragePoolCommand;
 import com.cloud.agent.api.PingCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
+import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
+import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
+import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.agent.api.to.StorageFilerTO;
@@ -98,6 +103,7 @@ public class ProxmoxResource implements ServerResource {
     protected String tokenId;
     protected String tokenSecret;
     protected volatile ProxmoxApiClient client;
+    private ProxmoxVmHandler vmHandler;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
     private int runLevel;
@@ -136,6 +142,7 @@ public class ProxmoxResource implements ServerResource {
             throw new ConfigurationException("Proxmox node name and API token are required for host " + name);
         }
         client = createClient(tokenId, tokenSecret);
+        vmHandler = new ProxmoxVmHandler(() -> client, node, this::pause, ProxmoxConfig.TaskTimeout::value);
         return true;
     }
 
@@ -228,6 +235,17 @@ public class ProxmoxResource implements ServerResource {
                 return execute((DeleteStoragePoolCommand) cmd);
             } else if (cmd instanceof GetStorageStatsCommand) {
                 return execute((GetStorageStatsCommand) cmd);
+            } else if (cmd instanceof CopyCommand) {
+                return vmHandler.copy((CopyCommand) cmd);
+            } else if (cmd instanceof DeleteCommand) {
+                return vmHandler.delete((DeleteCommand) cmd);
+            } else if (cmd instanceof StartCommand) {
+                return vmHandler.start((StartCommand) cmd);
+            } else if (cmd instanceof StopCommand) {
+                // before RebootCommand: a StopCommand is a RebootCommand
+                return vmHandler.stop((StopCommand) cmd);
+            } else if (cmd instanceof RebootCommand) {
+                return vmHandler.reboot((RebootCommand) cmd);
             }
             return Answer.createUnsupportedCommandAnswer(cmd);
         } catch (ProxmoxApiException e) {

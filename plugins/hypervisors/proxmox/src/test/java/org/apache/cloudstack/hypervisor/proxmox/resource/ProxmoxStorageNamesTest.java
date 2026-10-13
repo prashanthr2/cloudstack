@@ -17,6 +17,8 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -39,5 +41,23 @@ public class ProxmoxStorageNamesTest {
     @Test
     public void thePoolIsMountedWhereTheKvmAgentMountsIt() {
         assertEquals("/mnt/047ccc61-dc29-3d58-9c73-dd1ab2c100cf", ProxmoxStorageNames.mountPath("047ccc61-dc29-3d58-9c73-dd1ab2c100cf"));
+    }
+
+    @Test
+    public void aTemplateEntryIsNamedFromItsFolderAndFoundAgainByEveryCommand() {
+        String id = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4");
+
+        assertEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4"));
+        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/3"));
+        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.5", "/acs/secondary", "template/tmpl/1/4"));
+        assertTrue(id, id.startsWith("cst-"));
+    }
+
+    @Test
+    public void onlyTemplateEntriesAreRecognisedAsSuch() {
+        assertTrue(ProxmoxStorageNames.isTemplateStorageId("cst-3f2a8c1e-0000-3000-8000-000000000000"));
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.storageId("3f2a8c1e-0000-3000-8000-000000000000")));
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId("local"));
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId(null));
     }
 }

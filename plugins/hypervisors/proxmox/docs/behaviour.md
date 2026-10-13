@@ -171,7 +171,8 @@ hypervisor's HA with explicit skips in CloudStack. Proxmox follows the VMware mo
 
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
 `GetHostStatsCommand`, `UpdateHostPasswordCommand`, and for primary storage `CreateStoragePoolCommand`,
-`ModifyStoragePoolCommand`, `DeleteStoragePoolCommand`, `GetStorageStatsCommand`. Every other command is answered with an "unsupported" result, so missing
+`ModifyStoragePoolCommand`, `DeleteStoragePoolCommand`, `GetStorageStatsCommand`, and for VMs (section 10) `CopyCommand`,
+`DeleteCommand`, `StartCommand`, `StopCommand`, `RebootCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
 ## 8. Changing the token of added hosts
@@ -237,6 +238,36 @@ functionality fails loudly instead of being accepted silently.
   is refused for Proxmox (the resource would pass them on if they were ever present). Left out on purpose; see the design.
 - Not covered yet: volumes, templates, zone-wide pools (design-phase2-storage.md, sections 1 and 7).
 
+## 10. Deploying and running a VM (Phase 3a, implemented, not yet tested in the lab)
+
+The design and the lab results behind it are in design-phase3-vm-deployment.md and test-log.md (spikes S9-0 to S9-10). What the
+resource does for each command:
+
+| CloudStack sends | What the plugin does | Answer |
+|---|---|---|
+| `CopyCommand`, template on secondary to primary | Creates (once) a read-only `nfs` storage entry `cst-<uuid>` on the template's folder of the secondary store (`content=import`, `content-dirs import=<folder>`, `options=vers=<n>,ro`), waits until the node lists the template file, and names it `<entry>:import/<file>`. **Nothing is copied.** The `<uuid>` is derived from server, export and folder, so every command finds the same entry | `CopyCmdAnswer` with the template path, size and format `QCOW2` |
+| `CopyCommand`, template on primary to root volume | Creates the VM (`POST /nodes/<node>/qemu`, `name` = the instance name, `scsi0=<pool entry>:0,import-from=<template volume>,format=qcow2`), waits for the task, grows the disk if the root disk is bigger than the template, reads the disk path back | `CopyCmdAnswer` with path `<vmid>/vm-<vmid>-disk-0.qcow2`, size and format. The VM id in the path is how later commands find the VM |
+| `StartCommand` | Finds the VM by the VM id in the root volume path. If it is on another node, moves it to this host's node first (offline move, config only). Sets name, CPU, memory (ballooning off), `ostype`, `scsihw`, boot order and the NICs, then starts it and waits | `StartAnswer` |
+| `StopCommand` | Finds the VM by name anywhere in the cluster. Not found or already stopped is success. Otherwise a guest shutdown with a 60 s timeout and forced stop afterwards, or a hard stop when CloudStack asks for a forced stop | `StopAnswer` |
+| `RebootCommand` | Reboots the VM wherever it is | `RebootAnswer` |
+| `DeleteCommand`, root volume | Stops the VM if it is running and destroys it with `purge`; the disk it owns goes with it. A VM that is already gone is success | `Answer` |
+| `DeleteCommand`, template on primary | Removes the `cst-` entry of that template (the file on the secondary store is not touched) | `Answer` |
+
+Details that are easy to get wrong:
+
+- **The VM is created at root-volume time, on whichever node got the command.** CloudStack picks a random host of the pool for the volume
+  commands, not the host the VM will run on, hence the offline move at start.
+- **A NIC's bridge is the zone's KVM traffic label** (the lab: `vmbr1`); the VLAN is the number in the network's broadcast URI. A NIC
+  without a label fails the start with a message that says so.
+- **The guest OS mapping** is read from `guest_os_hypervisor` for `Proxmox` (`ostype`), `other` without a row (see the design, 4.8).
+- **`proxmox.task.timeout`** (default 600 s) is how long a task (creating from a template, starting, stopping) is waited for. After it
+  the command fails but the Proxmox task is not cancelled.
+- **A failed creation removes what it left behind**, except a VM id that turned out to belong to someone else's VM; the id is not
+  reserved by Proxmox, so a create that fails with "already exists" is retried with a new id (3 attempts).
+- Token privileges needed on top of storage: see design-phase3-vm-deployment.md, 4.9 (`PVEVMAdmin`, `PVESDNUser` on
+  `/sdn/zones/localnetwork`).
+- Not yet handled (answered as unsupported): data volumes, attach and detach, resize, ISO, snapshots, console, live migration, VM stats.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
@@ -249,4 +280,4 @@ functionality fails loudly instead of being accepted silently.
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
-- Not yet implemented: VM lifecycle, storage (NFS), networking, migration, system VMs and virtual routers, snapshots.
+- Not yet implemented: data volumes, console, live migration, HA skips, system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
