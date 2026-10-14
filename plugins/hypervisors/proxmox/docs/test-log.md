@@ -242,3 +242,16 @@ Question: can one entry per account folder serve all templates of that account?
 
 Result: the plugin uses one entry per account folder (design 4.1). The template check is "the entry is mounted on the node", not a file
 lookup; a missing file fails the VM creation with Proxmox's message.
+
+### Spike S11: one entry per secondary store with an absolute path (2026-10-14)
+
+Why: S10 works but needs one entry (and one permanent mount on every node) per account folder, which does not scale to thousands of accounts.
+Setup: one `nfs` entry `sec-all` on the whole secondary export (`content=import`, `options=vers=3,ro`), mounted by Proxmox at `/mnt/pve/sec-all`.
+
+| # | What | Result |
+|---|---|---|
+| S11-1 | the **token** creates a VM with `import-from=/mnt/pve/sec-all/template/tmpl/1/4/<uuid>.qcow2` | **Refused:** `Only root can pass arbitrary filesystem paths.` The Proxmox check is `$user ne 'root@pam'`, and a token's user string is `root@pam!<name>`, so even a token owned by root is refused |
+| S11-2 | the same through a **root@pam login** (`POST /access/ticket`, then the `PVEAuthCookie` and `CSRFPreventionToken` headers) | **Pass.** `ticket ok`; the create returned a task (`...:qmcreate:9221:root@pam:`) and the VM has `scsi0` 8G |
+
+Result: one entry per secondary store (any number of accounts and templates) is possible, but the template import needs a root@pam login
+(a password, not a token). Whether to take that is a decision for the project; see design-phase3-vm-deployment.md, 4.1.
