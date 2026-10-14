@@ -104,8 +104,6 @@ public class ProxmoxResource implements ServerResource {
     protected String tokenSecret;
     protected volatile ProxmoxApiClient client;
     private ProxmoxVmHandler vmHandler;
-    private ProxmoxApiClient rootClient;
-    private String rootPasswordInUse;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
     private int runLevel;
@@ -144,34 +142,13 @@ public class ProxmoxResource implements ServerResource {
             throw new ConfigurationException("Proxmox node name and API token are required for host " + name);
         }
         client = createClient(tokenId, tokenSecret);
-        vmHandler = new ProxmoxVmHandler(() -> client, this::rootClient, node, this::pause, ProxmoxConfig.TaskTimeout::value);
+        vmHandler = new ProxmoxVmHandler(() -> client, node, this::pause, ProxmoxConfig.TaskTimeout::value);
         return true;
     }
 
     protected ProxmoxApiClient createClient(String id, String secret) {
         return new ProxmoxApiClient(endpoints, id, secret, ProxmoxConfig.ApiVerifyTls.value(), ProxmoxConfig.ApiConnectTimeout.value(),
                 ProxmoxConfig.ApiReadTimeout.value());
-    }
-
-    protected ProxmoxApiClient createRootClient(String password) {
-        return ProxmoxApiClient.withRootLogin(endpoints, password, ProxmoxConfig.ApiVerifyTls.value(), ProxmoxConfig.ApiConnectTimeout.value(),
-                ProxmoxConfig.ApiReadTimeout.value());
-    }
-
-    /**
-     * The client that logs in as root@pam, or null when the root password setting is empty. It is rebuilt when the setting changes; the
-     * previous one is not closed here because a command on another thread may still be using it.
-     */
-    private synchronized ProxmoxApiClient rootClient() {
-        String password = ProxmoxConfig.RootPassword.value();
-        if (StringUtils.isBlank(password)) {
-            return null;
-        }
-        if (rootClient == null || !password.equals(rootPasswordInUse)) {
-            rootClient = createRootClient(password);
-            rootPasswordInUse = password;
-        }
-        return rootClient;
     }
 
     @Override
@@ -483,12 +460,6 @@ public class ProxmoxResource implements ServerResource {
     public void disconnected() {
         if (client != null) {
             client.close();
-        }
-        synchronized (this) {
-            if (rootClient != null) {
-                rootClient.close();
-                rootClient = null;
-            }
         }
     }
 

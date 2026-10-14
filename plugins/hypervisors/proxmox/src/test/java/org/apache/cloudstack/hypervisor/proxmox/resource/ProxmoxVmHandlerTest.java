@@ -70,20 +70,18 @@ public class ProxmoxVmHandlerTest {
     private static final String POOL_UUID = "7fd5565c-6c1e-3032-81ec-d404812915ab";
     private static final String POOL = "cs-" + POOL_UUID;
     private static final String TEMPLATE_PATH = "template/tmpl/1/4/33522506-94bb-35e2-9eed-ef5b7ba78036.qcow2";
-    private static final String TEMPLATE_ENTRY = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary");
-    private static final String TEMPLATE_FILE = "/mnt/" + TEMPLATE_ENTRY + "/" + TEMPLATE_PATH;
+    private static final String TEMPLATE_ENTRY = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1");
+    private static final String TEMPLATE_VOLUME = TEMPLATE_ENTRY + ":4/33522506-94bb-35e2-9eed-ef5b7ba78036.qcow2";
     private static final long GIB = 1024L * 1024 * 1024;
 
     private ProxmoxApiClient client;
-    private ProxmoxApiClient rootClient;
     private ProxmoxVmHandler handler;
     private int pauses;
 
     @Before
     public void setUp() {
         client = mock(ProxmoxApiClient.class);
-        rootClient = mock(ProxmoxApiClient.class);
-        handler = new ProxmoxVmHandler(() -> client, () -> rootClient, NODE, millis -> pauses++, () -> 600);
+        handler = new ProxmoxVmHandler(() -> client, NODE, millis -> pauses++, () -> 600);
     }
 
     // ---- template to primary storage ----
@@ -112,37 +110,38 @@ public class ProxmoxVmHandlerTest {
         when(client.getStorageStatus(NODE, TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
     }
 
-    private static ProxmoxApiClient.StorageConfig anEntry() {
-        return new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", "10.0.32.4", "/acs/secondary", "/mnt/" + TEMPLATE_ENTRY, "import", "vers=3,ro");
-    }
-
     @Test
-    public void theSecondaryStoreIsAddedAsOneReadOnlyEntryAndTheAnswerIsTheTemplatesFileOnTheNodes() {
+    public void theTemplatesOfAnAccountAreExposedThroughOneReadOnlyEntryAndNothingIsCopied() {
         entryIsMounted();
 
         CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
-        verify(rootClient).login();
-        verify(client).createNfsStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "/mnt/" + TEMPLATE_ENTRY, "import", "vers=3,ro");
+        verify(client).createTemplateStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "template/tmpl/1", "vers=3,ro");
         assertTrue(answer.getDetails(), answer.getResult());
         TemplateObjectTO onPrimary = (TemplateObjectTO) answer.getNewData();
-        assertEquals(TEMPLATE_FILE, onPrimary.getPath());
+        assertEquals(TEMPLATE_VOLUME, onPrimary.getPath());
         assertEquals(Long.valueOf(8L * GIB), onPrimary.getSize());
         assertEquals(Storage.ImageFormat.QCOW2, onPrimary.getFormat());
     }
 
     @Test
-    public void everyTemplateOnTheSameStoreSharesTheEntryWhateverTheAccount() {
+    public void twoTemplatesOfTheSameAccountShareTheEntry() {
         entryIsMounted();
-        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, anEntry());
+        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", "10.0.32.4",
+                "/acs/secondary", null, "images", "vers=3,ro"));
 
         handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
-        CopyCmdAnswer other = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3",
-                "template/tmpl/2742/917/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
+        CopyCmdAnswer second = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3",
+                "template/tmpl/1/7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
 
-        verify(client, times(1)).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
-        assertEquals("/mnt/" + TEMPLATE_ENTRY + "/template/tmpl/2742/917/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2",
-                ((TemplateObjectTO) other.getNewData()).getPath());
+        verify(client, times(1)).createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
+        assertEquals(TEMPLATE_ENTRY + ":7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2", ((TemplateObjectTO) second.getNewData()).getPath());
+    }
+
+    @Test
+    public void anotherAccountGetsItsOwnEntry() {
+        assertTrue(!ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1")
+                .equals(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2")));
     }
 
     @Test
@@ -151,14 +150,15 @@ public class ProxmoxVmHandlerTest {
 
         handler.copy(templateToPrimary(secondaryTemplate(null, TEMPLATE_PATH)));
 
-        verify(client).createNfsStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "/mnt/" + TEMPLATE_ENTRY, "import", "ro");
+        verify(client).createTemplateStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "template/tmpl/1", "ro");
     }
 
     @Test
     public void anEntryAnotherCommandCreatedAMomentAgoIsAccepted() {
-        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, anEntry());
+        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", null, null, null,
+                "images", null));
         doThrow(new ProxmoxApiException("storage ID already defined")).when(client)
-                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                .createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
         entryIsMounted();
 
         assertTrue(handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH))).getResult());
@@ -167,7 +167,7 @@ public class ProxmoxVmHandlerTest {
     @Test
     public void whenTheEntryCannotBeCreatedTheReasonFromProxmoxIsReported() {
         doThrow(new ProxmoxApiException("Proxmox API POST /api2/json/storage failed: HTTP 403 Forbidden")).when(client)
-                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                .createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
 
         Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
@@ -196,36 +196,13 @@ public class ProxmoxVmHandlerTest {
     }
 
     @Test
-    public void withoutARootPasswordTheTemplateIsRefusedWithTheNameOfTheSetting() {
-        rootClient = null;
-
-        Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
-
-        assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("proxmox.root.password"));
-        verify(client, never()).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void aWrongRootPasswordIsReportedWhenTheTemplateIsMadeAvailable() {
-        doThrow(new ProxmoxApiException("Proxmox refused the login of root@pam: HTTP 401 reason", 401, null)).when(rootClient).login();
-
-        Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
-
-        assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("proxmox.root.password"));
-        assertTrue(answer.getDetails(), answer.getDetails().contains("HTTP 401"));
-        verify(client, never()).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void aTemplatePathThatCouldLeaveTheStoreIsRefused() {
-        for (String path : new String[] {"", "template/tmpl/1/4/", "template/../../etc/x.qcow2"}) {
+    public void aTemplatePathThatIsNotFolderIdFileIsRefused() {
+        for (String path : new String[] {"just-a-file.qcow2", "4/f.qcow2", "tmpl/not-a-number/f.qcow2"}) {
             Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", path)));
 
             assertFalse(path, answer.getResult());
         }
-        verify(client, never()).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, never()).createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -245,7 +222,7 @@ public class ProxmoxVmHandlerTest {
     private CopyCommand rootVolumeFromTemplate(Long size) {
         TemplateObjectTO source = mock(TemplateObjectTO.class);
         when(source.getDataStore()).thenReturn(mock(PrimaryDataStoreTO.class));
-        when(source.getPath()).thenReturn(TEMPLATE_FILE);
+        when(source.getPath()).thenReturn(TEMPLATE_VOLUME);
         PrimaryDataStoreTO pool = mock(PrimaryDataStoreTO.class);
         when(pool.getUuid()).thenReturn(POOL_UUID);
         VolumeObjectTO volume = mock(VolumeObjectTO.class);
@@ -258,32 +235,27 @@ public class ProxmoxVmHandlerTest {
         return cmd;
     }
 
-    private void templateEntryExists() {
-        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(anEntry());
-    }
-
     private void vmIsCreatedWithDisk(long vmid, String disk) {
-        templateEntryExists();
+        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", null, null, null, "images", null));
         when(client.nextVmId()).thenReturn(vmid);
-        when(rootClient.createVm(eq(NODE), eq(vmid), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:" + vmid + ":root@pam:");
+        when(client.createVm(eq(NODE), eq(vmid), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:" + vmid + ":u:");
         Map<String, String> config = new HashMap<>();
         config.put("scsi0", disk);
         when(client.getVmConfig(NODE, vmid)).thenReturn(config);
     }
 
     @Test
-    public void theRootVolumeIsAVmCreatedAsRootWithTheTemplateFileImportedAsItsDisk() {
+    public void theRootVolumeIsAVmCreatedWithTheTemplateFileImportedAsItsDisk() {
         vmIsCreatedWithDisk(9204, POOL + ":9204/vm-9204-disk-0.qcow2,size=8G");
 
         CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(rootVolumeFromTemplate(8L * GIB));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
-        verify(rootClient).createVm(eq(NODE), eq(9204L), params.capture());
+        verify(client).createVm(eq(NODE), eq(9204L), params.capture());
         assertEquals("i-2-10-VM", params.getValue().get("name"));
-        assertEquals(POOL + ":0,import-from=" + TEMPLATE_FILE + ",format=qcow2", params.getValue().get("scsi0"));
-        verify(rootClient).waitForTask("UPID:pve1:1:2:3:qmcreate:9204:root@pam:", 600);
-        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
+        assertEquals(POOL + ":0,import-from=" + TEMPLATE_VOLUME + ",format=qcow2", params.getValue().get("scsi0"));
+        verify(client).waitForTask("UPID:pve1:1:2:3:qmcreate:9204:u:", 600);
         verify(client, never()).resizeDisk(anyString(), anyLong(), anyString(), anyString());
         assertTrue(answer.getDetails(), answer.getResult());
         VolumeObjectTO created = (VolumeObjectTO) answer.getNewData();
@@ -304,12 +276,12 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aVmIdTakenByAnotherCallerIsReplacedAndTheOtherVmIsLeftAlone() {
-        templateEntryExists();
+        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", null, null, null, "images", null));
         when(client.nextVmId()).thenReturn(9200L, 9201L);
-        when(rootClient.createVm(eq(NODE), eq(9200L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9200:root@pam:");
-        when(rootClient.createVm(eq(NODE), eq(9201L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9201:root@pam:");
+        when(client.createVm(eq(NODE), eq(9200L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9200:u:");
+        when(client.createVm(eq(NODE), eq(9201L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9201:u:");
         doThrow(new ProxmoxApiException("Proxmox task qmcreate failed: unable to create VM 9200 - VM 9200 already exists on node 'pve2'"))
-                .when(rootClient).waitForTask("UPID:pve1:1:2:3:qmcreate:9200:root@pam:", 600);
+                .when(client).waitForTask("UPID:pve1:1:2:3:qmcreate:9200:u:", 600);
         Map<String, String> config = new HashMap<>();
         config.put("scsi0", POOL + ":9201/vm-9201-disk-0.qcow2,size=8G");
         when(client.getVmConfig(NODE, 9201L)).thenReturn(config);
@@ -323,11 +295,11 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aFailedCreationRemovesWhatItLeftBehind() {
-        templateEntryExists();
+        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", null, null, null, "images", null));
         when(client.nextVmId()).thenReturn(9204L);
-        when(rootClient.createVm(eq(NODE), eq(9204L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9204:root@pam:");
-        doThrow(new ProxmoxApiException("Proxmox task qmcreate failed: qemu-img: could not open the source")).when(rootClient)
-                .waitForTask("UPID:pve1:1:2:3:qmcreate:9204:root@pam:", 600);
+        when(client.createVm(eq(NODE), eq(9204L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9204:u:");
+        doThrow(new ProxmoxApiException("Proxmox task qmcreate failed: qemu-img: could not open the source")).when(client)
+                .waitForTask("UPID:pve1:1:2:3:qmcreate:9204:u:", 600);
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
         when(client.destroyVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmdestroy:9204:u:");
 
@@ -339,35 +311,23 @@ public class ProxmoxVmHandlerTest {
     }
 
     @Test
-    public void withoutARootPasswordNoVmIsCreated() {
-        templateEntryExists();
-        rootClient = null;
-
-        Answer answer = handler.copy(rootVolumeFromTemplate(null));
-
-        assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("proxmox.root.password"));
-        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
-    }
-
-    @Test
     public void aRootVolumeCannotBeCreatedWhenTheTemplatesEntryWasRemoved() {
         Answer answer = handler.copy(rootVolumeFromTemplate(null));
 
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains(TEMPLATE_ENTRY));
-        verify(rootClient, never()).createVm(anyString(), anyLong(), anyMap());
+        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
 
     @Test
     public void aRootVolumeNeedsATemplateThatCameFromATemplateEntry() {
         CopyCommand cmd = rootVolumeFromTemplate(null);
-        when(((TemplateObjectTO) cmd.getSrcTO()).getPath()).thenReturn("/etc/passwd");
+        when(((TemplateObjectTO) cmd.getSrcTO()).getPath()).thenReturn("some/other/path");
 
         Answer answer = handler.copy(cmd);
 
         assertFalse(answer.getResult());
-        verify(rootClient, never()).createVm(anyString(), anyLong(), anyMap());
+        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
 
     // ---- start ----
@@ -594,7 +554,7 @@ public class ProxmoxVmHandlerTest {
     @Test
     public void deletingATemplateFromThePrimaryStorageKeepsTheEntryOtherTemplatesUse() {
         TemplateObjectTO template = mock(TemplateObjectTO.class);
-        when(template.getPath()).thenReturn(TEMPLATE_FILE);
+        when(template.getPath()).thenReturn(TEMPLATE_VOLUME);
 
         assertTrue(handler.delete(delete(template)).getResult());
 

@@ -34,8 +34,8 @@ public final class ProxmoxStorageNames {
     public static final String MOUNT_PATH_PREFIX = "/mnt/";
 
     /**
-     * A read-only entry for a secondary store, mounted on the nodes so that a VM disk can be imported from a template file on it. Same
-     * letter-first rule as above.
+     * A read-only entry that exposes one template's folder on the secondary store, so a VM disk can be imported from the template file.
+     * Same letter-first rule as above.
      */
     public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
 
@@ -51,36 +51,14 @@ public final class ProxmoxStorageNames {
     }
 
     /**
-     * The entry for the secondary store {@code server:export}. Derived from the two values, so every command for a template on the same store
-     * finds the same entry, on any management server and after a restart.
+     * The entry for the template folder {@code folder} of the NFS export {@code server:export}. Derived from the three values, so every
+     * command for the same template finds the same entry, on any management server and after a restart.
      */
-    public static String templateStorageId(String server, String export) {
-        return TEMPLATE_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export).getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** Where the nodes mount that entry. */
-    public static String templateMountPath(String storageId) {
-        return MOUNT_PATH_PREFIX + storageId;
+    public static String templateStorageId(String server, String export, String folder) {
+        return TEMPLATE_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
     }
 
     public static boolean isTemplateStorageId(String id) {
         return id != null && id.startsWith(TEMPLATE_STORAGE_ID_PREFIX);
-    }
-
-    /**
-     * The entry a template path on the primary storage belongs to: "/mnt/&lt;entry&gt;/template/tmpl/1/4/file.qcow2" (the node's file), or
-     * the volume form "&lt;entry&gt;:..." an earlier version used. Null when the path is neither.
-     */
-    public static String templateStorageIdOfPath(String path) {
-        if (path == null) {
-            return null;
-        }
-        String id = null;
-        if (path.startsWith(MOUNT_PATH_PREFIX)) {
-            id = path.substring(MOUNT_PATH_PREFIX.length()).split("/")[0];
-        } else if (path.contains(":")) {
-            id = path.substring(0, path.indexOf(':'));
-        }
-        return isTemplateStorageId(id) ? id : null;
     }
 }

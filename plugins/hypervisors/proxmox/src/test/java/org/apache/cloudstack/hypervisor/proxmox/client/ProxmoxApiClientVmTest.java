@@ -247,6 +247,20 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
+    public void aTemplateStorageExposesOneFolderAsImagesContentReadOnly() {
+        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"nfs\",\"storage\":\"cst-2\"}}");
+
+        client.createTemplateStorage("cst-2", "10.0.32.4", "/acs/secondary", "template/tmpl/1", "vers=3,ro");
+
+        String body = bodies.get(0);
+        assertTrue(body, body.contains("storage=cst-2"));
+        assertTrue(body, body.contains("type=nfs"));
+        assertTrue(body, body.contains("content=images"));
+        assertTrue(body, body.contains("content-dirs=images%3Dtemplate%2Ftmpl%2F1"));
+        assertTrue(body, body.contains("options=vers%3D3%2Cro"));
+    }
+
+    @Test
     public void aVmsConfigurationIsReadAsOptionNamesAndValues() {
         answer("GET /api2/json/nodes/pve1/qemu/9204/config", "{\"data\":{\"name\":\"i-2-10-VM\",\"memory\":512,"
                 + "\"scsi0\":\"cs-1:9204/vm-9204-disk-0.qcow2,size=8G\"}}");

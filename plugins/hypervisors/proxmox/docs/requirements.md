@@ -159,46 +159,6 @@ status comes back without CPU and memory, and the VM list is empty. If adding a 
 no capacity, check that the role was granted to the **token** itself (`pveum acl list` shows one line for the user and one
 for the token); a privilege-separated token never gets more than it is granted directly.
 
-### Permissions for VMs and templates (Phase 3a; confirmed on the lab, spikes S9 and S11)
-
-Roles for **both the user and the token** (a privilege-separated token gets only what both have):
-
-| Role | Path | For |
-|---|---|---|
-| `PVEVMAdmin` | `/vms` | creating, configuring, starting, stopping, moving and destroying VMs |
-| `PVEDatastoreAdmin` | `/storage` | the primary storage entry, and the entry for the secondary store |
-| `PVESDNUser` | `/sdn/zones/localnetwork` | attaching a VM to a plain bridge (`SDN.Use` on `/sdn/zones/localnetwork/<bridge>/<vlan tag>`; without it a NIC is refused) |
-
-```bash
-pveum acl modify /vms --users <user> --tokens '<user>!<token>' --roles PVEVMAdmin
-pveum acl modify /storage --users <user> --tokens '<user>!<token>' --roles PVEDatastoreAdmin
-pveum acl modify /sdn/zones/localnetwork --users <user> --tokens '<user>!<token>' --roles PVESDNUser
-```
-
-### The root@pam password (needed to deploy a VM from a template)
-
-**Why it is needed.** CloudStack keeps templates on the secondary storage, and the Proxmox plugin has no agent on the nodes. To give a VM its
-disk, the plugin has Proxmox mount the secondary storage (as a read-only storage entry) and import the template file into the new VM's
-disk. Proxmox reads a file by its **path on the node** only for the user `root@pam`, and refuses everyone else, including an API token
-that belongs to root (it checks that the user is exactly `root@pam`, and a token's user is `root@pam!<token name>`). A token can import
-from a *storage volume*, but that needs one storage entry per template folder, and the folders are spread over every account: with
-thousands of accounts that means thousands of entries, each permanently mounted on every node. One entry for the whole secondary store
-and a path is the only way that scales, and it needs the root login. (Tested: spikes S9, S10 and S11 in test-log.md.)
-
-**What it is used for.** One thing: creating a VM disk from a template, and checking that the login works when a template is made
-available. Every other operation (adding hosts, storage, networks, start, stop, destroy, migration, state) keeps using the API token.
-
-**How to set it.** Global setting `proxmox.root.password` (Global Settings in the UI; its description there gives the same reason).
-The value is stored encrypted. It is read when needed, so a change takes effect without a restart. Until it is set, deploying a VM from
-a template fails with a message that names the setting; nothing else is affected.
-
-**Limits.**
-- One password for every Proxmox cluster that CloudStack manages (a global setting), so use the same password, or one cluster at a time.
-- The `root@pam` account must not require two-factor login: the login ticket is requested with the password alone.
-- A separate Proxmox account with root's rights cannot replace it: the check is for the exact user `root@pam`.
-- Anyone who can read global settings with decryption, or the database and its encryption key, can read the password. Treat it like the
-  other credentials CloudStack stores.
-
 ### How the secret is stored
 
 The token id and secret are saved with each host under the host detail keys `username` and `password`. The `password` key

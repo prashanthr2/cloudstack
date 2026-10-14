@@ -65,37 +65,10 @@ public class ProxmoxApiClient implements Closeable {
     static final long TASK_POLL_MILLIS = 1000;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** A login ticket is valid for two hours; it is renewed a little before that. */
-    private static final long TICKET_LIFETIME_MILLIS = 100L * 60 * 1000;
-    static final String ROOT_USER = "root@pam";
-
     private final List<String> baseUrls;
-    /** The API token header, or null when the client logs in with a user name and password instead. */
     private final String authHeader;
-    private final String loginUser;
-    private final String loginPassword;
     private final CloseableHttpClient httpClient;
     private volatile int current;
-    private volatile Ticket ticket;
-
-    /** A login: the ticket cookie, the token that must accompany every change, and when they were obtained. */
-    private static final class Ticket {
-        private final String cookie;
-        private final String csrfToken;
-        private final long obtained;
-        private final String baseUrl;
-
-        private Ticket(String cookie, String csrfToken, String baseUrl) {
-            this.cookie = cookie;
-            this.csrfToken = csrfToken;
-            this.baseUrl = baseUrl;
-            this.obtained = System.currentTimeMillis();
-        }
-
-        private boolean expired() {
-            return System.currentTimeMillis() - obtained > TICKET_LIFETIME_MILLIS;
-        }
-    }
 
     public ProxmoxApiClient(String baseUrl, String tokenId, String tokenSecret, boolean verifyTls) {
         this(Collections.singletonList(baseUrl), tokenId, tokenSecret, verifyTls, DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS);
@@ -113,24 +86,6 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     ProxmoxApiClient(List<String> baseUrls, String tokenId, String tokenSecret, CloseableHttpClient httpClient) {
-        this(baseUrls, "PVEAPIToken=" + tokenId + "=" + tokenSecret, null, null, httpClient);
-    }
-
-    /**
-     * A client that logs in as root@pam with the password. Proxmox allows a few things only to that user and refuses an API token for them
-     * (even a token owned by root), for example creating a VM disk from a file path on the node. Use it for those calls only.
-     */
-    public static ProxmoxApiClient withRootLogin(List<String> baseUrls, String password, boolean verifyTls, int connectTimeoutSeconds,
-            int readTimeoutSeconds) {
-        return new ProxmoxApiClient(baseUrls, null, ROOT_USER, password, buildHttpClient(verifyTls, connectTimeoutSeconds * 1000,
-                readTimeoutSeconds * 1000));
-    }
-
-    static ProxmoxApiClient withRootLogin(List<String> baseUrls, String password, CloseableHttpClient httpClient) {
-        return new ProxmoxApiClient(baseUrls, null, ROOT_USER, password, httpClient);
-    }
-
-    private ProxmoxApiClient(List<String> baseUrls, String authHeader, String loginUser, String loginPassword, CloseableHttpClient httpClient) {
         List<String> cleaned = new ArrayList<>();
         for (String url : new LinkedHashSet<>(baseUrls)) {
             cleaned.add(StringUtils.removeEnd(url, "/"));
@@ -139,9 +94,7 @@ public class ProxmoxApiClient implements Closeable {
             throw new ProxmoxApiException("At least one Proxmox API address is required");
         }
         this.baseUrls = cleaned;
-        this.authHeader = authHeader;
-        this.loginUser = loginUser;
-        this.loginPassword = loginPassword;
+        this.authHeader = "PVEAPIToken=" + tokenId + "=" + tokenSecret;
         this.httpClient = httpClient;
     }
 
@@ -220,91 +173,27 @@ public class ProxmoxApiClient implements Closeable {
         String lastTarget = null;
         int count = baseUrls.size();
         int first = current;
-        boolean loggedInAgain = false;
         for (int attempt = 0; attempt < count; attempt++) {
             int index = (first + attempt) % count;
             HttpRequestBase request = requestFactory.apply(baseUrls.get(index) + "/api2/json");
+            request.setHeader("Authorization", authHeader);
             request.setHeader("Accept", "application/json");
             lastTarget = request.getMethod() + " " + request.getURI().getPath();
-            try {
-                authenticate(request, baseUrls.get(index));
-                try (CloseableHttpResponse response = httpClient.execute(request)) {
-                    int status = response.getStatusLine().getStatusCode();
-                    String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-                    current = index;
-                    if (status == 401 && loginUser != null && !loggedInAgain) {
-                        // the ticket was refused (expired or revoked): log in again once and repeat the request
-                        loggedInAgain = true;
-                        ticket = null;
-                        attempt--;
-                        continue;
-                    }
-                    if (status < 200 || status >= 300) {
-                        throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s", lastTarget, status,
-                                response.getStatusLine().getReasonPhrase()), status, null);
-                    }
-                    return parseData(body);
+            try (CloseableHttpResponse response = httpClient.execute(request)) {
+                int status = response.getStatusLine().getStatusCode();
+                String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                current = index;
+                if (status < 200 || status >= 300) {
+                    throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s", lastTarget, status,
+                            response.getStatusLine().getReasonPhrase()), status, null);
                 }
+                return parseData(body);
             } catch (IOException e) {
                 lastFailure = e;
             }
         }
         throw new ProxmoxApiException(String.format("Unable to reach the Proxmox API for %s on any of %s: %s", lastTarget,
                 baseUrls, lastFailure == null ? "no address" : lastFailure.getMessage()), lastFailure);
-    }
-
-    /** Adds the credentials: the token header, or the login ticket (logging in first when there is none or it is old). */
-    private void authenticate(HttpRequestBase request, String baseUrl) throws IOException {
-        if (authHeader != null) {
-            request.setHeader("Authorization", authHeader);
-            return;
-        }
-        Ticket current = ticket;
-        if (current == null || current.expired() || !current.baseUrl.equals(baseUrl)) {
-            current = login(baseUrl);
-            ticket = current;
-        }
-        request.setHeader("Cookie", "PVEAuthCookie=" + current.cookie);
-        if (!"GET".equals(request.getMethod())) {
-            request.setHeader("CSRFPreventionToken", current.csrfToken);
-        }
-    }
-
-    /** Logs in now, whatever the state of the current ticket; throws when Proxmox refuses the user name or password. */
-    public void login() {
-        ticket = null;
-        try {
-            ticket = login(baseUrls.get(current));
-        } catch (IOException e) {
-            throw new ProxmoxApiException("Unable to reach the Proxmox API for the login on " + baseUrls.get(current) + ": " + e.getMessage(), e);
-        }
-    }
-
-    private Ticket login(String baseUrl) throws IOException {
-        if (loginPassword == null) {
-            throw new ProxmoxApiException("No password to log in to Proxmox with");
-        }
-        HttpPost request = new HttpPost(baseUrl + "/api2/json/access/ticket");
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("username", loginUser);
-        form.put("password", loginPassword);
-        request.setEntity(toFormEntity(form));
-        request.setHeader("Accept", "application/json");
-        try (CloseableHttpResponse response = httpClient.execute(request)) {
-            int status = response.getStatusLine().getStatusCode();
-            String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-            if (status < 200 || status >= 300) {
-                throw new ProxmoxApiException(String.format("Proxmox refused the login of %s: HTTP %d %s", loginUser, status,
-                        response.getStatusLine().getReasonPhrase()), status, null);
-            }
-            JsonNode data = parseData(body);
-            String cookie = data.path("ticket").asText(null);
-            String csrf = data.path("CSRFPreventionToken").asText(null);
-            if (cookie == null || csrf == null) {
-                throw new ProxmoxApiException("Proxmox answered the login of " + loginUser + " without a ticket (a two-factor login is not supported)");
-            }
-            return new Ticket(cookie, csrf, baseUrl);
-        }
     }
 
     static JsonNode parseData(String body) {
@@ -665,6 +554,27 @@ public class ProxmoxApiClient implements Closeable {
         }
         return new StorageStatus(data.path("active").asInt(0) == 1, data.path("enabled").asInt(1) == 1, data.path("total").asLong(0),
                 data.path("used").asLong(0), data.path("avail").asLong(0));
+    }
+
+    /**
+     * Adds a read-only NFS entry that exposes one folder of the secondary store as "images" content, so that a VM can be created from the
+     * template files in its numbered sub-folders ({@code import-from=<id>:<folder number>/<file>}). A volume name cannot contain more than
+     * one folder, and an entry maps one folder, so the entry is made for the folder that holds the numbered template folders.
+     *
+     * @param folder the folder inside the export, e.g. "template/tmpl/1" for the templates of account 1
+     */
+    public void createTemplateStorage(String id, String server, String export, String folder, String options) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "nfs");
+        form.put("server", server);
+        form.put("export", export);
+        form.put("content", "images");
+        form.put("content-dirs", "images=" + folder);
+        if (StringUtils.isNotBlank(options)) {
+            form.put("options", options);
+        }
+        post("/storage", form);
     }
 
     /** The next free VM id of the cluster. Not reserved: another caller can be given the same id, so a create may have to be retried. */

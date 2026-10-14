@@ -245,13 +245,13 @@ resource does for each command:
 
 | CloudStack sends | What the plugin does | Answer |
 |---|---|---|
-| `CopyCommand`, template on secondary to primary | Checks that the root login works (global setting `proxmox.root.password`), then creates (once) a read-only `nfs` storage entry `cst-<uuid>` for the **whole secondary store** (`options=vers=<n>,ro`, mounted at `/mnt/cst-<uuid>`) and waits until the node has it mounted. The template's path is the file on the nodes, `/mnt/cst-<uuid>/template/tmpl/<account>/<id>/<file>`. **Nothing is copied.** The `<uuid>` is derived from server and export, so every command finds the same entry, and all templates on the store, of any account, share it | `CopyCmdAnswer` with the template path, size and format `QCOW2` |
-| `CopyCommand`, template on primary to root volume | Creates the VM **as root@pam** (`POST /nodes/<node>/qemu`, `name` = the instance name, `scsi0=<pool entry>:0,import-from=<template volume>,format=qcow2`), waits for the task, grows the disk if the root disk is bigger than the template, reads the disk path back | `CopyCmdAnswer` with path `<vmid>/vm-<vmid>-disk-0.qcow2`, size and format. The VM id in the path is how later commands find the VM |
+| `CopyCommand`, template on secondary to primary | Creates (once) a read-only `nfs` storage entry `cst-<uuid>` on the account folder of the template on the secondary store (`template/tmpl/<account>`; `content=images`, `content-dirs images=<folder>`, `options=vers=<n>,ro`), waits until the node has it mounted, and names the template `<entry>:<template id>/<file>`. **Nothing is copied.** The `<uuid>` is derived from server, export and folder, so every command finds the same entry, and all templates of an account share it | `CopyCmdAnswer` with the template path, size and format `QCOW2` |
+| `CopyCommand`, template on primary to root volume | Creates the VM (`POST /nodes/<node>/qemu`, `name` = the instance name, `scsi0=<pool entry>:0,import-from=<template volume>,format=qcow2`), waits for the task, grows the disk if the root disk is bigger than the template, reads the disk path back | `CopyCmdAnswer` with path `<vmid>/vm-<vmid>-disk-0.qcow2`, size and format. The VM id in the path is how later commands find the VM |
 | `StartCommand` | Finds the VM by the VM id in the root volume path. If it is on another node, moves it to this host's node first (offline move, config only). Sets name, CPU, memory (ballooning off), `ostype`, `scsihw`, boot order and the NICs, then starts it and waits | `StartAnswer` |
 | `StopCommand` | Finds the VM by name anywhere in the cluster. Not found or already stopped is success. Otherwise a guest shutdown with a 60 s timeout and forced stop afterwards, or a hard stop when CloudStack asks for a forced stop | `StopAnswer` |
 | `RebootCommand` | Reboots the VM wherever it is | `RebootAnswer` |
 | `DeleteCommand`, root volume | Stops the VM if it is running and destroys it with `purge`; the disk it owns goes with it. A VM that is already gone is success | `Answer` |
-| `DeleteCommand`, template on primary | Nothing: the `cst-` entry is the secondary store's, shared by every template on it, and is kept | `Answer` |
+| `DeleteCommand`, template on primary | Nothing: the `cst-` entry is shared by the account's templates and is kept | `Answer` |
 
 Details that are easy to get wrong:
 
@@ -268,10 +268,8 @@ Details that are easy to get wrong:
   the command fails but the Proxmox task is not cancelled.
 - **A failed creation removes what it left behind**, except a VM id that turned out to belong to someone else's VM; the id is not
   reserved by Proxmox, so a create that fails with "already exists" is retried with a new id (3 attempts).
-- **The root@pam password** (`proxmox.root.password`) is needed for the template import and the creation of the root disk, and nothing else;
-  requirements.md explains why (Proxmox allows a file path on a node to root@pam only, never to an API token). Without it the deploy fails
-  with a message that names the setting.
-- Token privileges needed on top of storage: see requirements.md (`PVEVMAdmin`, `PVESDNUser` on `/sdn/zones/localnetwork`).
+- Token privileges needed on top of storage: see design-phase3-vm-deployment.md, 4.9 (`PVEVMAdmin`, `PVESDNUser` on
+  `/sdn/zones/localnetwork`).
 - **UI:** the register and upload template form lists the formats per hypervisor in `RegisterOrUploadTemplate.vue`; Proxmox offers `QCOW2`
   only (found on the lab: the list was empty). The UI needs a rebuild or the dev server to show it.
 - Not yet handled (answered as unsupported): data volumes, attach and detach, resize, ISO, snapshots, console, live migration, VM stats.
