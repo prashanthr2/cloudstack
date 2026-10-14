@@ -262,3 +262,20 @@ The root@pam variant (S11) was implemented and then reverted: no root password f
 plugin is back to the S10 design (one read-only entry per account folder, imported with the API token). The global setting
 `proxmox.root.password` and the root login in the client are gone again (they remain in the git history, commit 93e1ed96ed). Known limitation: the
 number of entries grows with the accounts that use templates on Proxmox (design 4.1).
+
+### Spike S12: one NFS mount per store, one `dir` entry per account (2026-10-14)
+
+Question: can several storage entries share one mount, so that the number of mounts does not grow with the accounts? Setup: the existing
+read-only `nfs` entry of the secondary store (mounted at `/mnt/pve/cst-aba3b55d-...`), plus a `dir` entry on that same path:
+`pvesm add dir acct1-dir --path <that mount> --content images --content-dirs images=template/tmpl/1 --is_mountpoint yes --shared 1` (run as root).
+
+| # | What | Result |
+|---|---|---|
+| S12-1 | add the `dir` entry, then `pvesm status` and `findmnt` | **Pass.** `acct1-dir` is `active` with the share's capacity; the list of mounts is **unchanged** (no new mount) |
+| S12-2 | the token creates a VM with `import-from=acct1-dir:4/<uuid>.qcow2` | **Pass.** `lock: create` while the import ran, then the VM with `scsi0` 8G |
+| S12-3 | remove the VM and the `dir` entry | **Pass.** The mounts are unchanged, nothing is left behind (a `dir` entry mounts nothing) |
+
+Observation from the same output: seven mounts of the same export were on the node, all left by removed test entries (Proxmox never
+unmounts), which is what per-account `nfs` entries would produce at scale.
+
+Open: the `dir` entry above was created by root in a shell; creating and removing it with the API token is checked separately (S12b).
