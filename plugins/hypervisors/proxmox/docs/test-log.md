@@ -278,4 +278,14 @@ read-only `nfs` entry of the secondary store (mounted at `/mnt/pve/cst-aba3b55d-
 Observation from the same output: seven mounts of the same export were on the node, all left by removed test entries (Proxmox never
 unmounts), which is what per-account `nfs` entries would produce at scale.
 
-Open: the `dir` entry above was created by root in a shell; creating and removing it with the API token is checked separately (S12b).
+| S12b | the **token** creates the `dir` entry through `POST /storage` (`type=dir`, `path`, `content=images`, `content-dirs`, `is_mountpoint=yes`, `shared=1`) and removes it with `DELETE /storage/<id>` | **Pass.** Create returned `{"data":{"type":"dir","storage":"acct1-dir"}}`, the entry was `active`, delete returned `{"data":null}` and the entry was gone |
+
+Result: the plugin uses one NFS mount per secondary store and a directory entry per account folder on it (design 4.1), with the token only.
+
+### Phase 3a: store mount plus account directory entries implemented (2026-10-14)
+
+Unit tests: 139 pass. The template copy creates the store's NFS entry (`css-`), then the account's `dir` entry (`cst-`) and waits for both to
+be active; another template of the same account creates nothing, another account adds only a `dir` entry, no second mount. To retest on the lab:
+pull and rebuild, remove the old `cst-` entries (`pvesm status | grep cst-`, `pvesm remove`), remove the template from the primary pool or register
+a new one, deploy, then `findmnt | grep secondary` should show one mount for the store (plus leftovers from earlier entries until unmounted) and
+`pvesm status` the `css-` and `cst-` entries.

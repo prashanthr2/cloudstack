@@ -247,17 +247,20 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
-    public void aTemplateStorageExposesOneFolderAsImagesContentReadOnly() {
-        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"nfs\",\"storage\":\"cst-2\"}}");
+    public void aTemplateDirectoryEntryExposesOneFolderOfAnAlreadyMountedPathAsImagesContent() {
+        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"dir\",\"storage\":\"cst-2\"}}");
 
-        client.createTemplateStorage("cst-2", "10.0.32.4", "/acs/secondary", "template/tmpl/1", "vers=3,ro");
+        client.createTemplateDirStorage("cst-2", "/mnt/css-1", "template/tmpl/1");
 
         String body = bodies.get(0);
         assertTrue(body, body.contains("storage=cst-2"));
-        assertTrue(body, body.contains("type=nfs"));
+        assertTrue(body, body.contains("type=dir"));
+        assertTrue(body, body.contains("path=%2Fmnt%2Fcss-1"));
         assertTrue(body, body.contains("content=images"));
         assertTrue(body, body.contains("content-dirs=images%3Dtemplate%2Ftmpl%2F1"));
-        assertTrue(body, body.contains("options=vers%3D3%2Cro"));
+        // nothing is mounted by it, and it is offline where the NFS entry is not mounted
+        assertTrue(body, body.contains("is_mountpoint=yes"));
+        assertTrue(body, body.contains("shared=1"));
     }
 
     @Test

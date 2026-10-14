@@ -53,45 +53,44 @@ Not in the mirrors, so only known from experience and **to verify**: the task st
 
 ## 4. The design
 
-### 4.1 Template on primary: one read-only entry per account folder
+### 4.1 Template on primary: one NFS mount per secondary store, one directory entry per account folder
 
-The management server cannot mount the secondary store, and a token cannot import from an absolute path. What does work (spikes S9-2,
-S9-6, S10) is a Proxmox **`nfs` storage entry on the secondary export, limited to the folder that holds the numbered template folders of
-one account**. Secondary stores templates as `template/tmpl/<account id>/<template id>/<file>`; Proxmox reads a volume name of the form
-`<number>/<file>` in an `images` entry, so with `content-dirs images=template/tmpl/<account id>` the template is the volume
-`<entry>:<template id>/<file>`.
+The management server cannot mount the secondary store, and a token can read a template file only as a *volume of a storage entry*. A
+volume name allows one folder level below the folder the entry maps (`<number>/<file>` in an `images` entry; none in an `import` entry), and an
+entry maps one folder per content type. CloudStack's layout is `template/tmpl/<account id>/<template id>/<file>`, so one entry can reach
+one account folder at most (spikes S9, S10). The way to keep the mounts few is to separate *mounting* from *mapping* (spike S12):
 
-1. The `CopyCommand` carries the secondary store (`NfsTO`: server, export, NFS version) and the template's path. The plugin creates, if
-   it does not exist yet, the entry `cst-<id>` (the id must start with a letter, and is derived from server, export and folder):
-   `type nfs`, `server`, `export`, `content=images`, `content-dirs images=<account folder>`, `options=vers=<n>,ro`. Proxmox mounts it
-   on the nodes as needed.
-2. It waits until the node reports the entry active (mounted). The file itself cannot be listed: Proxmox's `images` listing only scans
-   folders with a name of at least two digits, so the folders of templates 1 to 9 are skipped. A file that is not there fails the creation
-   of the VM later, with Proxmox's message.
-3. Answer `CopyCmdAnswer(TemplateObjectTO{path = "cst-<id>:<template id>/<file>", size, format = QCOW2})`; nothing is copied yet.
-   Running it again for another template of the same account finds the entry and only answers.
-4. When CloudStack deletes a template from the pool (`DeleteCommand`), nothing is removed, because the entry is shared by the account's
-   templates. An administrator can remove an entry when none of its templates is used any more.
+1. **One NFS entry per secondary store**, `css-<id>` (derived from server and export): `type nfs`, `server`, `export`, `content=import`,
+   `path=/mnt/css-<id>`, `options=vers=<n>,ro`. It is the only entry that mounts the store, once per node.
+2. **One directory entry per account folder**, `cst-<id>` (derived from server, export and folder): `type dir`, `path=/mnt/css-<id>` (the
+   mount of the NFS entry), `content=images`, `content-dirs images=template/tmpl/<account id>`, `is_mountpoint=yes`, `shared=1`. A directory
+   entry on a path that is already mounted mounts nothing, so it adds no mount; with `is_mountpoint` Proxmox reports it offline on a node
+   where the store is not mounted. Removing it leaves nothing behind.
+3. The `CopyCommand` creates both if they do not exist, waits until each is active on the node (the file itself is not looked up:
+   Proxmox's `images` listing only scans folders with a name of at least two digits, so the folders of templates 1 to 9 are skipped; a
+   missing file fails the creation of the VM later with Proxmox's message), and answers
+   `CopyCmdAnswer(TemplateObjectTO{path = "cst-<id>:<template id>/<file>", size, format = QCOW2})`. Nothing is copied.
+4. When CloudStack deletes a template from the pool, nothing is removed: the entries are shared by the templates of the account and of the
+   store. An administrator can remove an account's entry when none of its templates is used any more.
 
-**Known limitation: the number of entries grows with the accounts that own templates used on Proxmox.** An entry is created the first time
-a template of an account is used, and it stays mounted on every node (Proxmox does not unmount an entry that is removed). A few accounts is
-fine; thousands of accounts each using their own template would be thousands of mounts per node and is not practical.
+Everything is done with the API token (confirmed in S12: the token creates and removes the entries and creates VMs from them); no root
+login or password is involved.
 
-**Considered and not chosen for now: one entry per secondary store, imported by file path as root@pam (spike S11).** It scales to any
-number of accounts with one entry, but Proxmox allows a file path only to the user `root@pam` and refuses API tokens for it (even a token
-owned by root), so CloudStack would have to store a root password and log in as root for the template import. It was implemented
-(commit 93e1ed96ed) and removed again: the decision is to avoid a root password until a second feature needs it. If one does, revisit this,
-and decide at the same time where the credential lives (per cluster, as a cluster credential or as the host login, not a global setting; see the
-options in the discussion of 2026-10-14: cluster `username`/`password` details, root login only like XenServer, or a root login that creates a
-limited token).
+**Mounts and entries:** one mount per node per secondary store (usually one), whatever the number of accounts. The number of `dir`
+entries grows with the accounts whose templates are used on Proxmox (lines in `storage.cfg`, checked by Proxmox regularly without any
+mount or network traffic); an entry is created on first use. With very many accounts that is still a lot of entries; they could be
+removed after use, since removing one leaves nothing behind (not done yet).
 
-**Entries and mounts:** one entry and one NFS mount per node for each account that owns a template used on Proxmox (usually a handful),
-not one per template (the first version of this design; Phase 3a check 2 showed that does not scale). The mount stays after an entry
-is removed, as in test p5.
-
-**Caveats:** NFS secondary stores only. The share is mounted read-only. Proxmox sees the folder `<template id>` as the disk folder of
-VM `<template id>`: nothing is written there, but a `qm rescan` of a VM whose id equals a template id would show the template file as an
+**Caveats:** NFS secondary stores only. The share is mounted read-only. Proxmox sees the folder `<template id>` as the disk folder of VM
+`<template id>`: nothing is written there, but a `qm rescan` of a VM whose id equals a template id would show the template file as an
 unused disk. If an entry is removed by hand, a template already on the pool cannot be used until it is removed from the pool and copied again.
+The mount stays on a node after the NFS entry is removed (Proxmox never unmounts, test p5).
+
+**Considered and not chosen for now: importing by file path as root@pam (spike S11).** One entry per store and no per-account entries, but
+Proxmox allows a file path only to the user `root@pam` and refuses API tokens for it (even a token owned by root), so CloudStack would
+have to store a root password. It was implemented (commit 93e1ed96ed) and removed again: no root password until a second feature needs it. If
+one does, revisit it, and decide at the same time where the credential lives (per cluster, not a global setting: the cluster `username` and
+`password` details, a root login only like XenServer, or a root login that creates a limited token).
 
 ### 4.2 Root volume: the VM is born with its disk
 

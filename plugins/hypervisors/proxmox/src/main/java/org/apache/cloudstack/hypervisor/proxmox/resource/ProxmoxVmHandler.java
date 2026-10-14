@@ -66,6 +66,8 @@ class ProxmoxVmHandler {
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
     private static final String CREATE_MEMORY_MIB = "256";
     private static final int CREATE_ATTEMPTS = 3;
+    /** The kind of content declared for the secondary store's NFS entry: it is only mounted, never used as a place for disks. */
+    private static final String STORE_CONTENT = "import";
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
@@ -105,9 +107,9 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * Nothing is copied. The folder that holds the numbered template folders of the account ("template/tmpl/&lt;account&gt;") on the
-     * secondary store is exposed to the Proxmox cluster as one read-only storage entry, shared by all templates of that account, and the
-     * answer names the template file in it ("&lt;entry&gt;:&lt;template id&gt;/&lt;file&gt;"); the root volume is created from that file
+     * Nothing is copied. The secondary store is added to the Proxmox cluster as one read-only NFS entry, which is the only mount, and the
+     * account's template folder ("template/tmpl/&lt;account&gt;") as a directory entry on that mount, shared by the templates of the account.
+     * The answer names the template file in it ("&lt;entry&gt;:&lt;template id&gt;/&lt;file&gt;"); the root volume is created from that file
      * (createRootVolume).
      */
     private Answer copyTemplateToPrimary(TemplateObjectTO template) {
@@ -119,7 +121,7 @@ class ProxmoxVmHandler {
         String[] parts = StringUtils.removeStart(StringUtils.defaultString(template.getPath()), "/").split("/");
         int count = parts.length;
         if (StringUtils.isBlank(server) || StringUtils.isBlank(export) || count < 3 || !StringUtils.isNumeric(parts[count - 2])
-                || parts[count - 1].isEmpty()) {
+                || parts[count - 1].isEmpty() || template.getPath().contains("..")) {
             return new CopyCmdAnswer(String.format("Cannot find the template file from the secondary store %s and the path %s: "
                     + "expected <folder>/<template id>/<file>", secondary.getUrl(), template.getPath()));
         }
@@ -127,29 +129,40 @@ class ProxmoxVmHandler {
         String options = StringUtils.isBlank(secondary.getNfsVersion()) ? "ro" : "vers=" + secondary.getNfsVersion() + ",ro";
 
         ProxmoxApiClient client = clients.get();
-        String id = ProxmoxStorageNames.templateStorageId(server, export, folder);
-        if (client.findStorage(id) == null) {
-            try {
-                client.createTemplateStorage(id, server, export, folder, options);
-                LOGGER.info("Created Proxmox storage {} for the template folder {}:{}/{}", id, server, export, folder);
-            } catch (ProxmoxApiException e) {
-                // another host's command may have created it a moment ago
-                if (client.findStorage(id) == null) {
-                    throw e;
-                }
-            }
-        }
-        // The folders of a template have a short number as their name, which Proxmox does not list, so the file itself cannot be looked
-        // up; what can be checked is that the node has the share mounted. A file that is not there fails the creation of the VM later.
-        if (!waitForStorage(client, id)) {
+        String storeId = ProxmoxStorageNames.secondaryStorageId(server, export);
+        String mountPath = ProxmoxStorageNames.secondaryMountPath(storeId);
+        ensureStorage(client, storeId, () -> client.createNfsStorage(storeId, server, export, mountPath, STORE_CONTENT, options));
+        if (!waitForStorage(client, storeId)) {
             return new CopyCmdAnswer(String.format("Proxmox node %s did not mount %s:%s as storage %s: check that the NFS server exports the "
-                    + "secondary store to the Proxmox nodes", node, server, export, id));
+                    + "secondary store to the Proxmox nodes", node, server, export, storeId));
+        }
+        String id = ProxmoxStorageNames.templateStorageId(server, export, folder);
+        ensureStorage(client, id, () -> client.createTemplateDirStorage(id, mountPath, folder));
+        // The folders of a template have a short number as their name, which Proxmox does not list, so the file itself cannot be looked
+        // up; what can be checked is that the entry is usable on this node. A file that is not there fails the creation of the VM later.
+        if (!waitForStorage(client, id)) {
+            return new CopyCmdAnswer(String.format("Proxmox storage %s for the templates in %s is not active on node %s", id, folder, node));
         }
         TemplateObjectTO onPrimary = new TemplateObjectTO();
         onPrimary.setPath(id + ":" + parts[count - 2] + "/" + parts[count - 1]);
         onPrimary.setSize(template.getSize() != null && template.getSize() > 0 ? template.getSize() : template.getPhysicalSize());
         onPrimary.setFormat(Storage.ImageFormat.QCOW2);
         return new CopyCmdAnswer(onPrimary);
+    }
+
+    /** Creates the entry unless it exists; one that another host's command created a moment ago counts as existing. */
+    private void ensureStorage(ProxmoxApiClient client, String id, Runnable create) {
+        if (client.findStorage(id) != null) {
+            return;
+        }
+        try {
+            create.run();
+            LOGGER.info("Created Proxmox storage {}", id);
+        } catch (ProxmoxApiException e) {
+            if (client.findStorage(id) == null) {
+                throw e;
+            }
+        }
     }
 
     private boolean waitForStorage(ProxmoxApiClient client, String storageId) {

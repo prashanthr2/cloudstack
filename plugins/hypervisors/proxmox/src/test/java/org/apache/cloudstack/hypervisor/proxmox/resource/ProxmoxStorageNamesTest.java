@@ -60,4 +60,20 @@ public class ProxmoxStorageNamesTest {
         assertFalse(ProxmoxStorageNames.isTemplateStorageId("local"));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(null));
     }
+
+    @Test
+    public void aSecondaryStoreHasOneNfsEntryThatEveryCommandFindsAgain() {
+        String id = ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary");
+
+        assertEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary"));
+        assertNotEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.5", "/acs/secondary"));
+        assertNotEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/other"));
+        assertTrue(id, id.startsWith("css-"));
+        assertEquals("/mnt/" + id, ProxmoxStorageNames.secondaryMountPath(id));
+    }
+
+    @Test
+    public void theStoreEntryAndTheTemplateEntriesCannotBeMistakenForEachOther() {
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary")));
+    }
 }

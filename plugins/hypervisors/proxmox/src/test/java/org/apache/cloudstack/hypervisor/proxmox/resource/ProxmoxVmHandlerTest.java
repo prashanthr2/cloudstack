@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -35,7 +36,9 @@ import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
@@ -70,6 +73,8 @@ public class ProxmoxVmHandlerTest {
     private static final String POOL_UUID = "7fd5565c-6c1e-3032-81ec-d404812915ab";
     private static final String POOL = "cs-" + POOL_UUID;
     private static final String TEMPLATE_PATH = "template/tmpl/1/4/33522506-94bb-35e2-9eed-ef5b7ba78036.qcow2";
+    private static final String STORE_ENTRY = ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary");
+    private static final String STORE_MOUNT = "/mnt/" + STORE_ENTRY;
     private static final String TEMPLATE_ENTRY = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1");
     private static final String TEMPLATE_VOLUME = TEMPLATE_ENTRY + ":4/33522506-94bb-35e2-9eed-ef5b7ba78036.qcow2";
     private static final long GIB = 1024L * 1024 * 1024;
@@ -106,17 +111,29 @@ public class ProxmoxVmHandlerTest {
         return cmd;
     }
 
-    private void entryIsMounted() {
-        when(client.getStorageStatus(NODE, TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
+    private static ProxmoxApiClient.StorageConfig aStorage(String id) {
+        return new ProxmoxApiClient.StorageConfig(id, "nfs", null, null, null, "images", null);
+    }
+
+    /** Proxmox as far as storage entries go: an entry that was created is found afterwards, and is active on the node. */
+    private void storageBehavesLikeProxmox() {
+        Set<String> created = new HashSet<>();
+        when(client.findStorage(anyString())).thenAnswer(invocation -> created.contains(invocation.<String>getArgument(0))
+                ? aStorage(invocation.getArgument(0)) : null);
+        doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client)
+                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client).createTemplateDirStorage(anyString(), anyString(), anyString());
+        when(client.getStorageStatus(eq(NODE), anyString())).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
     }
 
     @Test
-    public void theTemplatesOfAnAccountAreExposedThroughOneReadOnlyEntryAndNothingIsCopied() {
-        entryIsMounted();
+    public void theStoreIsMountedOnceAndTheAccountsTemplatesAreADirectoryEntryOnThatMountAndNothingIsCopied() {
+        storageBehavesLikeProxmox();
 
         CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
-        verify(client).createTemplateStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "template/tmpl/1", "vers=3,ro");
+        verify(client).createNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "import", "vers=3,ro");
+        verify(client).createTemplateDirStorage(TEMPLATE_ENTRY, STORE_MOUNT, "template/tmpl/1");
         assertTrue(answer.getDetails(), answer.getResult());
         TemplateObjectTO onPrimary = (TemplateObjectTO) answer.getNewData();
         assertEquals(TEMPLATE_VOLUME, onPrimary.getPath());
@@ -125,49 +142,67 @@ public class ProxmoxVmHandlerTest {
     }
 
     @Test
-    public void twoTemplatesOfTheSameAccountShareTheEntry() {
-        entryIsMounted();
-        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", "10.0.32.4",
-                "/acs/secondary", null, "images", "vers=3,ro"));
+    public void anotherTemplateOfTheSameAccountCreatesNothing() {
+        storageBehavesLikeProxmox();
 
         handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
-        CopyCmdAnswer second = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3",
+        CopyCmdAnswer other = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3",
                 "template/tmpl/1/7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
 
-        verify(client, times(1)).createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
-        assertEquals(TEMPLATE_ENTRY + ":7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2", ((TemplateObjectTO) second.getNewData()).getPath());
+        verify(client, times(1)).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, times(1)).createTemplateDirStorage(anyString(), anyString(), anyString());
+        assertEquals(TEMPLATE_ENTRY + ":7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2", ((TemplateObjectTO) other.getNewData()).getPath());
     }
 
     @Test
-    public void anotherAccountGetsItsOwnEntry() {
-        assertTrue(!ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1")
-                .equals(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2")));
+    public void anotherAccountAddsADirectoryEntryButNoMount() {
+        storageBehavesLikeProxmox();
+
+        handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
+        handler.copy(templateToPrimary(secondaryTemplate("3", "template/tmpl/2742/917/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
+
+        verify(client, times(1)).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, times(2)).createTemplateDirStorage(anyString(), eq(STORE_MOUNT), anyString());
+        verify(client).createTemplateDirStorage(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2742"),
+                STORE_MOUNT, "template/tmpl/2742");
     }
 
     @Test
-    public void withoutAnNfsVersionTheEntryIsOnlyReadOnly() {
-        entryIsMounted();
+    public void withoutAnNfsVersionTheStoreIsOnlyReadOnly() {
+        storageBehavesLikeProxmox();
 
         handler.copy(templateToPrimary(secondaryTemplate(null, TEMPLATE_PATH)));
 
-        verify(client).createTemplateStorage(TEMPLATE_ENTRY, "10.0.32.4", "/acs/secondary", "template/tmpl/1", "ro");
+        verify(client).createNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "import", "ro");
     }
 
     @Test
     public void anEntryAnotherCommandCreatedAMomentAgoIsAccepted() {
-        when(client.findStorage(TEMPLATE_ENTRY)).thenReturn(null, new ProxmoxApiClient.StorageConfig(TEMPLATE_ENTRY, "nfs", null, null, null,
-                "images", null));
+        storageBehavesLikeProxmox();
+        when(client.findStorage(STORE_ENTRY)).thenReturn(null, aStorage(STORE_ENTRY));
         doThrow(new ProxmoxApiException("storage ID already defined")).when(client)
-                .createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
-        entryIsMounted();
+                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
 
         assertTrue(handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH))).getResult());
     }
 
     @Test
-    public void whenTheEntryCannotBeCreatedTheReasonFromProxmoxIsReported() {
+    public void whenTheStoreCannotBeAddedTheReasonFromProxmoxIsReported() {
         doThrow(new ProxmoxApiException("Proxmox API POST /api2/json/storage failed: HTTP 403 Forbidden")).when(client)
-                .createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
+                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+
+        Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("403"));
+        verify(client, never()).createTemplateDirStorage(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    public void whenTheDirectoryEntryCannotBeAddedTheReasonFromProxmoxIsReported() {
+        storageBehavesLikeProxmox();
+        doThrow(new ProxmoxApiException("Proxmox API POST /api2/json/storage failed: HTTP 403 Forbidden")).when(client)
+                .createTemplateDirStorage(anyString(), anyString(), anyString());
 
         Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
@@ -177,18 +212,32 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aShareTheNodeCannotMountGetsAnAnswerThatSaysWhatToCheck() {
-        when(client.getStorageStatus(NODE, TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageStatus(false, true, 0L, 0L, 0L));
+        storageBehavesLikeProxmox();
+        when(client.getStorageStatus(NODE, STORE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageStatus(false, true, 0L, 0L, 0L));
 
         Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("NFS server exports"));
         assertEquals(ProxmoxVmHandler.ENTRY_ACTIVATION_ATTEMPTS, pauses);
+        verify(client, never()).createTemplateDirStorage(anyString(), anyString(), anyString());
     }
 
     @Test
-    public void theEntryIsGivenTimeToBeMountedOnTheNode() {
-        when(client.getStorageStatus(NODE, TEMPLATE_ENTRY)).thenThrow(new ProxmoxApiException("storage is not online"))
+    public void aDirectoryEntryThatIsNotActiveOnTheNodeIsReported() {
+        storageBehavesLikeProxmox();
+        when(client.getStorageStatus(NODE, TEMPLATE_ENTRY)).thenReturn(new ProxmoxApiClient.StorageStatus(false, true, 0L, 0L, 0L));
+
+        Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains(TEMPLATE_ENTRY));
+    }
+
+    @Test
+    public void theStoreIsGivenTimeToBeMountedOnTheNode() {
+        storageBehavesLikeProxmox();
+        when(client.getStorageStatus(NODE, STORE_ENTRY)).thenThrow(new ProxmoxApiException("storage is not online"))
                 .thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
 
         assertTrue(handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH))).getResult());
@@ -197,12 +246,12 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aTemplatePathThatIsNotFolderIdFileIsRefused() {
-        for (String path : new String[] {"just-a-file.qcow2", "4/f.qcow2", "tmpl/not-a-number/f.qcow2"}) {
+        for (String path : new String[] {"just-a-file.qcow2", "4/f.qcow2", "tmpl/not-a-number/f.qcow2", "template/../../etc/4/x.qcow2"}) {
             Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", path)));
 
             assertFalse(path, answer.getResult());
         }
-        verify(client, never()).createTemplateStorage(anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, never()).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test

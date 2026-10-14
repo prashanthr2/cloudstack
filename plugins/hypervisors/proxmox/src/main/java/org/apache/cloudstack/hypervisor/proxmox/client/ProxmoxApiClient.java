@@ -557,23 +557,23 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Adds a read-only NFS entry that exposes one folder of the secondary store as "images" content, so that a VM can be created from the
-     * template files in its numbered sub-folders ({@code import-from=<id>:<folder number>/<file>}). A volume name cannot contain more than
-     * one folder, and an entry maps one folder, so the entry is made for the folder that holds the numbered template folders.
+     * Adds a directory entry on a path that another entry has already mounted (the NFS entry of the secondary store), exposing one folder of
+     * it as "images" content, so that a VM can be created from the template files in its numbered sub-folders
+     * ({@code import-from=<id>:<folder number>/<file>}). Nothing is mounted by this entry, so any number of them share the one mount; the
+     * entry is offline on a node where the path is not mounted ({@code is_mountpoint}).
      *
-     * @param folder the folder inside the export, e.g. "template/tmpl/1" for the templates of account 1
+     * @param mountPath the path the NFS entry is mounted at
+     * @param folder the folder inside it, e.g. "template/tmpl/1" for the templates of account 1
      */
-    public void createTemplateStorage(String id, String server, String export, String folder, String options) {
+    public void createTemplateDirStorage(String id, String mountPath, String folder) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("storage", id);
-        form.put("type", "nfs");
-        form.put("server", server);
-        form.put("export", export);
+        form.put("type", "dir");
+        form.put("path", mountPath);
         form.put("content", "images");
         form.put("content-dirs", "images=" + folder);
-        if (StringUtils.isNotBlank(options)) {
-            form.put("options", options);
-        }
+        form.put("is_mountpoint", "yes");
+        form.put("shared", "1");
         post("/storage", form);
     }
 

@@ -245,13 +245,13 @@ resource does for each command:
 
 | CloudStack sends | What the plugin does | Answer |
 |---|---|---|
-| `CopyCommand`, template on secondary to primary | Creates (once) a read-only `nfs` storage entry `cst-<uuid>` on the account folder of the template on the secondary store (`template/tmpl/<account>`; `content=images`, `content-dirs images=<folder>`, `options=vers=<n>,ro`), waits until the node has it mounted, and names the template `<entry>:<template id>/<file>`. **Nothing is copied.** The `<uuid>` is derived from server, export and folder, so every command finds the same entry, and all templates of an account share it | `CopyCmdAnswer` with the template path, size and format `QCOW2` |
+| `CopyCommand`, template on secondary to primary | Creates (once) a read-only `nfs` entry `css-<uuid>` for the whole secondary store (`options=vers=<n>,ro`, mounted at `/mnt/css-<uuid>`: the only mount), then (once per account) a `dir` entry `cst-<uuid>` on that mount with `content-dirs images=template/tmpl/<account>`, and waits until both are active on the node. **Nothing is copied.** Names the template `cst-<uuid>:<template id>/<file>`. Both ids are derived from server, export and folder, so every command finds the same entries, and every template of an account shares one | `CopyCmdAnswer` with the template path, size and format `QCOW2` |
 | `CopyCommand`, template on primary to root volume | Creates the VM (`POST /nodes/<node>/qemu`, `name` = the instance name, `scsi0=<pool entry>:0,import-from=<template volume>,format=qcow2`), waits for the task, grows the disk if the root disk is bigger than the template, reads the disk path back | `CopyCmdAnswer` with path `<vmid>/vm-<vmid>-disk-0.qcow2`, size and format. The VM id in the path is how later commands find the VM |
 | `StartCommand` | Finds the VM by the VM id in the root volume path. If it is on another node, moves it to this host's node first (offline move, config only). Sets name, CPU, memory (ballooning off), `ostype`, `scsihw`, boot order and the NICs, then starts it and waits | `StartAnswer` |
 | `StopCommand` | Finds the VM by name anywhere in the cluster. Not found or already stopped is success. Otherwise a guest shutdown with a 60 s timeout and forced stop afterwards, or a hard stop when CloudStack asks for a forced stop | `StopAnswer` |
 | `RebootCommand` | Reboots the VM wherever it is | `RebootAnswer` |
 | `DeleteCommand`, root volume | Stops the VM if it is running and destroys it with `purge`; the disk it owns goes with it. A VM that is already gone is success | `Answer` |
-| `DeleteCommand`, template on primary | Nothing: the `cst-` entry is shared by the account's templates and is kept | `Answer` |
+| `DeleteCommand`, template on primary | Nothing: the entries are shared by the templates of the account and the store and are kept | `Answer` |
 
 Details that are easy to get wrong:
 

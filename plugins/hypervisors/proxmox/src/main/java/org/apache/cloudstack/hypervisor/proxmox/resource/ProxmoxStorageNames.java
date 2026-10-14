@@ -34,8 +34,12 @@ public final class ProxmoxStorageNames {
     public static final String MOUNT_PATH_PREFIX = "/mnt/";
 
     /**
-     * A read-only entry that exposes one template's folder on the secondary store, so a VM disk can be imported from the template file.
-     * Same letter-first rule as above.
+     * The one NFS entry of a secondary store: it is the only thing that mounts the store on the nodes. Same letter-first rule as above.
+     */
+    public static final String SECONDARY_STORAGE_ID_PREFIX = "css-";
+    /**
+     * A directory entry on the mount of a secondary store that exposes the templates of one account folder, so a VM disk can be imported
+     * from a template file. It mounts nothing, so there can be many without more mounts. Same letter-first rule as above.
      */
     public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
 
@@ -48,6 +52,19 @@ public final class ProxmoxStorageNames {
 
     public static String mountPath(String poolUuid) {
         return MOUNT_PATH_PREFIX + poolUuid;
+    }
+
+    /**
+     * The NFS entry of the secondary store {@code server:export}. Derived from the two values, so every command for a template on the same
+     * store finds the same entry, on any management server and after a restart.
+     */
+    public static String secondaryStorageId(String server, String export) {
+        return SECONDARY_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Where the nodes mount that entry. */
+    public static String secondaryMountPath(String secondaryStorageId) {
+        return MOUNT_PATH_PREFIX + secondaryStorageId;
     }
 
     /**
