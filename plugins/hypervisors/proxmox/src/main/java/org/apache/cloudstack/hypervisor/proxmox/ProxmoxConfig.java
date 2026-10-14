@@ -39,6 +39,14 @@ public class ProxmoxConfig implements Configurable {
                     + "CA that signed the Proxmox certificates (by default the Proxmox cluster CA, /etc/pve/pve-root-ca.pem) must "
                     + "be in the management server's Java truststore", true);
 
+    public static final ConfigKey<String> RootPassword = new ConfigKey<>("Secure", String.class,
+            "proxmox.root.password", "",
+            "Password of the Proxmox root@pam user. It is used for one thing only: creating a VM's disk from a template. Proxmox allows "
+                    + "reading a file path on a node (where the template on the secondary storage is mounted) to root@pam alone and refuses API "
+                    + "tokens for it, even a token owned by root, so this cannot be done with the API token the hosts were added with. "
+                    + "Every other operation keeps using the token. The value is stored encrypted. The same password is used for every Proxmox "
+                    + "cluster, and an account with two-factor login cannot be used. Without it, VMs cannot be deployed from templates", true);
+
     public static final ConfigKey<Integer> TaskTimeout = new ConfigKey<>("Advanced", Integer.class,
             "proxmox.task.timeout", "600",
             "Seconds to wait for a Proxmox task (creating a VM from a template, starting or stopping it ...) to finish. A task that is "
@@ -51,6 +59,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, RootPassword};
     }
 }

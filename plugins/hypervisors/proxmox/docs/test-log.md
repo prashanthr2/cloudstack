@@ -255,3 +255,11 @@ Setup: one `nfs` entry `sec-all` on the whole secondary export (`content=import`
 
 Result: one entry per secondary store (any number of accounts and templates) is possible, but the template import needs a root@pam login
 (a password, not a token). Whether to take that is a decision for the project; see design-phase3-vm-deployment.md, 4.1.
+
+### Phase 3a: root login implemented (2026-10-14)
+
+Decision: option A, one entry per secondary store and an absolute path, imported as root@pam with the password of the global setting
+`proxmox.root.password` (encrypted, "Secure" category). Unit tests: 146 pass, including the root login in the client (ticket, CSRF token, reuse,
+renewal after a refused ticket, wrong password, two-factor answer), the handler (no password, wrong password, shared entry, root-created VM)
+and the setting (empty default, encrypted category, description). To retest on the lab: set the setting in Global Settings, remove the old
+`cst-` entries and the template from the primary pool (its stored path has the old form), register or re-copy the template, deploy.

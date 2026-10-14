@@ -19,6 +19,7 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -44,13 +45,14 @@ public class ProxmoxStorageNamesTest {
     }
 
     @Test
-    public void aTemplateEntryIsNamedFromItsFolderAndFoundAgainByEveryCommand() {
-        String id = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4");
+    public void aSecondaryStoreHasOneEntryThatEveryCommandFindsAgain() {
+        String id = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary");
 
-        assertEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4"));
-        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/3"));
-        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.5", "/acs/secondary", "template/tmpl/1/4"));
+        assertEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary"));
+        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.5", "/acs/secondary"));
+        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/other"));
         assertTrue(id, id.startsWith("cst-"));
+        assertEquals("/mnt/" + id, ProxmoxStorageNames.templateMountPath(id));
     }
 
     @Test
@@ -59,5 +61,15 @@ public class ProxmoxStorageNamesTest {
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.storageId("3f2a8c1e-0000-3000-8000-000000000000")));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId("local"));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(null));
+    }
+
+    @Test
+    public void theEntryIsFoundFromATemplatePathOnThePrimaryStorage() {
+        assertEquals("cst-1", ProxmoxStorageNames.templateStorageIdOfPath("/mnt/cst-1/template/tmpl/1/4/f.qcow2"));
+        assertEquals("cst-1", ProxmoxStorageNames.templateStorageIdOfPath("cst-1:4/f.qcow2"));
+        assertNull(ProxmoxStorageNames.templateStorageIdOfPath("/mnt/cs-1/images/f.qcow2"));
+        assertNull(ProxmoxStorageNames.templateStorageIdOfPath("/etc/passwd"));
+        assertNull(ProxmoxStorageNames.templateStorageIdOfPath("some-uuid"));
+        assertNull(ProxmoxStorageNames.templateStorageIdOfPath(null));
     }
 }

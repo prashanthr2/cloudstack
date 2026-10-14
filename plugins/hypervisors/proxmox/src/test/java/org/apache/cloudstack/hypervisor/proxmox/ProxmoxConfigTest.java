@@ -33,6 +33,16 @@ public class ProxmoxConfigTest {
     }
 
     @Test
+    public void theRootPasswordIsEmptyAndStoredEncryptedAndSaysWhyItIsNeeded() {
+        assertEquals("", ProxmoxConfig.RootPassword.value());
+        // "Secure" settings are encrypted in the database
+        assertEquals("Secure", ProxmoxConfig.RootPassword.category());
+        assertTrue(ProxmoxConfig.RootPassword.description().contains("root@pam"));
+        assertTrue(ProxmoxConfig.RootPassword.description().contains("API tokens"));
+        assertTrue(ProxmoxConfig.RootPassword.isDynamic());
+    }
+
+    @Test
     public void proxmoxTasksMayTakeTenMinutesByDefault() {
         assertEquals(600, (int) ProxmoxConfig.TaskTimeout.value());
     }
@@ -46,7 +56,7 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(4, config.getConfigKeys().length);
+        assertEquals(5, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
