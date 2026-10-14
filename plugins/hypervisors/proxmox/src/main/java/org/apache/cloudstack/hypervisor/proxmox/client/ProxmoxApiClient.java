@@ -557,60 +557,24 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Adds a read-only NFS entry that exposes one folder as "import" content, so that a VM can be created from the qcow2 files in it
-     * ({@code import-from=<id>:import/<file>}). A volume name cannot contain a folder, hence one entry per template folder.
+     * Adds a read-only NFS entry that exposes one folder of the secondary store as "images" content, so that a VM can be created from the
+     * template files in its numbered sub-folders ({@code import-from=<id>:<folder number>/<file>}). A volume name cannot contain more than
+     * one folder, and an entry maps one folder, so the entry is made for the folder that holds the numbered template folders.
      *
-     * @param folder the folder inside the export that holds the file, e.g. "template/tmpl/1/4"
+     * @param folder the folder inside the export, e.g. "template/tmpl/1" for the templates of account 1
      */
-    public void createImportStorage(String id, String server, String export, String folder, String options) {
+    public void createTemplateStorage(String id, String server, String export, String folder, String options) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("storage", id);
         form.put("type", "nfs");
         form.put("server", server);
         form.put("export", export);
-        form.put("content", "import");
-        form.put("content-dirs", "import=" + folder);
+        form.put("content", "images");
+        form.put("content-dirs", "images=" + folder);
         if (StringUtils.isNotBlank(options)) {
             form.put("options", options);
         }
         post("/storage", form);
-    }
-
-    /** A file in the "import" content of a storage entry. */
-    public static class ImportVolume {
-        private final String volumeId;
-        private final String format;
-        private final long sizeBytes;
-
-        public ImportVolume(String volumeId, String format, long sizeBytes) {
-            this.volumeId = volumeId;
-            this.format = format;
-            this.sizeBytes = sizeBytes;
-        }
-
-        /** For example "cst-3f2a:import/6ddd9e96.qcow2". */
-        public String getVolumeId() {
-            return volumeId;
-        }
-
-        public String getFormat() {
-            return format;
-        }
-
-        public long getSizeBytes() {
-            return sizeBytes;
-        }
-    }
-
-    public List<ImportVolume> listImportVolumes(String node, String storageId) {
-        List<ImportVolume> volumes = new ArrayList<>();
-        JsonNode data = get("/nodes/" + node + "/storage/" + storageId + "/content?content=import");
-        if (data != null && data.isArray()) {
-            for (JsonNode entry : data) {
-                volumes.add(new ImportVolume(entry.path("volid").asText(null), entry.path("format").asText(null), entry.path("size").asLong(0)));
-            }
-        }
-        return volumes;
     }
 
     /** The next free VM id of the cluster. Not reserved: another caller can be given the same id, so a create may have to be retried. */

@@ -247,30 +247,17 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
-    public void anImportStorageExposesOneFolderAsImportContentReadOnly() {
+    public void aTemplateStorageExposesOneFolderAsImagesContentReadOnly() {
         answer("POST /api2/json/storage", "{\"data\":{\"type\":\"nfs\",\"storage\":\"cst-2\"}}");
 
-        client.createImportStorage("cst-2", "10.0.32.4", "/acs/secondary", "template/tmpl/1/4", "vers=3,ro");
+        client.createTemplateStorage("cst-2", "10.0.32.4", "/acs/secondary", "template/tmpl/1", "vers=3,ro");
 
         String body = bodies.get(0);
         assertTrue(body, body.contains("storage=cst-2"));
         assertTrue(body, body.contains("type=nfs"));
-        assertTrue(body, body.contains("content=import"));
-        assertTrue(body, body.contains("content-dirs=import%3Dtemplate%2Ftmpl%2F1%2F4"));
+        assertTrue(body, body.contains("content=images"));
+        assertTrue(body, body.contains("content-dirs=images%3Dtemplate%2Ftmpl%2F1"));
         assertTrue(body, body.contains("options=vers%3D3%2Cro"));
-    }
-
-    @Test
-    public void importFilesAreListedWithTheirSize() {
-        answer("GET /api2/json/nodes/pve1/storage/cst-2/content?content=import", "{\"data\":[{\"volid\":\"cst-2:import/f.qcow2\","
-                + "\"format\":\"qcow2\",\"content\":\"import\",\"size\":1769537536}]}");
-
-        List<ProxmoxApiClient.ImportVolume> volumes = client.listImportVolumes("pve1", "cst-2");
-
-        assertEquals(1, volumes.size());
-        assertEquals("cst-2:import/f.qcow2", volumes.get(0).getVolumeId());
-        assertEquals("qcow2", volumes.get(0).getFormat());
-        assertEquals(1769537536L, volumes.get(0).getSizeBytes());
     }
 
     @Test

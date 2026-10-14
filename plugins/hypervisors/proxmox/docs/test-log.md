@@ -231,8 +231,14 @@ Lab checks for Phase 3a are listed in design-phase3-vm-deployment.md, section 9,
 
 Not yet run: a template folder the nodes cannot read, a zone without a KVM traffic label.
 
-### Open spike S10: fewer storage entries for templates
+### Spike S10: fewer storage entries for templates (2026-10-14)
 
-Planned, not run. Question: can one entry per account folder (`content=images`, `content-dirs images=template/tmpl/<account>`) serve all
-templates of that account as `<template id>/<file>` volumes, for a token creating a VM with `import-from`? Details and alternatives:
-design-phase3-vm-deployment.md, section 8.
+Question: can one entry per account folder serve all templates of that account?
+
+| # | What | Result |
+|---|---|---|
+| S10-1 | `nfs` entry `acct-test` (`content=images`, `content-dirs images=template/tmpl/1`, `options=vers=3,ro`), then `pvesm list acct-test` | **Empty list.** The source explains it: `list_images` only scans folders matching `[0-9][0-9]*` (two or more digits), and the template folders are `3` and `4`. So the file cannot be checked through the listing |
+| S10-2 | the token creates a VM with `import-from=acct-test:4/<uuid>.qcow2` | **Pass.** A task id was returned, `qm config` showed `lock: create` while the import ran, then the VM with `scsi0` 8G. The volume need not be listed to be used |
+
+Result: the plugin uses one entry per account folder (design 4.1). The template check is "the entry is mounted on the node", not a file
+lookup; a missing file fails the VM creation with Proxmox's message.

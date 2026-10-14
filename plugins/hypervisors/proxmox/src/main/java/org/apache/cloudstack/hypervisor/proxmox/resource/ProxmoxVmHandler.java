@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.net.URI;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.IntSupplier;
@@ -104,29 +105,32 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * Nothing is copied. The folder of the template on the secondary store is exposed to the Proxmox cluster as a read-only "import"
-     * storage entry, and the answer names the template file in it; the root volume is created from that file (createRootVolume).
+     * Nothing is copied. The folder that holds the numbered template folders of the account ("template/tmpl/&lt;account&gt;") on the
+     * secondary store is exposed to the Proxmox cluster as one read-only storage entry, shared by all templates of that account, and the
+     * answer names the template file in it ("&lt;entry&gt;:&lt;template id&gt;/&lt;file&gt;"); the root volume is created from that file
+     * (createRootVolume).
      */
     private Answer copyTemplateToPrimary(TemplateObjectTO template) {
         NfsTO secondary = (NfsTO) template.getDataStore();
         URI url = URI.create(StringUtils.removeEnd(secondary.getUrl(), "/"));
         String server = url.getHost();
         String export = url.getPath();
-        String path = StringUtils.removeStart(template.getPath(), "/");
-        int slash = path.lastIndexOf('/');
-        if (StringUtils.isBlank(server) || StringUtils.isBlank(export) || slash <= 0 || slash == path.length() - 1) {
-            return new CopyCmdAnswer(String.format("Cannot find the template file from the secondary store %s and the path %s", secondary.getUrl(),
-                    template.getPath()));
+        // template/tmpl/<account>/<template id>/<file>
+        String[] parts = StringUtils.removeStart(StringUtils.defaultString(template.getPath()), "/").split("/");
+        int count = parts.length;
+        if (StringUtils.isBlank(server) || StringUtils.isBlank(export) || count < 3 || !StringUtils.isNumeric(parts[count - 2])
+                || parts[count - 1].isEmpty()) {
+            return new CopyCmdAnswer(String.format("Cannot find the template file from the secondary store %s and the path %s: "
+                    + "expected <folder>/<template id>/<file>", secondary.getUrl(), template.getPath()));
         }
-        String folder = path.substring(0, slash);
-        String file = path.substring(slash + 1);
+        String folder = String.join("/", Arrays.copyOfRange(parts, 0, count - 2));
         String options = StringUtils.isBlank(secondary.getNfsVersion()) ? "ro" : "vers=" + secondary.getNfsVersion() + ",ro";
 
         ProxmoxApiClient client = clients.get();
         String id = ProxmoxStorageNames.templateStorageId(server, export, folder);
         if (client.findStorage(id) == null) {
             try {
-                client.createImportStorage(id, server, export, folder, options);
+                client.createTemplateStorage(id, server, export, folder, options);
                 LOGGER.info("Created Proxmox storage {} for the template folder {}:{}/{}", id, server, export, folder);
             } catch (ProxmoxApiException e) {
                 // another host's command may have created it a moment ago
@@ -135,33 +139,31 @@ class ProxmoxVmHandler {
                 }
             }
         }
-        ProxmoxApiClient.ImportVolume volume = waitForImportFile(client, id, file);
-        if (volume == null) {
-            return new CopyCmdAnswer(String.format("Proxmox node %s cannot see the template file %s in %s:%s/%s through storage %s: check that "
-                    + "the NFS server exports the secondary store to the Proxmox nodes, and that the file name ends in .qcow2",
-                    node, file, server, export, folder, id));
+        // The folders of a template have a short number as their name, which Proxmox does not list, so the file itself cannot be looked
+        // up; what can be checked is that the node has the share mounted. A file that is not there fails the creation of the VM later.
+        if (!waitForStorage(client, id)) {
+            return new CopyCmdAnswer(String.format("Proxmox node %s did not mount %s:%s as storage %s: check that the NFS server exports the "
+                    + "secondary store to the Proxmox nodes", node, server, export, id));
         }
         TemplateObjectTO onPrimary = new TemplateObjectTO();
-        onPrimary.setPath(volume.getVolumeId());
-        onPrimary.setSize(template.getSize() != null && template.getSize() > 0 ? template.getSize() : volume.getSizeBytes());
+        onPrimary.setPath(id + ":" + parts[count - 2] + "/" + parts[count - 1]);
+        onPrimary.setSize(template.getSize() != null && template.getSize() > 0 ? template.getSize() : template.getPhysicalSize());
         onPrimary.setFormat(Storage.ImageFormat.QCOW2);
         return new CopyCmdAnswer(onPrimary);
     }
 
-    private ProxmoxApiClient.ImportVolume waitForImportFile(ProxmoxApiClient client, String storageId, String file) {
+    private boolean waitForStorage(ProxmoxApiClient client, String storageId) {
         for (int attempt = 0; attempt < ENTRY_ACTIVATION_ATTEMPTS; attempt++) {
             try {
-                for (ProxmoxApiClient.ImportVolume volume : client.listImportVolumes(node, storageId)) {
-                    if (volume.getVolumeId() != null && volume.getVolumeId().endsWith(":import/" + file)) {
-                        return volume;
-                    }
+                if (client.getStorageStatus(node, storageId).isActive()) {
+                    return true;
                 }
             } catch (ProxmoxApiException e) {
                 LOGGER.debug("Storage {} is not ready on node {} yet: {}", storageId, node, e.getMessage());
             }
             pauser.accept(ENTRY_ACTIVATION_WAIT_MS);
         }
-        return null;
+        return false;
     }
 
     /**
@@ -170,10 +172,15 @@ class ProxmoxVmHandler {
      */
     private Answer createRootVolume(TemplateObjectTO template, VolumeObjectTO volume) {
         String templateVolume = template.getPath();
-        if (templateVolume == null || !templateVolume.contains(":import/")) {
-            return new CopyCmdAnswer("The template path " + templateVolume + " is not a Proxmox import volume");
+        String templateEntry = StringUtils.substringBefore(StringUtils.defaultString(templateVolume), ":");
+        if (!ProxmoxStorageNames.isTemplateStorageId(templateEntry) || !templateVolume.contains(":")) {
+            return new CopyCmdAnswer("The template path " + templateVolume + " is not a template volume of a Proxmox storage entry");
         }
         ProxmoxApiClient client = clients.get();
+        if (client.findStorage(templateEntry) == null) {
+            return new CopyCmdAnswer(String.format("Proxmox has no storage entry %s for the template %s: it was removed; remove the template "
+                    + "from the primary storage so that it is made available again", templateEntry, templateVolume));
+        }
         String poolStorage = ProxmoxStorageNames.storageId(((PrimaryDataStoreTO) volume.getDataStore()).getUuid());
         Map<String, String> params = new LinkedHashMap<>();
         params.put("name", StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid()));
@@ -321,8 +328,8 @@ class ProxmoxVmHandler {
     // ---- delete ----
 
     /**
-     * A root volume is deleted by destroying its VM (which removes the disk it owns). A template on the primary storage is "deleted" by
-     * removing the entry that exposes its folder; the file on the secondary store is not touched.
+     * A root volume is deleted by destroying its VM (which removes the disk it owns). Nothing is done for a template on the primary storage
+     * (see deleteTemplate).
      */
     Answer delete(DeleteCommand cmd) {
         DataTO data = cmd.getData();
@@ -358,16 +365,11 @@ class ProxmoxVmHandler {
         return new Answer(cmd, true, "Destroyed Proxmox VM " + vmid);
     }
 
+    /**
+     * The storage entry of a template is shared by all templates of the same account folder, so it is not removed with one template;
+     * it is a small read-only entry and an administrator can remove it when no template of that folder is used any more.
+     */
     private Answer deleteTemplate(DeleteCommand cmd, TemplateObjectTO template) {
-        String id = StringUtils.substringBefore(StringUtils.defaultString(template.getPath()), ":");
-        if (!ProxmoxStorageNames.isTemplateStorageId(id)) {
-            return new Answer(cmd, true, "The template " + template.getPath() + " has no Proxmox storage entry");
-        }
-        ProxmoxApiClient client = clients.get();
-        if (client.findStorage(id) != null) {
-            client.deleteStorage(id);
-            LOGGER.info("Removed Proxmox storage {}", id);
-        }
-        return new Answer(cmd, true, "Removed Proxmox storage " + id);
+        return new Answer(cmd, true, "Nothing to remove for the template " + template.getPath() + ": its Proxmox storage entry is shared and is kept");
     }
 }
