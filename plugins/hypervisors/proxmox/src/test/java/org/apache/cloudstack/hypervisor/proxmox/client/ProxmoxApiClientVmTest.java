@@ -261,6 +261,24 @@ public class ProxmoxApiClientVmTest {
         // nothing is mounted by it, and it is offline where the NFS entry is not mounted
         assertTrue(body, body.contains("is_mountpoint=yes"));
         assertTrue(body, body.contains("shared=1"));
+        // the share is read-only, so Proxmox must not try to create folders in it
+        assertTrue(body, body.contains("create-subdirs=0"));
+        assertTrue(body, body.contains("create-base-path=0"));
+    }
+
+    @Test
+    public void theSecondaryStoreIsAddedAsAnNfsEntryThatDoesNotTryToCreateFoldersInTheReadOnlyShare() {
+        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"nfs\",\"storage\":\"css-1\"}}");
+
+        client.createSecondaryNfsStorage("css-1", "10.0.32.4", "/acs/secondary", "/mnt/css-1", "vers=3,ro");
+
+        String body = bodies.get(0);
+        assertTrue(body, body.contains("storage=css-1"));
+        assertTrue(body, body.contains("type=nfs"));
+        assertTrue(body, body.contains("export=%2Facs%2Fsecondary"));
+        assertTrue(body, body.contains("path=%2Fmnt%2Fcss-1"));
+        assertTrue(body, body.contains("options=vers%3D3%2Cro"));
+        assertTrue(body, body.contains("create-subdirs=0"));
     }
 
     @Test

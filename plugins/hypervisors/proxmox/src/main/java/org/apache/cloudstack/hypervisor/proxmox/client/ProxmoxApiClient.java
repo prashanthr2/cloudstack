@@ -574,6 +574,28 @@ public class ProxmoxApiClient implements Closeable {
         form.put("content-dirs", "images=" + folder);
         form.put("is_mountpoint", "yes");
         form.put("shared", "1");
+        // the share is read-only: Proxmox must not try to create the folders of its content types (or the base path) in it
+        form.put("create-subdirs", "0");
+        form.put("create-base-path", "0");
+        post("/storage", form);
+    }
+
+    /**
+     * Adds the NFS entry of a secondary store: the only entry that mounts it. The store is read-only, so Proxmox is told not to create the
+     * folders of the content type in it ({@code create-subdirs 0}); without that, adding the entry fails with "mkdir ... Read-only file system".
+     */
+    public void createSecondaryNfsStorage(String id, String server, String export, String mountPath, String options) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "nfs");
+        form.put("server", server);
+        form.put("export", export);
+        form.put("content", "import");
+        form.put("path", mountPath);
+        form.put("create-subdirs", "0");
+        if (StringUtils.isNotBlank(options)) {
+            form.put("options", options);
+        }
         post("/storage", form);
     }
 

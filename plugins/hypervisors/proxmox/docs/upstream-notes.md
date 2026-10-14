@@ -50,3 +50,13 @@ security problem: those are reported privately, not as public issues.
    management server stops verifying certificates. Check `THREAT_MODEL.md` and `SECURITY.md` for whether this is a known and
    accepted position before deciding how to raise it. (The Proxmox plugin uses its own SSL setup and a setting,
    `proxmox.api.verify.tls`, that defaults to off only to match these plugins.)
+
+## Adding a hypervisor type
+
+10. **A new hypervisor type needs the system VMs rebuilt, and nothing says so.** `HypervisorType.valueOf` throws for a name it does not know,
+    and the secondary storage VM runs the API and core classes of the system VM image it was built from. A command that carries a template or
+    volume (for example `DeleteCommand` for a template on secondary storage) serialises `"hypervisorType":"Proxmox"`, and an SSVM from before the
+    type existed fails to read it: `IllegalArgumentException: HypervisorType 'Proxmox' not found` in `HypervisorTypeAdaptor.deserialize`. On a
+    normal upgrade the system VMs are replaced, but a plugin author (or a custom hypervisor name) has to know to rebuild the system VM image
+    and recreate the SSVM. Possible directions: make the adaptor tolerant of an unknown type for commands that do not need it, or document it
+    where a hypervisor type is added.

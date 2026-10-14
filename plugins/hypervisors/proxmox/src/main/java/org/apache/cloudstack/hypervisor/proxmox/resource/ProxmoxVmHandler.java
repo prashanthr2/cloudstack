@@ -66,8 +66,6 @@ class ProxmoxVmHandler {
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
     private static final String CREATE_MEMORY_MIB = "256";
     private static final int CREATE_ATTEMPTS = 3;
-    /** The kind of content declared for the secondary store's NFS entry: it is only mounted, never used as a place for disks. */
-    private static final String STORE_CONTENT = "import";
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
@@ -131,7 +129,7 @@ class ProxmoxVmHandler {
         ProxmoxApiClient client = clients.get();
         String storeId = ProxmoxStorageNames.secondaryStorageId(server, export);
         String mountPath = ProxmoxStorageNames.secondaryMountPath(storeId);
-        ensureStorage(client, storeId, () -> client.createNfsStorage(storeId, server, export, mountPath, STORE_CONTENT, options));
+        ensureStorage(client, storeId, () -> client.createSecondaryNfsStorage(storeId, server, export, mountPath, options));
         if (!waitForStorage(client, storeId)) {
             return new CopyCmdAnswer(String.format("Proxmox node %s did not mount %s:%s as storage %s: check that the NFS server exports the "
                     + "secondary store to the Proxmox nodes", node, server, export, storeId));

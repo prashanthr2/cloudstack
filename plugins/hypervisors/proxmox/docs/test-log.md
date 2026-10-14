@@ -289,3 +289,10 @@ be active; another template of the same account creates nothing, another account
 pull and rebuild, remove the old `cst-` entries (`pvesm status | grep cst-`, `pvesm remove`), remove the template from the primary pool or register
 a new one, deploy, then `findmnt | grep secondary` should show one mount for the store (plus leftovers from earlier entries until unmounted) and
 `pvesm status` the `css-` and `cst-` entries.
+
+### Phase 3a on the lab, store mount version (2026-10-14)
+
+| Check | Result |
+|---|---|
+| deploy a VM | **Failed first:** `create storage failed: mkdir /mnt/css-.../import: Read-only file system`. Proxmox creates the folders of the declared content types in the mount of a new entry unless `create-subdirs` is 0, and the share is read-only. Fixed: `create-subdirs=0` on the store's NFS entry, and `create-subdirs=0` and `create-base-path=0` on the directory entries (140 unit tests pass). To retest |
+| delete a template | **Failed:** `IllegalArgumentException: HypervisorType 'Proxmox' not found` in `HypervisorTypeAdaptor.deserialize`, logged by an `AgentRequest-Handler` thread. Not the plugin: a template on secondary storage is deleted by the secondary storage VM, which got the command with `"hypervisorType":"Proxmox"` and runs an older copy of the API classes baked into its system VM image. To be confirmed on the SSVM, then fixed by rebuilding the system VM image and recreating the SSVM (see upstream-notes.md, 10) |

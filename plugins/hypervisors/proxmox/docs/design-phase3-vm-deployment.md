@@ -61,9 +61,10 @@ entry maps one folder per content type. CloudStack's layout is `template/tmpl/<a
 one account folder at most (spikes S9, S10). The way to keep the mounts few is to separate *mounting* from *mapping* (spike S12):
 
 1. **One NFS entry per secondary store**, `css-<id>` (derived from server and export): `type nfs`, `server`, `export`, `content=import`,
-   `path=/mnt/css-<id>`, `options=vers=<n>,ro`. It is the only entry that mounts the store, once per node.
+   `path=/mnt/css-<id>`, `options=vers=<n>,ro`, **`create-subdirs=0`** (found on the lab: Proxmox creates the folders of the declared content
+   types in the mount when the entry is activated, and on a read-only share adding the entry fails with `mkdir .../import: Read-only file system`). It is the only entry that mounts the store, once per node.
 2. **One directory entry per account folder**, `cst-<id>` (derived from server, export and folder): `type dir`, `path=/mnt/css-<id>` (the
-   mount of the NFS entry), `content=images`, `content-dirs images=template/tmpl/<account id>`, `is_mountpoint=yes`, `shared=1`. A directory
+   mount of the NFS entry), `content=images`, `content-dirs images=template/tmpl/<account id>`, `is_mountpoint=yes`, `shared=1`, `create-subdirs=0`, `create-base-path=0`. A directory
    entry on a path that is already mounted mounts nothing, so it adds no mount; with `is_mountpoint` Proxmox reports it offline on a node
    where the store is not mounted. Removing it leaves nothing behind.
 3. The `CopyCommand` creates both if they do not exist, waits until each is active on the node (the file itself is not looked up:

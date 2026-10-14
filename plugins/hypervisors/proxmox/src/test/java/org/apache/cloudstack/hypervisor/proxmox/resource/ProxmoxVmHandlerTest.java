@@ -121,7 +121,7 @@ public class ProxmoxVmHandlerTest {
         when(client.findStorage(anyString())).thenAnswer(invocation -> created.contains(invocation.<String>getArgument(0))
                 ? aStorage(invocation.getArgument(0)) : null);
         doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client)
-                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                .createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
         doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client).createTemplateDirStorage(anyString(), anyString(), anyString());
         when(client.getStorageStatus(eq(NODE), anyString())).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
     }
@@ -132,7 +132,7 @@ public class ProxmoxVmHandlerTest {
 
         CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
-        verify(client).createNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "import", "vers=3,ro");
+        verify(client).createSecondaryNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "vers=3,ro");
         verify(client).createTemplateDirStorage(TEMPLATE_ENTRY, STORE_MOUNT, "template/tmpl/1");
         assertTrue(answer.getDetails(), answer.getResult());
         TemplateObjectTO onPrimary = (TemplateObjectTO) answer.getNewData();
@@ -149,7 +149,7 @@ public class ProxmoxVmHandlerTest {
         CopyCmdAnswer other = (CopyCmdAnswer) handler.copy(templateToPrimary(secondaryTemplate("3",
                 "template/tmpl/1/7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
 
-        verify(client, times(1)).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, times(1)).createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
         verify(client, times(1)).createTemplateDirStorage(anyString(), anyString(), anyString());
         assertEquals(TEMPLATE_ENTRY + ":7/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2", ((TemplateObjectTO) other.getNewData()).getPath());
     }
@@ -161,7 +161,7 @@ public class ProxmoxVmHandlerTest {
         handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
         handler.copy(templateToPrimary(secondaryTemplate("3", "template/tmpl/2742/917/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2")));
 
-        verify(client, times(1)).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, times(1)).createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
         verify(client, times(2)).createTemplateDirStorage(anyString(), eq(STORE_MOUNT), anyString());
         verify(client).createTemplateDirStorage(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2742"),
                 STORE_MOUNT, "template/tmpl/2742");
@@ -173,7 +173,7 @@ public class ProxmoxVmHandlerTest {
 
         handler.copy(templateToPrimary(secondaryTemplate(null, TEMPLATE_PATH)));
 
-        verify(client).createNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "import", "ro");
+        verify(client).createSecondaryNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "ro");
     }
 
     @Test
@@ -181,7 +181,7 @@ public class ProxmoxVmHandlerTest {
         storageBehavesLikeProxmox();
         when(client.findStorage(STORE_ENTRY)).thenReturn(null, aStorage(STORE_ENTRY));
         doThrow(new ProxmoxApiException("storage ID already defined")).when(client)
-                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                .createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
 
         assertTrue(handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH))).getResult());
     }
@@ -189,7 +189,7 @@ public class ProxmoxVmHandlerTest {
     @Test
     public void whenTheStoreCannotBeAddedTheReasonFromProxmoxIsReported() {
         doThrow(new ProxmoxApiException("Proxmox API POST /api2/json/storage failed: HTTP 403 Forbidden")).when(client)
-                .createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+                .createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
 
         Answer answer = handler.copy(templateToPrimary(secondaryTemplate("3", TEMPLATE_PATH)));
 
@@ -251,7 +251,7 @@ public class ProxmoxVmHandlerTest {
 
             assertFalse(path, answer.getResult());
         }
-        verify(client, never()).createNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, never()).createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
