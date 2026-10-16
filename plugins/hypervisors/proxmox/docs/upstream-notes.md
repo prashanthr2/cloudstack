@@ -63,3 +63,14 @@ security problem: those are reported privately, not as public issues.
     Found on the lab: after the system VM files were rebuilt, the SSVM still failed until `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh`
     were also copied to `/usr/share/cloudstack-common/vms/` on the KVM host (the agent copies them into the VM from there) and the SSVM was
     patched with `patchSystemVm forced=true` (the version check only compares the scripts' checksum, so a jar-only change is skipped without it).
+
+## UI behaviour
+
+11. **Deleting an instance that the background expunge task has already removed fails with an error, although the end state is the one requested.**
+    An instance whose start failed is moved to `Error`, and `UserVmManagerImpl.ExpungeTask` removes instances in the states `Destroyed`, `Expunging` and
+    `Error` once they are older than `expunge.delay` (`UserVmDaoImpl.findDestroyedVms`). On the lab the start failed at 23:19:52 and the row was
+    marked removed at 23:20:22, while the list in the UI still showed `Error`; a delete clicked at 23:23:05 (the only destroy request, job-200) failed with
+    `431: unable to find a virtual machine with id 21`, the first check of `UserVmManagerImpl.destroyVm` (`vm == null || vm.getRemoved() != null`).
+    Possible directions: treat a destroy of an instance that is already removed as success, or have the UI refresh the list when a job fails with
+    that error. Not specific to Proxmox.
+
