@@ -229,7 +229,7 @@ Lab checks for Phase 3a are listed in design-phase3-vm-deployment.md, section 9,
 | 4 | reboot, destroy and expunge | **Pass.** The VM and its disk are gone |
 | 5 | second deploy of the same template; stop of an already stopped VM | **Pass.** The entry is reused; the stop job succeeds |
 
-Not yet run: a template folder the nodes cannot read, a zone without a KVM traffic label.
+Check 6 (zone without a KVM traffic label), run 2026-10-16: **Pass.** The start fails at once with `NIC 0 (MAC ...) has no bridge: set the KVM traffic label of the physical network to the Proxmox bridge`. Not run: a template folder the nodes cannot read.
 
 ### Spike S10: fewer storage entries for templates (2026-10-14)
 
@@ -305,3 +305,9 @@ keeps copies in `/usr/share/cloudstack-common/vms/` on each KVM host and copies 
 `forced=true` is needed because only jars changed and the check compares the scripts' checksum. Steps: check the new `agent.zip` holds the type
 (`unzip -p agent.zip cloud-api-*.jar > /tmp/a.jar; unzip -p /tmp/a.jar 'com/cloud/hypervisor/Hypervisor$HypervisorType.class' | grep -c Proxmox`),
 copy the three files to each KVM host, then `cmk patch systemvm id=<ssvm> forced=true`.
+
+### Phase 3a status (2026-10-17)
+
+All lab checks of the Phase 3a plan have passed: register, deploy on L2, start on another node, reboot, destroy and expunge, repeat deploy, stop of
+a stopped VM, template delete (after patching the SSVM), and the missing traffic label (clear error). Remaining from the plan: a template folder the nodes
+cannot read. Not in 3a: console, data volumes, live migration, HA, system VMs and virtual routers.
