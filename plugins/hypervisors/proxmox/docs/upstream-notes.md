@@ -60,3 +60,6 @@ security problem: those are reported privately, not as public issues.
     normal upgrade the system VMs are replaced, but a plugin author (or a custom hypervisor name) has to know to rebuild the system VM image
     and recreate the SSVM. Possible directions: make the adaptor tolerant of an unknown type for commands that do not need it, or document it
     where a hypervisor type is added.
+    Found on the lab: after the system VM files were rebuilt, the SSVM still failed until `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh`
+    were also copied to `/usr/share/cloudstack-common/vms/` on the KVM host (the agent copies them into the VM from there) and the SSVM was
+    patched with `patchSystemVm forced=true` (the version check only compares the scripts' checksum, so a jar-only change is skipped without it).

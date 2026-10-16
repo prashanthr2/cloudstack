@@ -295,4 +295,13 @@ a new one, deploy, then `findmnt | grep secondary` should show one mount for the
 | Check | Result |
 |---|---|
 | deploy a VM | **Failed first:** `create storage failed: mkdir /mnt/css-.../import: Read-only file system`. Proxmox creates the folders of the declared content types in the mount of a new entry unless `create-subdirs` is 0, and the share is read-only. Fixed: `create-subdirs=0` on the store's NFS entry, and `create-subdirs=0` and `create-base-path=0` on the directory entries (140 unit tests pass). To retest |
-| delete a template | **Failed:** `IllegalArgumentException: HypervisorType 'Proxmox' not found` in `HypervisorTypeAdaptor.deserialize`, logged by an `AgentRequest-Handler` thread. Not the plugin: a template on secondary storage is deleted by the secondary storage VM, which got the command with `"hypervisorType":"Proxmox"` and runs an older copy of the API classes baked into its system VM image. To be confirmed on the SSVM, then fixed by rebuilding the system VM image and recreating the SSVM (see upstream-notes.md, 10) |
+| delete a template | **Failed first, then passed after patching the SSVM (2026-10-16):** `IllegalArgumentException: HypervisorType 'Proxmox' not found` in `HypervisorTypeAdaptor.deserialize`, logged by an `AgentRequest-Handler` thread. Not the plugin: a template on secondary storage is deleted by the secondary storage VM, which got the command with `"hypervisorType":"Proxmox"` and runs an older copy of the API classes baked into its system VM image. To be confirmed on the SSVM, then fixed by rebuilding the system VM image and recreating the SSVM (see upstream-notes.md, 10) |
+
+### Template delete on the lab, resolved (2026-10-16)
+
+The delete worked after the secondary storage VM was given the current code. In this CloudStack version there is no `systemvm.iso`: the build
+(`mvn -DskipTests -Dsystemvm install -pl systemvm -am`) produces `systemvm/dist/agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh`, the KVM agent
+keeps copies in `/usr/share/cloudstack-common/vms/` on each KVM host and copies them into the system VM over SSH, and `patchSystemVm` with
+`forced=true` is needed because only jars changed and the check compares the scripts' checksum. Steps: check the new `agent.zip` holds the type
+(`unzip -p agent.zip cloud-api-*.jar > /tmp/a.jar; unzip -p /tmp/a.jar 'com/cloud/hypervisor/Hypervisor$HypervisorType.class' | grep -c Proxmox`),
+copy the three files to each KVM host, then `cmk patch systemvm id=<ssvm> forced=true`.
