@@ -63,3 +63,12 @@ security problem: those are reported privately, not as public issues.
     Found on the lab: after the system VM files were rebuilt, the SSVM still failed until `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh`
     were also copied to `/usr/share/cloudstack-common/vms/` on the KVM host (the agent copies them into the VM from there) and the SSVM was
     patched with `patchSystemVm forced=true` (the version check only compares the scripts' checksum, so a jar-only change is skipped without it).
+
+## UI behaviour
+
+11. **Deleting an instance that CloudStack has already cleaned up fails with an error, although the end state is the one requested.**
+    After a failed start of a newly deployed instance CloudStack expunges it by itself (seen on the lab: the start failed at 23:19:52 and the row
+    was marked removed at 23:20:22), while the list in the UI may still show the instance in state `Error`. A delete from that stale list reaches
+    `UserVmManagerImpl.destroyVm`, whose first check (`vm == null || vm.getRemoved() != null`) answers "unable to find a virtual machine with id N".
+    Possible directions: treat a destroy of an instance that is already removed as success, or make the UI refresh the list when a job fails
+    with "unable to find". Not specific to Proxmox.
