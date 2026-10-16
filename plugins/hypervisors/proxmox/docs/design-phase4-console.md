@@ -40,8 +40,8 @@ like other hypervisors. Not in scope: SPICE, the serial (xterm) console, copy an
 3. `GET wss://<node>:8006/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket?port=<port>&vncticket=<urlencoded ticket>`. pveproxy checks the
    permission and `verify_vnc_ticket`: an RSA-signed ticket bound to the **same user (token) string**, the path and the port, accepted for about
    40 s. The websocket then carries plain RFB; the VNC password is the `password` from step 1.
-4. U: the websocket request is authenticated like any API request. A browser cannot set headers, so the Proxmox GUI uses a login cookie; a
-   server-side client can send `Authorization: PVEAPIToken=...`. This is the first thing to verify (check C2).
+4. The websocket request is authenticated like any API request. A browser cannot set headers, so the Proxmox GUI uses a login cookie; a
+   server-side client can send `Authorization: PVEAPIToken=...`. **Verified on the lab (C2): the upgrade answers 101 with the token header.**
 
 Consequences:
 - Every console session needs its own `vncproxy` call; the ticket, the port and the password are good for seconds and for one connection. A
@@ -99,7 +99,7 @@ upstream notes, 10). **Plugin:** a console handler in `ProxmoxResource` and a sm
 Option A touches about six core files and the CPVM; option B touches none but adds custom RFB code and an open port to the plugin. Both
 were weighed (section 4); the choice between them is the main decision below.
 
-## 7. Lab checks before building
+## 7. Lab checks before building (done 2026-10-17: C1, C2, C3 passed; see test-log.md)
 
 Run on a Proxmox node that holds a **running** VM (use a VM deployed from CloudStack), with the token in `TP` (`source ~/tp.sh`). The script is
 `docs/scripts/console-check.py` (standard library only):
@@ -109,11 +109,10 @@ python3 console-check.py <node name> <vmid>
 ```
 
 - **C1** `vncproxy` with the token returns a port, a ticket and a password (permission `VM.Console` is sufficient).
-- **C2** the websocket upgrade with the **same token as an `Authorization` header** answers `101 Switching Protocols`. If it answers 401 or 403
-  the token header is not accepted on the websocket and option A as described does not work.
+- **C2** the websocket upgrade with the **same token as an `Authorization` header** answers `101 Switching Protocols`. **Result: 101, so option A works.**
 - **C3** the first bytes from the VM are `RFB 003.008` (the VM's VNC server speaks through the tunnel). Then repeat with a delay to find the
   real window: `python3 console-check.py <node> <vmid> 8`, then `15`, then `30`: the upgrade should succeed for short delays and fail after
-  the listener's timeout; the numbers tell how fast the CPVM must connect.
+  the listener's timeout; the numbers tell how fast the CPVM must connect. **Result: 0 s and 8 s worked, 30 s failed: the window is between 8 and 30 s.**
 
 ## 8. Test plan once built
 

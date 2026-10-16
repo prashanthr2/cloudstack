@@ -311,3 +311,14 @@ copy the three files to each KVM host, then `cmk patch systemvm id=<ssvm> forced
 All lab checks of the Phase 3a plan have passed: register, deploy on L2, start on another node, reboot, destroy and expunge, repeat deploy, stop of
 a stopped VM, template delete (after patching the SSVM), and the missing traffic label (clear error). Remaining from the plan: a template folder the nodes
 cannot read. Not in 3a: console, data volumes, live migration, HA, system VMs and virtual routers.
+
+### Phase 4 console checks (2026-10-17)
+
+Run with `docs/scripts/console-check.py` on a node, token `pveaudit@pam!cloudstack` (roles from Phase 3), VM 100 running.
+
+| # | What | Result |
+|---|---|---|
+| C1 | `POST .../qemu/100/vncproxy` with `websocket=1` by token | **Pass.** HTTP 200; `port` 5900, `user` `pveaudit@pam!cloudstack` (the full token string), a `password` is returned, ticket length 370. `VM.Console` is covered by the existing roles |
+| C2 | websocket upgrade (`vncwebsocket`) with the **same token as an `Authorization: PVEAPIToken=...` header** | **Pass.** `HTTP/1.1 101 Switching Protocols`: pveproxy accepts the token header on the websocket request. No login cookie is needed |
+| C3 | first bytes through the tunnel | **Pass.** `RFB 003.008` (the VM's VNC server answers through the websocket) |
+| C3 window | the delay between `vncproxy` and the websocket: 0 s, 8 s, 30 s | **0 s and 8 s worked; 30 s failed** (no upgrade answer, the read timed out). So the window is somewhere between 8 and 30 s (the listener's timeout and the ticket's age); not narrowed further |
