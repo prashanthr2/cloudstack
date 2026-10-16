@@ -72,5 +72,6 @@ security problem: those are reported privately, not as public issues.
     marked removed at 23:20:22, while the list in the UI still showed `Error`; a delete clicked at 23:23:05 (the only destroy request, job-200) failed with
     `431: unable to find a virtual machine with id 21`, the first check of `UserVmManagerImpl.destroyVm` (`vm == null || vm.getRemoved() != null`).
     Possible directions: treat a destroy of an instance that is already removed as success, or have the UI refresh the list when a job fails with
-    that error. Not specific to Proxmox.
+    that error. Not specific to Proxmox. (The lab has `expunge.delay` and `expunge.interval` set to 20 seconds, which is why the instance was removed
+    so soon; with the defaults of one day the window for this error would be much longer, and users could delete the instance themselves.)
 
