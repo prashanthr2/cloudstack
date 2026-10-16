@@ -32,8 +32,11 @@ like other hypervisors. Not in scope: SPICE, the serial (xterm) console, copy an
    `port`, `ticket`, `password` (8 characters), `cert`, `user`, `upid`. The `user` is the full `user@realm!tokenid` for a token. The VM must be running
    and have a display (`vga` not `none`; with `serial0` the console is a text terminal).
 2. A worker on the node listens on `localhost:<port>` (5900 to 5999, no TLS) and waits for **one** connection, with an alarm (10 s as reported).
-   It then runs `qm vncproxy`, which sets the VNC password in QEMU with a 30 s expiry and relays to QEMU's unix socket. QEMU has no TCP VNC
-   listener, and `args` (the only way to get one) is root-only.
+   It then runs `qm vncproxy`, which sets the VNC password in QEMU with a 30 s expiry and relays to QEMU's unix socket. A Proxmox VM's QEMU has no
+   TCP VNC listener (Proxmox starts it with `-vnc unix:...` only), and `args` (the only way to get one) is root-only. This is the difference from
+   KVM: the KVM agent writes `<graphics type='vnc' autoport='yes' listen='<host address>' passwd='<vnc password>'/>` into the libvirt definition, so QEMU
+   listens on TCP at 5900 and up, `GetVncPortCommand` answers with that address and port, and the CPVM connects to it directly (V:
+   `LibvirtVMDef.GraphicDef`, `LibvirtGetVncPortCommandWrapper`).
 3. `GET wss://<node>:8006/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket?port=<port>&vncticket=<urlencoded ticket>`. pveproxy checks the
    permission and `verify_vnc_ticket`: an RSA-signed ticket bound to the **same user (token) string**, the path and the port, accepted for about
    40 s. The websocket then carries plain RFB; the VNC password is the `password` from step 1.
