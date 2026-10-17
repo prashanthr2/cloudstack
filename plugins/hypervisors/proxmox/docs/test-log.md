@@ -335,3 +335,11 @@ design-phase4-console.md, section 11.
 `createConsoleEndpoint` failed with `UnsupportedAnswer cannot be cast to GetVncPortAnswer`: the stack trace showed `ConsoleAccessManagerImpl.java:495`, the
 call of the old class. The new jars were in `~/.m2` but jetty loads the shaded `client/target/cloud-client-ui-*.jar` (built Oct 16), which still held the old
 classes. Fix: rebuild the `client` module (`mvn -DskipTests install -pl client`) and restart. Build steps corrected in design-phase4-console.md, section 11.
+
+### Console on the lab: second attempt (2026-10-17)
+
+After the `client` rebuild `createConsoleEndpoint` worked and the console proxy VM received the request (log: viewer created, "Connect to VNC over websocket on
+host 10.0.35.25", "Connection to VNC server has been established successfully"), but the browser stayed in "connecting". That log line was misleading: the
+websocket client connects asynchronously, so it only means the attempt started; nothing followed, which fits a connection that hangs (the console proxy VM
+may not reach port 8006 of the node). Changes: the connect now waits for the handshake (15 s) and fails with the host in the message, and the opening of the
+websocket is logged. To check on the VM: `timeout 6 bash -c '</dev/tcp/10.0.35.25/8006'`, `ip route get 10.0.35.25`.

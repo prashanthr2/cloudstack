@@ -30,6 +30,7 @@ import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import com.cloud.consoleproxy.util.RawHTTP;
 import com.cloud.consoleproxy.vnc.network.NioSocket;
@@ -57,6 +58,9 @@ import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.DESKeySpec;
 
 public class NoVncClient {
+    /** How long the websocket handshake with the hypervisor's console is waited for. */
+    static final int WEBSOCKET_CONNECT_TIMEOUT_SECONDS = 15;
+
     protected Logger logger = LogManager.getLogger(getClass());
 
     private Socket socket;
@@ -102,16 +106,32 @@ public class NoVncClient {
     }
 
     // VNC over WebSocket connection helpers
-    public void connectToWebSocket(String websocketUrl, Session session) throws URISyntaxException {
+    public void connectToWebSocket(String websocketUrl, Session session) throws URISyntaxException, IOException {
         connectToWebSocket(websocketUrl, null, session);
     }
 
     /**
      * @param authorization the value of the Authorization header the websocket request must carry, or null for none
      */
-    public void connectToWebSocket(String websocketUrl, String authorization, Session session) throws URISyntaxException {
+    public void connectToWebSocket(String websocketUrl, String authorization, Session session) throws URISyntaxException, IOException {
         webSocketReverseProxy = new WebSocketReverseProxy(new URI(websocketUrl), session, authorization);
-        webSocketReverseProxy.connect();
+        connectToWebSocket(webSocketReverseProxy);
+    }
+
+    /**
+     * Waits for the websocket handshake, so that an unreachable host or a refused request fails here, with a message, instead of leaving the
+     * viewer in the browser connecting forever.
+     */
+    void connectToWebSocket(WebSocketReverseProxy proxy) throws IOException {
+        try {
+            if (!proxy.connectBlocking(WEBSOCKET_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IOException(String.format("The websocket to %s could not be opened within %d seconds",
+                        proxy.getURI().getHost(), WEBSOCKET_CONNECT_TIMEOUT_SECONDS));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while opening the websocket to " + proxy.getURI().getHost(), e);
+        }
     }
 
     public boolean isVncOverNioSocket() {

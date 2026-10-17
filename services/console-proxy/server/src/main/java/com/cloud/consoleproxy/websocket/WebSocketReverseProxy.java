@@ -112,6 +112,7 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     @Override
     public void onOpen(ServerHandshake serverHandshake) {
+        logger.info("Websocket connection to {} is open", getURI().getHost());
     }
 
     @Override
