@@ -34,6 +34,7 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -55,7 +56,10 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     protected Logger logger = LogManager.getLogger(getClass());
     private Session remoteSession;
-    private volatile boolean firstFrameLogged = false;
+    /** How many frames of each direction are logged, with their size: enough to follow the start of the VNC handshake. */
+    static final int LOGGED_FRAMES = 10;
+    private final AtomicInteger framesFromHost = new AtomicInteger();
+    private final AtomicInteger framesToHost = new AtomicInteger();
 
     private void acceptAllCerts() {
         TrustManager[] trustAllCerts = new TrustManager[]{new X509ExtendedTrustManager() {
@@ -124,7 +128,8 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        logger.info("Closing connection to websocket: reason=" + reason + " code=" + code + " remote=" + remote);
+        logger.info("Closing connection to websocket: reason=" + reason + " code=" + code + " remote=" + remote + " (frames from the host: "
+                + framesFromHost.get() + ", to the host: " + framesToHost.get() + ")");
     }
 
     @Override
@@ -135,9 +140,9 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     @Override
     public void onMessage(ByteBuffer bytes) {
-        if (!firstFrameLogged) {
-            firstFrameLogged = true;
-            logger.info("First frame from the websocket of {}: {} bytes", getURI().getHost(), bytes.remaining());
+        int number = framesFromHost.incrementAndGet();
+        if (number <= LOGGED_FRAMES) {
+            logger.info("Frame {} from the websocket of {} to the viewer: {} bytes", number, getURI().getHost(), bytes.remaining());
         }
         try {
             this.remoteSession.getRemote().sendBytes(bytes);
@@ -148,6 +153,10 @@ public class WebSocketReverseProxy extends WebSocketClient {
     }
 
     public void proxyMsgFromRemoteSessionToEndpoint(ByteBuffer msg) {
+        int number = framesToHost.incrementAndGet();
+        if (number <= LOGGED_FRAMES) {
+            logger.info("Frame {} from the viewer to the websocket of {}: {} bytes", number, getURI().getHost(), msg.remaining());
+        }
         this.getConnection().send(msg);
     }
 }
