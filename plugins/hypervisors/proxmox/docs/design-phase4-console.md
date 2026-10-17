@@ -149,8 +149,11 @@ administrator sees the generic "cannot be provided" message when the host refuse
 
 ## 11. Deploying and testing on the lab
 
-1. Pull; build the changed modules: `mvn -DskipTests install -pl core,server,plugins/hypervisors/proxmox`, and the system VM files (they hold the
-   console proxy): `mvn -DskipTests -Dsystemvm install -pl systemvm -am`.
+1. Pull; build the changed modules: `mvn -DskipTests install -pl core,server,plugins/hypervisors/proxmox`, **then the `client` module**, and the system VM files (they hold the
+   console proxy): `mvn -DskipTests -Dsystemvm install -pl systemvm -am`. The `client` build matters: jetty (`mvn -pl :cloud-client-ui jetty:run`) loads the shaded
+   `client/target/cloud-client-ui-<version>.jar`, which holds its own copy of every module; without `mvn -DskipTests install -pl client` the running server keeps the
+   old classes although `~/.m2` has the new jars (seen on the lab: the old `ConsoleAccessManagerImpl` kept sending `GetVncPortCommand`). Check with
+   `unzip -p client/target/cloud-client-ui-<version>.jar org/apache/cloudstack/consoleproxy/ConsoleAccessManagerImpl.class | grep -c GetVmWebsocketConsoleCommand` (1 or more).
 2. Copy `systemvm/dist/agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` to `/usr/share/cloudstack-common/vms/` on every KVM host (as for the
    SSVM, see upstream-notes.md, 10), restart the management server, then patch the console proxy VM: `cmk patch systemvm id=<cpvm id> forced=true`
    (or destroy it and let CloudStack recreate it).

@@ -329,3 +329,9 @@ Unit tests: plugin 150 (console handler: this node and another node, VM unknown,
 header; `openConsole`; the resource command), server `ConsoleAccessManagerImplTest` 46 (Proxmox branch, refusals, param, noVNC URL with the encoded password),
 console proxy (header carried from the token, a header or URL in the query ignored, header sent on the websocket request). Lab test: to be run, see
 design-phase4-console.md, section 11.
+
+### Console on the lab: first attempt (2026-10-17)
+
+`createConsoleEndpoint` failed with `UnsupportedAnswer cannot be cast to GetVncPortAnswer`: the stack trace showed `ConsoleAccessManagerImpl.java:495`, the
+call of the old class. The new jars were in `~/.m2` but jetty loads the shaded `client/target/cloud-client-ui-*.jar` (built Oct 16), which still held the old
+classes. Fix: rebuild the `client` module (`mvn -DskipTests install -pl client`) and restart. Build steps corrected in design-phase4-console.md, section 11.
