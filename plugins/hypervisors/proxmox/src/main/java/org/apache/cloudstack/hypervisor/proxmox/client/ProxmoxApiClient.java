@@ -599,6 +599,55 @@ public class ProxmoxApiClient implements Closeable {
         post("/storage", form);
     }
 
+    /** A console session of a VM: valid for seconds and for one connection (see docs/design-phase4-console.md). */
+    public static class ConsoleSession {
+        private final int port;
+        private final String ticket;
+        private final String password;
+        private final String user;
+
+        public ConsoleSession(int port, String ticket, String password, String user) {
+            this.port = port;
+            this.ticket = ticket;
+            this.password = password;
+            this.user = user;
+        }
+
+        /** The port the node's console proxy listens on (on the node itself). */
+        public int getPort() {
+            return port;
+        }
+
+        /** The credential of the websocket request. */
+        public String getTicket() {
+            return ticket;
+        }
+
+        /** The password of the VM's VNC server, for the viewer; null when Proxmox did not return one. */
+        public String getPassword() {
+            return password;
+        }
+
+        /** The user the ticket is bound to: the full "user@realm!token" for an API token. The websocket must use the same one. */
+        public String getUser() {
+            return user;
+        }
+    }
+
+    /**
+     * Opens a console session for a running VM, for a websocket (the node waits for one connection for a few seconds). The call has to go to
+     * the node that holds the VM.
+     */
+    public ConsoleSession openConsole(String node, long vmid) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("websocket", "1");
+        JsonNode data = post("/nodes/" + node + "/qemu/" + vmid + "/vncproxy", form);
+        if (data == null || !data.hasNonNull("port") || !data.hasNonNull("ticket")) {
+            throw new ProxmoxApiException("Proxmox did not return a console port and ticket for VM " + vmid);
+        }
+        return new ConsoleSession(data.path("port").asInt(), data.path("ticket").asText(), data.path("password").asText(null), data.path("user").asText(null));
+    }
+
     /** The next free VM id of the cluster. Not reserved: another caller can be given the same id, so a create may have to be retried. */
     public long nextVmId() {
         JsonNode data = get("/cluster/nextid");

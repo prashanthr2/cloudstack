@@ -282,6 +282,27 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
+    public void aConsoleIsOpenedForAWebsocketAndItsPortTicketAndPasswordAreRead() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/vncproxy", "{\"data\":{\"port\":5900,\"ticket\":\"PVEVNC:68F1::abc\",\"password\":\"s3cr3t!!\","
+                + "\"user\":\"pveaudit@pam!cloudstack\",\"upid\":\"UPID:x\"}}");
+
+        ProxmoxApiClient.ConsoleSession session = client.openConsole("pve1", 9204);
+
+        assertEquals("websocket=1", bodies.get(0));
+        assertEquals(5900, session.getPort());
+        assertEquals("PVEVNC:68F1::abc", session.getTicket());
+        assertEquals("s3cr3t!!", session.getPassword());
+        assertEquals("pveaudit@pam!cloudstack", session.getUser());
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void aConsoleAnswerWithoutAPortIsRejected() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/vncproxy", "{\"data\":{\"ticket\":\"t\"}}");
+
+        client.openConsole("pve1", 9204);
+    }
+
+    @Test
     public void aVmsConfigurationIsReadAsOptionNamesAndValues() {
         answer("GET /api2/json/nodes/pve1/qemu/9204/config", "{\"data\":{\"name\":\"i-2-10-VM\",\"memory\":512,"
                 + "\"scsi0\":\"cs-1:9204/vm-9204-disk-0.qcow2,size=8G\"}}");

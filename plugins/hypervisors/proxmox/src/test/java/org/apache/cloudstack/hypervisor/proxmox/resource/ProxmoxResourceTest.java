@@ -50,6 +50,8 @@ import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.GetStorageStatsAnswer;
 import com.cloud.agent.api.GetStorageStatsCommand;
+import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.agent.api.GetVncPortCommand;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.ModifyStoragePoolAnswer;
@@ -176,6 +178,18 @@ public class ProxmoxResourceTest {
         assertEquals(25.0, answer.getCpuUtilization(), 0.001);
         assertEquals(2.0, answer.getTotalMemoryKBs(), 0.001);
         assertEquals(1.0, answer.getFreeMemoryKBs(), 0.001);
+    }
+
+    @Test
+    public void aConsoleRequestIsAnsweredWithTheNodesWebsocketAndTheTokenHeader() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(100, "i-2-10-VM", NODE, "running"));
+        when(client.openConsole(NODE, 100L)).thenReturn(new ProxmoxApiClient.ConsoleSession(5900, "ticket", "password", "root@pam!cloudstack"));
+
+        GetVmWebsocketConsoleAnswer answer = (GetVmWebsocketConsoleAnswer) resource.executeRequest(new GetVmWebsocketConsoleCommand("i-2-10-VM"));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("wss://10.0.32.198:8006/api2/json/nodes/pve1/qemu/100/vncwebsocket?port=5900&vncticket=ticket", answer.getUrl());
+        assertEquals("PVEAPIToken=root@pam!cloudstack=secret", answer.getAuthorization());
     }
 
     @Test

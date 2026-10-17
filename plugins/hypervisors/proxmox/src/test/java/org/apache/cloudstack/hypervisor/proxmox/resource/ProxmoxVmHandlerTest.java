@@ -54,6 +54,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import com.cloud.agent.api.Answer;
+import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.agent.api.RebootAnswer;
 import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.StartAnswer;
@@ -86,7 +88,8 @@ public class ProxmoxVmHandlerTest {
     @Before
     public void setUp() {
         client = mock(ProxmoxApiClient.class);
-        handler = new ProxmoxVmHandler(() -> client, NODE, millis -> pauses++, () -> 600);
+        handler = new ProxmoxVmHandler(() -> client, NODE, "10.0.32.198", 8006, () -> "PVEAPIToken=pveaudit@pam!cloudstack=s3cret", millis -> pauses++,
+                () -> 600);
     }
 
     // ---- template to primary storage ----
@@ -608,5 +611,89 @@ public class ProxmoxVmHandlerTest {
         assertTrue(handler.delete(delete(template)).getResult());
 
         verify(client, never()).deleteStorage(any());
+    }
+
+    // ---- console ----
+
+    private GetVmWebsocketConsoleCommand consoleCommand() {
+        return new GetVmWebsocketConsoleCommand("i-2-10-VM");
+    }
+
+    @Test
+    public void aConsoleOnThisNodeIsAnAuthenticatedWebsocketOnThisNodesAddress() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.openConsole(NODE, 9204L)).thenReturn(new ProxmoxApiClient.ConsoleSession(5900, "PVEVNC:68F1::a/b+c=", "pa&ss#1", "pveaudit@pam!cloudstack"));
+
+        GetVmWebsocketConsoleAnswer answer = (GetVmWebsocketConsoleAnswer) handler.console(consoleCommand());
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        // the ticket contains characters that are not allowed in a query string, so it is encoded
+        assertEquals("wss://10.0.32.198:8006/api2/json/nodes/pve1/qemu/9204/vncwebsocket?port=5900&vncticket=PVEVNC%3A68F1%3A%3Aa%2Fb%2Bc%3D",
+                answer.getUrl());
+        // the websocket must prove the same token the ticket was made for
+        assertEquals("PVEAPIToken=pveaudit@pam!cloudstack=s3cret", answer.getAuthorization());
+        assertEquals("pa&ss#1", answer.getPassword());
+    }
+
+    @Test
+    public void aVmThatIsOnAnotherNodeIsReachedThroughThatNodesAddress() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "running"));
+        when(client.getClusterNodes(null)).thenReturn(java.util.Arrays.asList(new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.198", true),
+                new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.74", true)));
+        when(client.openConsole("pve2", 9204L)).thenReturn(new ProxmoxApiClient.ConsoleSession(5901, "t", "password", "u"));
+
+        GetVmWebsocketConsoleAnswer answer = (GetVmWebsocketConsoleAnswer) handler.console(consoleCommand());
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/9204/vncwebsocket?port=5901&vncticket=t", answer.getUrl());
+    }
+
+    @Test
+    public void aVmProxmoxDoesNotKnowHasNoConsole() {
+        Answer answer = handler.console(consoleCommand());
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("i-2-10-VM"));
+        verify(client, never()).openConsole(anyString(), anyLong());
+    }
+
+    @Test
+    public void aVmThatIsNotRunningHasNoConsole() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
+
+        Answer answer = handler.console(consoleCommand());
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("not running"));
+        verify(client, never()).openConsole(anyString(), anyLong());
+    }
+
+    @Test
+    public void aConsoleWithoutAVncPasswordIsRefused() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.openConsole(NODE, 9204L)).thenReturn(new ProxmoxApiClient.ConsoleSession(5900, "t", null, "u"));
+
+        assertFalse(handler.console(consoleCommand()).getResult());
+    }
+
+    @Test
+    public void aNodeWithoutAKnownAddressHasNoConsole() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve9", "running"));
+
+        Answer answer = handler.console(consoleCommand());
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("pve9"));
+    }
+
+    @Test
+    public void whenProxmoxRefusesTheConsoleItsReasonIsReported() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.openConsole(NODE, 9204L)).thenThrow(new ProxmoxApiException("Proxmox API POST ... failed: HTTP 403 Forbidden"));
+
+        Answer answer = handler.console(consoleCommand());
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("403"));
     }
 }

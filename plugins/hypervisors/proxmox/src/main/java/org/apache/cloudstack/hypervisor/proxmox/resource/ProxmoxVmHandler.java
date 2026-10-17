@@ -17,6 +17,8 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -37,6 +39,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.cloud.agent.api.Answer;
+import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.agent.api.RebootAnswer;
 import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.StartAnswer;
@@ -69,11 +73,20 @@ class ProxmoxVmHandler {
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
+    /** The address of this node and the cluster's API port, for the websocket URL of a console on this node. */
+    private final String nodeAddress;
+    private final int apiPort;
+    /** The value of the Authorization header that proves the API token, "PVEAPIToken=user@realm!token=secret". */
+    private final Supplier<String> authorization;
     private final LongConsumer pauser;
     private final IntSupplier taskTimeoutSeconds;
 
-    ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, LongConsumer pauser, IntSupplier taskTimeoutSeconds) {
+    ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
+            LongConsumer pauser, IntSupplier taskTimeoutSeconds) {
         this.clients = clients;
+        this.nodeAddress = nodeAddress;
+        this.apiPort = apiPort;
+        this.authorization = authorization;
         this.node = node;
         this.pauser = pauser;
         this.taskTimeoutSeconds = taskTimeoutSeconds;
@@ -382,5 +395,52 @@ class ProxmoxVmHandler {
      */
     private Answer deleteTemplate(DeleteCommand cmd, TemplateObjectTO template) {
         return new Answer(cmd, true, "Nothing to remove for the template " + template.getPath() + ": its Proxmox storage entry is shared and is kept");
+    }
+
+    // ---- console ----
+
+    /**
+     * Opens a console on the node that holds the VM and answers with what the console proxy needs: the websocket URL, the header that proves
+     * the API token (the ticket is bound to it, so the websocket must use the same token), and the VNC password for the viewer. Everything
+     * is good for seconds and one connection, so nothing is kept.
+     */
+    Answer console(GetVmWebsocketConsoleCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new GetVmWebsocketConsoleAnswer(cmd, "Proxmox has no VM " + cmd.getVmName());
+            }
+            if (!location.isRunning()) {
+                return new GetVmWebsocketConsoleAnswer(cmd, cmd.getVmName() + " is not running, so it has no console");
+            }
+            String address = addressOf(client, location.getNode());
+            if (address == null) {
+                return new GetVmWebsocketConsoleAnswer(cmd, "No address is known for Proxmox node " + location.getNode());
+            }
+            ProxmoxApiClient.ConsoleSession session = client.openConsole(location.getNode(), location.getVmid());
+            if (StringUtils.isBlank(session.getPassword())) {
+                return new GetVmWebsocketConsoleAnswer(cmd, "Proxmox returned no VNC password for " + cmd.getVmName());
+            }
+            String url = String.format("wss://%s:%d/api2/json/nodes/%s/qemu/%d/vncwebsocket?port=%d&vncticket=%s", address, apiPort,
+                    location.getNode(), location.getVmid(), session.getPort(), URLEncoder.encode(session.getTicket(), StandardCharsets.UTF_8));
+            return new GetVmWebsocketConsoleAnswer(cmd, url, authorization.get(), session.getPassword());
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not open a console for {}: {}", node, cmd.getVmName(), e.getMessage());
+            return new GetVmWebsocketConsoleAnswer(cmd, e.getMessage());
+        }
+    }
+
+    /** The address of a node: this one's, or another node's as the cluster reports it. */
+    private String addressOf(ProxmoxApiClient client, String nodeName) {
+        if (node.equals(nodeName) && StringUtils.isNotBlank(nodeAddress)) {
+            return nodeAddress;
+        }
+        for (ProxmoxApiClient.NodeInfo info : client.getClusterNodes(null)) {
+            if (nodeName.equals(info.getName()) && StringUtils.isNotBlank(info.getIp())) {
+                return info.getIp();
+            }
+        }
+        return null;
     }
 }

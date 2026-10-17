@@ -47,6 +47,7 @@ import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.GetStorageStatsAnswer;
 import com.cloud.agent.api.GetStorageStatsCommand;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.agent.api.HostStatsEntry;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.MaintainAnswer;
@@ -142,8 +143,19 @@ public class ProxmoxResource implements ServerResource {
             throw new ConfigurationException("Proxmox node name and API token are required for host " + name);
         }
         client = createClient(tokenId, tokenSecret);
-        vmHandler = new ProxmoxVmHandler(() -> client, node, this::pause, ProxmoxConfig.TaskTimeout::value);
+        vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
+                ProxmoxConfig.TaskTimeout::value);
         return true;
+    }
+
+    /** The API port of the cluster, from the configured endpoint ("https://10.0.35.25:8006"). */
+    private int apiPort() {
+        try {
+            int port = URI.create(endpoint).getPort();
+            return port == -1 ? ProxmoxApiClient.DEFAULT_PORT : port;
+        } catch (IllegalArgumentException e) {
+            return ProxmoxApiClient.DEFAULT_PORT;
+        }
     }
 
     protected ProxmoxApiClient createClient(String id, String secret) {
@@ -239,6 +251,8 @@ public class ProxmoxResource implements ServerResource {
                 return vmHandler.copy((CopyCommand) cmd);
             } else if (cmd instanceof DeleteCommand) {
                 return vmHandler.delete((DeleteCommand) cmd);
+            } else if (cmd instanceof GetVmWebsocketConsoleCommand) {
+                return vmHandler.console((GetVmWebsocketConsoleCommand) cmd);
             } else if (cmd instanceof StartCommand) {
                 return vmHandler.start((StartCommand) cmd);
             } else if (cmd instanceof StopCommand) {
