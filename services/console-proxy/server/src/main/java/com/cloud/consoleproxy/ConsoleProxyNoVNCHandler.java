@@ -91,6 +91,7 @@ public class ConsoleProxyNoVNCHandler extends WebSocketHandler {
         String password = queryMap.get("password");
         String sourceIP = queryMap.get("sourceIP");
         String websocketUrl = queryMap.get("websocketUrl");
+        String websocketAuthorization = queryMap.get("websocketAuthorization");
         String sessionUuid = queryMap.get("sessionUuid");
         String clientIp = session.getRemoteAddress().getAddress().getHostAddress();
         boolean sessionRequiresNewViewer = Boolean.parseBoolean(queryMap.get("sessionRequiresNewViewer"));
@@ -149,6 +150,7 @@ public class ConsoleProxyNoVNCHandler extends WebSocketHandler {
             param.setUsername(username);
             param.setPassword(password);
             param.setWebsocketUrl(websocketUrl);
+            param.setWebsocketAuthorization(websocketAuthorization);
             param.setSessionUuid(sessionUuid);
             param.setSourceIP(sourceIP);
             param.setClientIp(clientIp);

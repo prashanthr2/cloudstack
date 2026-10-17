@@ -108,8 +108,9 @@ public class ConsoleProxyNoVncClient implements ConsoleProxyClient {
                     String tunnelUrl = param.getClientTunnelUrl();
                     String tunnelSession = param.getClientTunnelSession();
                     String websocketUrl = param.getWebsocketUrl();
+                    String websocketAuthorization = param.getWebsocketAuthorization();
 
-                    if (!connectClientToVNCServer(tunnelUrl, tunnelSession, websocketUrl)) {
+                    if (!connectClientToVNCServer(tunnelUrl, tunnelSession, websocketUrl, websocketAuthorization)) {
                         logger.error("Failed to connect to VNC server, will close connection with client [{}] [IP: {}].", clientId, clientSourceIp);
                         connectionAlive = false;
                         session.close();
@@ -319,12 +320,13 @@ public class ConsoleProxyNoVncClient implements ConsoleProxyClient {
      * - When websocketUrl is not empty -> connect to websocket
      * - Otherwise -> connect to TCP port on host directly
      */
-    private boolean connectClientToVNCServer(String tunnelUrl, String tunnelSession, String websocketUrl) {
+    private boolean connectClientToVNCServer(String tunnelUrl, String tunnelSession, String websocketUrl, String websocketAuthorization) {
         try {
             if (StringUtils.isNotBlank(websocketUrl)) {
-                logger.info(String.format("Connect to VNC over websocket URL: %s", websocketUrl));
+                // only the host is logged: the URL of some hypervisors carries a one-time ticket
+                logger.info(String.format("Connect to VNC over websocket on host: %s", NetUtils.extractHost(websocketUrl)));
                 ConsoleProxy.ensureRoute(NetUtils.extractHost(websocketUrl));
-                client.connectToWebSocket(websocketUrl, session);
+                client.connectToWebSocket(websocketUrl, websocketAuthorization, session);
             } else if (StringUtils.isNotBlank(tunnelUrl) && StringUtils.isNotBlank(tunnelSession)) {
                 URI uri = new URI(tunnelUrl);
                 logger.info(String.format("Connect to VNC server via tunnel. url: %s, session: %s",

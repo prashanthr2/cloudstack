@@ -103,7 +103,14 @@ public class NoVncClient {
 
     // VNC over WebSocket connection helpers
     public void connectToWebSocket(String websocketUrl, Session session) throws URISyntaxException {
-        webSocketReverseProxy = new WebSocketReverseProxy(new URI(websocketUrl), session);
+        connectToWebSocket(websocketUrl, null, session);
+    }
+
+    /**
+     * @param authorization the value of the Authorization header the websocket request must carry, or null for none
+     */
+    public void connectToWebSocket(String websocketUrl, String authorization, Session session) throws URISyntaxException {
+        webSocketReverseProxy = new WebSocketReverseProxy(new URI(websocketUrl), session, authorization);
         webSocketReverseProxy.connect();
     }
 

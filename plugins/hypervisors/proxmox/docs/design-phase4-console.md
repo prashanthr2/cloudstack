@@ -1,6 +1,6 @@
 # Phase 4 design: console access (noVNC) for Proxmox VMs
 
-Status: **proposal, for review.** Nothing described here is implemented. "V" means read in code (CloudStack in this repository, Proxmox in the
+Status: **implemented (option A), unit tested, not yet tried on the lab** (2026-10-17). Sections 5 and 8 are what was built and how to test it. "V" means read in code (CloudStack in this repository, Proxmox in the
 8.x mirrors under `promox-src`: `qemu-server`, `pve-access-control`, `pve-common`; the lab runs 8.4.21). "U" means **unverified**: it lives in
 `pve-manager` / `pve-http-server` (pveproxy), which are not mirrored, or has not been run. Each U has a lab check in section 7.
 
@@ -124,6 +124,37 @@ python3 console-check.py <node name> <vmid>
 ## 9. Decisions for the reviewer
 
 1. Option A (CPVM websocket with the token header, about six core files and a CPVM patch) or option B (a relay in the management server, no core
-   change, custom RFB code), after the lab checks.
+   change, custom RFB code). **Decided: A**, after lab checks C1 to C3 passed.
 2. Accept that the API token secret is sent to the CPVM for consoles, or require a dedicated console token first.
 3. Accept that consoles do not reconnect automatically.
+
+## 10. What was built (2026-10-17)
+
+- **core:** `GetVmWebsocketConsoleCommand` (VM name) and `GetVmWebsocketConsoleAnswer` (websocket URL, Authorization header value, VNC
+  password; none of the three is logged). Separate from the External classes, so that nothing depends on the extensions framework.
+- **plugin:** `ProxmoxApiClient.openConsole` (`vncproxy` with `websocket=1`); `ProxmoxVmHandler.console`: finds the VM by name anywhere in the
+  cluster, refuses a VM that is not running, opens the console on the node that holds it, and answers with
+  `wss://<that node's address>:<API port>/api2/json/nodes/<node>/qemu/<vmid>/vncwebsocket?port=<port>&vncticket=<encoded ticket>`, the header
+  `PVEAPIToken=<token id>=<secret>` and the password.
+- **server:** `ConsoleAccessManagerImpl` asks the VM's host for the console when the host is Proxmox (no `GetVncPortCommand`), puts the URL and
+  header into the console proxy token (`ConsoleProxyClientParam.websocketUrl` and the new `websocketAuthorization`, in both copies of the
+  class), keys the viewer by the session (the password is single use), and adds `&password=<url-encoded VNC password>` to the noVNC URL so that
+  the viewer does not prompt.
+- **console proxy VM:** `ConsoleProxyHttpHandlerHelper` and `ConsoleProxyNoVNCHandler` carry the header (a header given in the URL itself is
+  ignored), `NoVncClient` / `WebSocketReverseProxy` send it as `Authorization` on the websocket request. Only the host of the URL is logged, not
+  the ticket.
+
+Not done: `novnc.console.default=false` (the old viewer) does not work with a websocket console, as for VMware 7; a user who is not an
+administrator sees the generic "cannot be provided" message when the host refuses (the reason is in the management server log).
+
+## 11. Deploying and testing on the lab
+
+1. Pull; build the changed modules: `mvn -DskipTests install -pl core,server,plugins/hypervisors/proxmox`, and the system VM files (they hold the
+   console proxy): `mvn -DskipTests -Dsystemvm install -pl systemvm -am`.
+2. Copy `systemvm/dist/agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` to `/usr/share/cloudstack-common/vms/` on every KVM host (as for the
+   SSVM, see upstream-notes.md, 10), restart the management server, then patch the console proxy VM: `cmk patch systemvm id=<cpvm id> forced=true`
+   (or destroy it and let CloudStack recreate it).
+3. The console proxy VM must reach `<node address>:8006` of the Proxmox nodes.
+4. Open "View console" on a running Proxmox VM. Expected: the screen of the guest, keyboard and mouse. If it fails, the management server log
+   shows `Unable to get console access details` with the reason, and `/var/log/cloud/cloud.log` on the console proxy VM shows the websocket
+   connection.

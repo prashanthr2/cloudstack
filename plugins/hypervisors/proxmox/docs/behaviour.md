@@ -274,6 +274,19 @@ Details that are easy to get wrong:
   only (found on the lab: the list was empty). The UI needs a rebuild or the dev server to show it.
 - Not yet handled (answered as unsupported): data volumes, attach and detach, resize, ISO, snapshots, console, live migration, VM stats.
 
+## 11. Console (Phase 4, implemented, not yet tried on the lab)
+
+Design: design-phase4-console.md. For a running Proxmox VM CloudStack asks the VM's host (`GetVmWebsocketConsoleCommand`). The plugin finds the VM on its
+current node, calls `vncproxy` with `websocket=1` as the API token, and answers with the node's `wss://` URL, the `Authorization` header of the same
+token (the ticket is bound to it) and the VNC password. The console proxy VM opens the websocket with that header and the browser's noVNC talks to the VM
+through it, with the password in the URL (single use, a few seconds).
+
+- A console works for seconds and one connection; there is no automatic reconnect: the user opens the console again.
+- The console proxy VM must reach port 8006 of the node and runs the patched code (see the design, section 11).
+- A VM that is not running, or that Proxmox does not know, has no console; the reason is in the management server log.
+- The token needs `VM.Console` (in `PVEVMAdmin`, so already granted by the roles of requirements.md).
+- The API token secret is passed to the console proxy VM inside the encrypted console token.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

@@ -322,3 +322,10 @@ Run with `docs/scripts/console-check.py` on a node, token `pveaudit@pam!cloudsta
 | C2 | websocket upgrade (`vncwebsocket`) with the **same token as an `Authorization: PVEAPIToken=...` header** | **Pass.** `HTTP/1.1 101 Switching Protocols`: pveproxy accepts the token header on the websocket request. No login cookie is needed |
 | C3 | first bytes through the tunnel | **Pass.** `RFB 003.008` (the VM's VNC server answers through the websocket) |
 | C3 window | the delay between `vncproxy` and the websocket: 0 s, 8 s, 30 s | **0 s and 8 s worked; 30 s failed** (no upgrade answer, the read timed out). So the window is somewhere between 8 and 30 s (the listener's timeout and the ticket's age); not narrowed further |
+
+### Phase 4 console implemented (2026-10-17)
+
+Unit tests: plugin 150 (console handler: this node and another node, VM unknown, not running, no password, refusal by Proxmox, the URL encoding, the token
+header; `openConsole`; the resource command), server `ConsoleAccessManagerImplTest` 46 (Proxmox branch, refusals, param, noVNC URL with the encoded password),
+console proxy (header carried from the token, a header or URL in the query ignored, header sent on the websocket request). Lab test: to be run, see
+design-phase4-console.md, section 11.

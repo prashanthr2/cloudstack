@@ -93,7 +93,18 @@ public class WebSocketReverseProxy extends WebSocketClient {
     }
 
     public WebSocketReverseProxy(URI wsUrl, Session session) {
+        this(wsUrl, session, null);
+    }
+
+    /**
+     * @param authorization the complete value of the Authorization header to send on the websocket request, for a hypervisor that
+     *                      authenticates it (for example "PVEAPIToken=user@realm!token=secret"); null or blank sends none
+     */
+    public WebSocketReverseProxy(URI wsUrl, Session session, String authorization) {
         super(wsUrl, draft);
+        if (authorization != null && !authorization.isBlank()) {
+            addHeader("Authorization", authorization);
+        }
         this.remoteSession = session;
         acceptAllCerts();
         setConnectionLostTimeout(0);

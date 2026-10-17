@@ -45,4 +45,43 @@ public class ConsoleProxyHttpHandlerHelperTest {
             Assert.assertEquals(extraValidationToken, queryMap.get("extra"));
         }
     }
+
+    private Map<String, String> queryMapFor(ConsoleProxyClientParam decrypted, String query) {
+        try (MockedStatic<ConsoleProxy> ignore = Mockito.mockStatic(ConsoleProxy.class);
+             MockedConstruction<ConsoleProxyPasswordBasedEncryptor> ignored = Mockito.mockConstruction(ConsoleProxyPasswordBasedEncryptor.class, (mock, context) -> {
+                 Mockito.when(mock.decryptObject(Mockito.eq(ConsoleProxyClientParam.class), Mockito.anyString())).thenReturn(decrypted);
+             })) {
+            Mockito.when(ConsoleProxy.getEncryptorPassword()).thenReturn("password");
+            return ConsoleProxyHttpHandlerHelper.getQueryMap(query);
+        }
+    }
+
+    @Test
+    public void theWebsocketUrlAndAuthorizationOfTheTokenAreInTheQueryMap() {
+        ConsoleProxyClientParam param = new ConsoleProxyClientParam();
+        param.setWebsocketUrl("wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/100/vncwebsocket?port=5900&vncticket=t");
+        param.setWebsocketAuthorization("PVEAPIToken=user@pam!token=secret");
+
+        Map<String, String> queryMap = queryMapFor(param, "token=SOME_TOKEN");
+
+        Assert.assertEquals("wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/100/vncwebsocket?port=5900&vncticket=t", queryMap.get("websocketUrl"));
+        Assert.assertEquals("PVEAPIToken=user@pam!token=secret", queryMap.get("websocketAuthorization"));
+    }
+
+    @Test
+    public void aTokenWithoutAWebsocketHasNoAuthorizationInTheQueryMap() {
+        Map<String, String> queryMap = queryMapFor(new ConsoleProxyClientParam(), "token=SOME_TOKEN");
+
+        Assert.assertFalse(queryMap.containsKey("websocketAuthorization"));
+    }
+
+    @Test
+    public void anAuthorizationOrWebsocketUrlGivenInTheUrlItselfIsIgnored() {
+        // only what is inside the encrypted token is trusted: a user must not be able to point the proxy at a host with a header of their choice
+        Map<String, String> queryMap = queryMapFor(new ConsoleProxyClientParam(),
+                "token=SOME_TOKEN&websocketAuthorization=Bearer-evil&websocketUrl=wss://evil.example.org/x");
+
+        Assert.assertFalse(queryMap.containsKey("websocketAuthorization"));
+        Assert.assertFalse(queryMap.containsKey("websocketUrl"));
+    }
 }

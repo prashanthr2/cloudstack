@@ -104,6 +104,9 @@ public class ConsoleProxyHttpHandlerHelper {
                 if (param.getWebsocketUrl() != null) {
                     map.put("websocketUrl", param.getWebsocketUrl());
                 }
+                if (param.getWebsocketAuthorization() != null) {
+                    map.put("websocketAuthorization", param.getWebsocketAuthorization());
+                }
                 if (param.getSessionUuid() != null) {
                     map.put("sessionUuid", param.getSessionUuid());
                 }
@@ -142,5 +145,6 @@ public class ConsoleProxyHttpHandlerHelper {
         map.remove("username");
         map.remove("password");
         map.remove("websocketUrl");
+        map.remove("websocketAuthorization");
     }
 }
