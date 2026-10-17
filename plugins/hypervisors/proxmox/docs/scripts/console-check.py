@@ -61,16 +61,37 @@ print("C2 websocket upgrade after %.1f s: %s" % (time.time() - started, head.spl
 if b" 101 " not in head.split(b"\r\n")[0]:
     print("   full answer:", head.decode(errors="replace")[:500])
     sys.exit(2)
-while len(rest) < 2:
-    rest += tls.recv(4096)
-length = rest[1] & 0x7F
-offset = 2
-if length == 126:
-    while len(rest) < 4:
-        rest += tls.recv(4096)
-    length = int.from_bytes(rest[2:4], "big")
-    offset = 4
-while len(rest) < offset + length:
-    rest += tls.recv(4096)
-print("C3 first frame from the VM's VNC server:", rest[offset:offset + length][:20])
+def read_frame(buffer):
+    """Reads one websocket frame from the TLS socket; returns (opcode, payload, remaining bytes)."""
+    while len(buffer) < 2:
+        buffer += tls.recv(4096)
+    opcode = buffer[0] & 0x0F
+    length = buffer[1] & 0x7F
+    offset = 2
+    if length == 126:
+        while len(buffer) < 4:
+            buffer += tls.recv(4096)
+        length = int.from_bytes(buffer[2:4], "big")
+        offset = 4
+    elif length == 127:
+        while len(buffer) < 10:
+            buffer += tls.recv(4096)
+        length = int.from_bytes(buffer[2:10], "big")
+        offset = 10
+    while len(buffer) < offset + length:
+        buffer += tls.recv(4096)
+    return opcode, buffer[offset:offset + length], buffer[offset + length:]
+
+
+names = {1: "text", 2: "binary", 8: "close", 9: "ping", 10: "pong"}
+opcode, payload, rest = read_frame(rest)
+print("C3 first frame from the VM's VNC server: type %s (%d), %d bytes: %r" % (names.get(opcode, "other"), opcode, len(payload), payload[:20]))
+if payload.startswith(b"RFB 003.008"):
+    # answer like a viewer would, to see what comes next: the same version, then read the security types
+    tls.sendall(bytes([0x82, 0x80 | len(payload)]) + b"\x00\x00\x00\x00" + bytes(b ^ 0 for b in payload))
+    try:
+        opcode, payload, rest = read_frame(rest)
+        print("C4 second frame: type %s (%d), %d bytes: %r" % (names.get(opcode, "other"), opcode, len(payload), payload[:20]))
+    except Exception as e:
+        print("C4 no second frame:", e)
 tls.close()

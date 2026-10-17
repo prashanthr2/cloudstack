@@ -55,6 +55,7 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     protected Logger logger = LogManager.getLogger(getClass());
     private Session remoteSession;
+    private volatile boolean firstFrameLogged = false;
 
     private void acceptAllCerts() {
         TrustManager[] trustAllCerts = new TrustManager[]{new X509ExtendedTrustManager() {
@@ -117,6 +118,8 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     @Override
     public void onMessage(String message) {
+        // the viewer speaks the binary subprotocol, so a text frame is not expected; say so instead of dropping it silently
+        logger.warn("Ignoring a text frame of {} characters from the websocket of {}", message == null ? 0 : message.length(), getURI().getHost());
     }
 
     @Override
@@ -132,6 +135,10 @@ public class WebSocketReverseProxy extends WebSocketClient {
 
     @Override
     public void onMessage(ByteBuffer bytes) {
+        if (!firstFrameLogged) {
+            firstFrameLogged = true;
+            logger.info("First frame from the websocket of {}: {} bytes", getURI().getHost(), bytes.remaining());
+        }
         try {
             this.remoteSession.getRemote().sendBytes(bytes);
         } catch (IOException e) {
