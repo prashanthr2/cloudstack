@@ -350,3 +350,11 @@ Frames logged by the CPVM: banner (12) both ways, security types (2: `01 02`), c
 console: "noVNC requires a secure context (TLS)" (the page is served over HTTP). Change: the console proxy now logs in for the viewer
 (`VncPasswordAuthenticator`, 11 unit tests), the noVNC URL no longer carries a password (46 `ConsoleAccessManagerImplTest` tests). To retest: rebuild `server`
 and `client`, rebuild the system VM files, patch the CPVM, open a fresh console.
+
+### Phase 4 console: works on the lab (2026-10-17)
+
+With the console proxy logging in for the viewer, "View console" on a running Proxmox VM opens the guest's screen. Findings on the way, all recorded above: the
+client module must be rebuilt for jetty to load new server classes; the console proxy VM needs the patched files (agent.zip and the others on each KVM host,
+then `patchSystemVm forced=true`); a websocket connect that is not waited for hides failures; noVNC cannot answer a VNC password challenge on a page served
+over plain HTTP. Known limits: a console session is single use (a reload or a dropped connection needs "View console" again), and the API token secret is
+inside the console proxy token.

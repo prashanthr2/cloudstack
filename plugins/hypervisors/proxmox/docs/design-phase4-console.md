@@ -1,6 +1,6 @@
 # Phase 4 design: console access (noVNC) for Proxmox VMs
 
-Status: **implemented (option A), unit tested, not yet tried on the lab** (2026-10-17). Sections 5 and 8 are what was built and how to test it. "V" means read in code (CloudStack in this repository, Proxmox in the
+Status: **implemented (option A), unit tested, working on the lab** (2026-10-17). Sections 5 and 8 are what was built and how to test it. "V" means read in code (CloudStack in this repository, Proxmox in the
 8.x mirrors under `promox-src`: `qemu-server`, `pve-access-control`, `pve-common`; the lab runs 8.4.21). "U" means **unverified**: it lives in
 `pve-manager` / `pve-http-server` (pveproxy), which are not mirrored, or has not been run. Each U has a lab check in section 7.
 
