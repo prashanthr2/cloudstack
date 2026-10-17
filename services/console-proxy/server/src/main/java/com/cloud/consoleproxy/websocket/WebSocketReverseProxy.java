@@ -36,6 +36,7 @@ import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.cloud.consoleproxy.vnc.VncPasswordAuthenticator;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -60,6 +61,7 @@ public class WebSocketReverseProxy extends WebSocketClient {
     static final int LOGGED_FRAMES = 10;
     private final AtomicInteger framesFromHost = new AtomicInteger();
     private final AtomicInteger framesToHost = new AtomicInteger();
+    private VncPasswordAuthenticator authenticator;
 
     private void acceptAllCerts() {
         TrustManager[] trustAllCerts = new TrustManager[]{new X509ExtendedTrustManager() {
@@ -106,9 +108,20 @@ public class WebSocketReverseProxy extends WebSocketClient {
      *                      authenticates it (for example "PVEAPIToken=user@realm!token=secret"); null or blank sends none
      */
     public WebSocketReverseProxy(URI wsUrl, Session session, String authorization) {
+        this(wsUrl, session, authorization, null);
+    }
+
+    /**
+     * @param vncPassword the password of the VNC server behind the websocket, or null/blank when it asks for none. When given, this proxy logs
+     *                    in for the viewer (see {@link VncPasswordAuthenticator}) and the viewer is told that no authentication is needed
+     */
+    public WebSocketReverseProxy(URI wsUrl, Session session, String authorization, String vncPassword) {
         super(wsUrl, draft);
         if (authorization != null && !authorization.isBlank()) {
             addHeader("Authorization", authorization);
+        }
+        if (vncPassword != null && !vncPassword.isBlank()) {
+            authenticator = new VncPasswordAuthenticator(vncPassword, this::sendToHost, this::sendToViewer, this::loginFailed);
         }
         this.remoteSession = session;
         acceptAllCerts();
@@ -144,6 +157,12 @@ public class WebSocketReverseProxy extends WebSocketClient {
         if (number <= LOGGED_FRAMES) {
             logger.info("Frame {} from the websocket of {} to the viewer: {} bytes", number, getURI().getHost(), bytes.remaining());
         }
+        if (authenticator != null) {
+            byte[] data = new byte[bytes.remaining()];
+            bytes.get(data);
+            authenticator.fromServer(data);
+            return;
+        }
         try {
             this.remoteSession.getRemote().sendBytes(bytes);
         } catch (IOException e) {
@@ -157,6 +176,33 @@ public class WebSocketReverseProxy extends WebSocketClient {
         if (number <= LOGGED_FRAMES) {
             logger.info("Frame {} from the viewer to the websocket of {}: {} bytes", number, getURI().getHost(), msg.remaining());
         }
+        if (authenticator != null) {
+            byte[] data = new byte[msg.remaining()];
+            msg.get(data);
+            authenticator.fromViewer(data);
+            return;
+        }
         this.getConnection().send(msg);
+    }
+
+    private void sendToHost(byte[] data) {
+        send(data);
+    }
+
+    private void sendToViewer(byte[] data) {
+        try {
+            remoteSession.getRemote().sendBytes(ByteBuffer.wrap(data));
+        } catch (IOException e) {
+            logger.error("Error sending data to the viewer: " + e.getLocalizedMessage());
+        }
+    }
+
+    private void loginFailed(String reason) {
+        logger.error("Closing the console of {}: {}", getURI().getHost(), reason);
+        try {
+            remoteSession.close(1011, "The VNC login failed");
+        } finally {
+            close();
+        }
     }
 }

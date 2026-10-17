@@ -110,7 +110,11 @@ public class ConsoleProxyNoVncClient implements ConsoleProxyClient {
                     String websocketUrl = param.getWebsocketUrl();
                     String websocketAuthorization = param.getWebsocketAuthorization();
 
-                    if (!connectClientToVNCServer(tunnelUrl, tunnelSession, websocketUrl, websocketAuthorization)) {
+                    // a websocket that is authenticated by the console proxy leads to a VNC server that asks for the VM's password: the console
+                    // proxy answers it, because the viewer in the browser cannot on a page served over plain HTTP
+                    String websocketVncPassword = StringUtils.isNotBlank(websocketAuthorization) ? param.getClientHostPassword() : null;
+
+                    if (!connectClientToVNCServer(tunnelUrl, tunnelSession, websocketUrl, websocketAuthorization, websocketVncPassword)) {
                         logger.error("Failed to connect to VNC server, will close connection with client [{}] [IP: {}].", clientId, clientSourceIp);
                         connectionAlive = false;
                         session.close();
@@ -320,13 +324,14 @@ public class ConsoleProxyNoVncClient implements ConsoleProxyClient {
      * - When websocketUrl is not empty -> connect to websocket
      * - Otherwise -> connect to TCP port on host directly
      */
-    private boolean connectClientToVNCServer(String tunnelUrl, String tunnelSession, String websocketUrl, String websocketAuthorization) {
+    private boolean connectClientToVNCServer(String tunnelUrl, String tunnelSession, String websocketUrl, String websocketAuthorization,
+            String websocketVncPassword) {
         try {
             if (StringUtils.isNotBlank(websocketUrl)) {
                 // only the host is logged: the URL of some hypervisors carries a one-time ticket
                 logger.info(String.format("Connect to VNC over websocket on host: %s", NetUtils.extractHost(websocketUrl)));
                 ConsoleProxy.ensureRoute(NetUtils.extractHost(websocketUrl));
-                client.connectToWebSocket(websocketUrl, websocketAuthorization, session);
+                client.connectToWebSocket(websocketUrl, websocketAuthorization, websocketVncPassword, session);
             } else if (StringUtils.isNotBlank(tunnelUrl) && StringUtils.isNotBlank(tunnelSession)) {
                 URI uri = new URI(tunnelUrl);
                 logger.info(String.format("Connect to VNC server via tunnel. url: %s, session: %s",

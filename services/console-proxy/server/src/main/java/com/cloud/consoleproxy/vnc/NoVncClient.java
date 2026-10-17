@@ -114,7 +114,14 @@ public class NoVncClient {
      * @param authorization the value of the Authorization header the websocket request must carry, or null for none
      */
     public void connectToWebSocket(String websocketUrl, String authorization, Session session) throws URISyntaxException, IOException {
-        webSocketReverseProxy = new WebSocketReverseProxy(new URI(websocketUrl), session, authorization);
+        connectToWebSocket(websocketUrl, authorization, null, session);
+    }
+
+    /**
+     * @param vncPassword the password of the VNC server behind the websocket when the proxy has to log in for the viewer, or null
+     */
+    public void connectToWebSocket(String websocketUrl, String authorization, String vncPassword, Session session) throws URISyntaxException, IOException {
+        webSocketReverseProxy = new WebSocketReverseProxy(new URI(websocketUrl), session, authorization, vncPassword);
         connectToWebSocket(webSocketReverseProxy);
     }
 

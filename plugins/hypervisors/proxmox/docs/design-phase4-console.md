@@ -72,8 +72,8 @@ Consequences:
 2. The plugin (`ProxmoxResource`): finds the VM by name, calls `vncproxy` with `websocket=1`, and answers with
    `wss://<node ip>:8006/api2/json/nodes/<node>/qemu/<vmid>/vncwebsocket?port=<port>&vncticket=<encoded ticket>`, the `password`, and the
    header `PVEAPIToken=<token id>=<secret>`.
-3. `ConsoleAccessManagerImpl` puts the URL into the token's `websocketUrl` and the password into the noVNC URL (`password=`: noVNC then
-   authenticates without asking; it is valid for one connection and about 30 s), and the header value into a new `ConsoleProxyClientParam` field.
+3. `ConsoleAccessManagerImpl` puts the URL into the token's `websocketUrl` and the header value into a new `ConsoleProxyClientParam` field; the VNC
+   password goes into the token as the session's `sid` (see 10: the console proxy logs in for the viewer, so the browser never gets it).
 
 **Connect time** (CPVM): `ConsoleProxyHttpHandlerHelper`, `ConsoleProxyNoVNCHandler` and `NoVncClient.connectToWebSocket` carry the header and
 call `addHeader` on the websocket client before it connects. The CPVM already accepts any certificate for `wss`, skips its own authentication
@@ -91,7 +91,7 @@ upstream notes, 10). **Plugin:** a console handler in `ProxmoxResource` and a sm
 - **Timing:** the websocket must connect within seconds of the click (the listener waits about 10 s, the ticket about 40 s). Opening noVNC and
   connecting normally takes a few seconds; check C3 measures the window. A slow page load fails the first connection and the user clicks again.
 - **No reconnect** after a drop (see section 3).
-- The password is in the noVNC URL for a few seconds (single use, 30 s expiry).
+- (First version: the password was put in the noVNC URL. It did not work and was removed, see section 10.)
 - A Proxmox VM with `vga: none` or without a running QEMU has no console.
 
 ## 6. Core impact in short
@@ -161,3 +161,16 @@ administrator sees the generic "cannot be provided" message when the host refuse
 4. Open "View console" on a running Proxmox VM. Expected: the screen of the guest, keyboard and mouse. If it fails, the management server log
    shows `Unable to get console access details` with the reason, and `/var/log/cloud/cloud.log` on the console proxy VM shows the websocket
    connection.
+
+## 12. Found on the lab: noVNC cannot log in over plain HTTP (2026-10-17)
+
+The console stayed on "Connecting". The CPVM log (frames of each direction, added for this) showed the VNC handshake stopping after Proxmox's 16-byte password
+challenge, and the browser console showed **"noVNC requires a secure context (TLS). Expect crashes!"**: the console page is served over plain HTTP, where the
+browser gives no Web Crypto, and noVNC needs it to answer a VNC password challenge. It is not a problem between the console proxy and Proxmox (the websocket
+opened, `101`, and the frames flowed).
+
+Fix: the same as for KVM, where the console proxy logs in itself. `VncPasswordAuthenticator` (console proxy) talks RFB 3.8 to Proxmox with the password
+from the token (the existing `NoVncClient.encodePassword`), answers the version, picks password authentication and sends the response, while it offers the viewer
+"no authentication" and reports success; from the server's SecurityResult on bytes are relayed unchanged. It buffers each side, so frame boundaries do not matter.
+It is used for a websocket console that carries an Authorization header (Proxmox), not for VMware's, which needs no password. The password is no longer in the URL.
+Using HTTPS for the console proxy (`consoleproxy.sslEnabled`) is still recommended in production but is no longer needed for this.

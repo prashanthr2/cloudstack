@@ -343,3 +343,10 @@ host 10.0.35.25", "Connection to VNC server has been established successfully"),
 websocket client connects asynchronously, so it only means the attempt started; nothing followed, which fits a connection that hangs (the console proxy VM
 may not reach port 8006 of the node). Changes: the connect now waits for the handshake (15 s) and fails with the host in the message, and the opening of the
 websocket is logged. To check on the VM: `timeout 6 bash -c '</dev/tcp/10.0.35.25/8006'`, `ip route get 10.0.35.25`.
+
+### Console on the lab: third attempt, cause found (2026-10-17)
+
+Frames logged by the CPVM: banner (12) both ways, security types (2: `01 02`), choice (1), challenge (16), and then no answer from the viewer. The browser
+console: "noVNC requires a secure context (TLS)" (the page is served over HTTP). Change: the console proxy now logs in for the viewer
+(`VncPasswordAuthenticator`, 11 unit tests), the noVNC URL no longer carries a password (46 `ConsoleAccessManagerImplTest` tests). To retest: rebuild `server`
+and `client`, rebuild the system VM files, patch the CPVM, open a fresh console.

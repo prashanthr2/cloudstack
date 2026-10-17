@@ -18,8 +18,6 @@ package org.apache.cloudstack.consoleproxy;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -624,11 +622,6 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
                     .append("&token=").append(token);
             if (requiresVncOverWebSocketConnection(vm, hostVo) && StringUtils.isNotBlank(locale)) {
                 sb.append("&language=").append(locale);
-            }
-            if (StringUtils.isNotBlank(param.getWebsocketAuthorization()) && StringUtils.isNotBlank(param.getClientHostPassword())) {
-                // the VM's VNC server asks for a password: give it to the viewer so that it does not prompt. It is single use and expires in
-                // seconds. It is encoded: it can contain characters that are not allowed in a query string.
-                sb.append("&password=").append(URLEncoder.encode(param.getClientHostPassword(), StandardCharsets.UTF_8));
             }
         }
 

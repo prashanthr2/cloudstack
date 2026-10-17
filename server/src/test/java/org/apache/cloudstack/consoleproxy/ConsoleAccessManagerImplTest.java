@@ -919,15 +919,18 @@ public class ConsoleAccessManagerImplTest {
     }
 
     @Test
-    public void theViewerOfAWebsocketConsoleGetsTheVncPasswordEncodedInTheUrl() {
+    public void theUrlOfAWebsocketConsoleHasNeitherTheVncPasswordNorTheAuthorization() {
+        // the console proxy logs in to the VNC server itself, with the password from the encrypted token: the browser only gets the token
         ConsoleProxyClientParam param = new ConsoleProxyClientParam();
         param.setClientHostPassword("pa&ss#1+x");
         param.setWebsocketAuthorization(PROXMOX_AUTHORIZATION);
 
         String url = consoleUrlFor(param);
 
-        Assert.assertTrue(url, url.contains("&password=pa%26ss%231%2Bx"));
+        Assert.assertFalse(url, url.contains("password"));
+        Assert.assertFalse(url, url.contains("pa&ss"));
         Assert.assertFalse(url, url.contains("PVEAPIToken"));
+        Assert.assertTrue(url, url.contains("&token=TOKEN"));
     }
 
     @Test
