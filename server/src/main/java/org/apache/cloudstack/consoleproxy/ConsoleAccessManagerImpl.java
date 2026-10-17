@@ -16,6 +16,10 @@
 // under the License.
 package org.apache.cloudstack.consoleproxy;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -54,6 +58,8 @@ import com.cloud.agent.api.Answer;
 import com.cloud.agent.api.GetExternalConsoleAnswer;
 import com.cloud.agent.api.GetVmVncTicketAnswer;
 import com.cloud.agent.api.GetVmVncTicketCommand;
+import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.consoleproxy.ConsoleProxyManager;
 import com.cloud.dc.DataCenter;
 import com.cloud.dc.dao.DataCenterDao;
@@ -456,6 +462,47 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
         return details;
     }
 
+    /**
+     * A Proxmox VM has no VNC port to connect to: its host opens a one-time console and answers with a websocket URL, the Authorization header
+     * the console proxy must send on it, and the password of the VM's VNC server (which the viewer in the browser sends). The session is
+     * single use, so the viewer is keyed by the session.
+     */
+    protected ConsoleConnectionDetails getConsoleConnectionDetailsForWebsocketVm(ConsoleConnectionDetails details, VirtualMachine vm, HostVO host) {
+        Answer answer;
+        try {
+            answer = agentManager.send(host.getId(), new GetVmWebsocketConsoleCommand(vm.getInstanceName()));
+        } catch (AgentUnavailableException | OperationTimedoutException e) {
+            logger.error("Unable to get console access details for {} on {}", vm, host, e);
+            return null;
+        }
+        if (!(answer instanceof GetVmWebsocketConsoleAnswer) || !answer.getResult()) {
+            logger.error("Unable to get console access details for {} on {}: {}", vm, host, answer == null ? "no answer" : answer.getDetails());
+            return null;
+        }
+        GetVmWebsocketConsoleAnswer websocketAnswer = (GetVmWebsocketConsoleAnswer) answer;
+        String url = websocketAnswer.getUrl();
+        if (StringUtils.isBlank(url)) {
+            logger.error("Unable to get console access details for {} on {}: the answer has no websocket URL", vm, host);
+            return null;
+        }
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            logger.error("Unable to get console access details for {} on {}: the websocket URL is not valid", vm, host);
+            return null;
+        }
+        details.setWebsocketUrl(url);
+        details.setWebsocketAuthorization(websocketAnswer.getAuthorization());
+        details.setHost(uri.getHost());
+        details.setPort(uri.getPort() == -1 ? 443 : uri.getPort());
+        if (StringUtils.isNotBlank(websocketAnswer.getPassword())) {
+            details.setSid(websocketAnswer.getPassword());
+        }
+        details.setSessionRequiresNewViewer(true);
+        return details;
+    }
+
     protected Pair<String, Integer> getHostAndPortForKVMMaintenanceHostIfNeeded(HostVO host,
                             Map<String, String> vmDetails) {
         if (!Hypervisor.HypervisorType.KVM.equals(host.getHypervisorType())) {
@@ -489,6 +536,9 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
         ConsoleConnectionDetails details = new ConsoleConnectionDetails(vm.getVncPassword(), locale, tag, displayName);
         if (Hypervisor.HypervisorType.External.equals(host.getHypervisorType())) {
             return getConsoleConnectionDetailsForExternalVm(details, vm, host);
+        }
+        if (Hypervisor.HypervisorType.Proxmox.equals(host.getHypervisorType())) {
+            return getConsoleConnectionDetailsForWebsocketVm(details, vm, host);
         }
         Pair<String, Integer> hostPortInfo = getHostAndPortForKVMMaintenanceHostIfNeeded(host, vmDetails);
         if (hostPortInfo == null) {
@@ -575,6 +625,11 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
             if (requiresVncOverWebSocketConnection(vm, hostVo) && StringUtils.isNotBlank(locale)) {
                 sb.append("&language=").append(locale);
             }
+            if (StringUtils.isNotBlank(param.getWebsocketAuthorization()) && StringUtils.isNotBlank(param.getClientHostPassword())) {
+                // the VM's VNC server asks for a password: give it to the viewer so that it does not prompt. It is single use and expires in
+                // seconds. It is encoded: it can contain characters that are not allowed in a query string.
+                sb.append("&password=").append(URLEncoder.encode(param.getClientHostPassword(), StandardCharsets.UTF_8));
+            }
         }
 
         if (StringUtils.isNotBlank(param.getExtraSecurityToken())) {
@@ -611,7 +666,10 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
             logger.debug("Added security token for client validation");
         }
 
-        if (requiresVncOverWebSocketConnection(vm, host)) {
+        if (StringUtils.isNotBlank(details.getWebsocketUrl())) {
+            param.setWebsocketUrl(details.getWebsocketUrl());
+            param.setWebsocketAuthorization(details.getWebsocketAuthorization());
+        } else if (requiresVncOverWebSocketConnection(vm, host)) {
             setWebsocketUrl(vm, param);
         }
 
@@ -767,6 +825,8 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
         private boolean usingRDP;
         private String directUrl;
         private boolean sessionRequiresNewViewer = false;
+        private String websocketUrl;
+        private String websocketAuthorization;
 
         ConsoleConnectionDetails(String sid, String locale, String tag, String displayName) {
             this.sid = sid;
@@ -863,6 +923,22 @@ public class ConsoleAccessManagerImpl extends ManagerBase implements ConsoleAcce
 
         public void setSessionRequiresNewViewer(boolean sessionRequiresNewViewer) {
             this.sessionRequiresNewViewer = sessionRequiresNewViewer;
+        }
+
+        public String getWebsocketUrl() {
+            return websocketUrl;
+        }
+
+        public void setWebsocketUrl(String websocketUrl) {
+            this.websocketUrl = websocketUrl;
+        }
+
+        public String getWebsocketAuthorization() {
+            return websocketAuthorization;
+        }
+
+        public void setWebsocketAuthorization(String websocketAuthorization) {
+            this.websocketAuthorization = websocketAuthorization;
         }
     }
 }

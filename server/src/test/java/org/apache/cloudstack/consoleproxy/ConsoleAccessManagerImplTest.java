@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -57,6 +58,10 @@ import com.cloud.servlet.ConsoleProxyClientParam;
 import com.cloud.servlet.ConsoleProxyPasswordBasedEncryptor;
 import com.cloud.user.Account;
 import com.cloud.user.AccountManager;
+import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
+import com.cloud.exception.AgentUnavailableException;
+import com.cloud.storage.GuestOSVO;
 import com.cloud.utils.Pair;
 import com.cloud.utils.Ternary;
 import com.cloud.utils.db.EntityManager;
@@ -786,5 +791,150 @@ public class ConsoleAccessManagerImplTest {
         Assert.assertNull(endpoint.getWebsocketPath());
         Assert.assertNull(endpoint.getWebsocketExtra());
         Assert.assertNull(endpoint.getWebsocketHost());
+    }
+
+    private static final String PROXMOX_URL = "wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/100/vncwebsocket?port=5900&vncticket=PVEVNC%3Aabc";
+    private static final String PROXMOX_AUTHORIZATION = "PVEAPIToken=user@pam!token=secret";
+
+    private GetVmWebsocketConsoleAnswer proxmoxAnswer(String url, String password) {
+        return new GetVmWebsocketConsoleAnswer(new GetVmWebsocketConsoleCommand("i-2-10-VM"), url, PROXMOX_AUTHORIZATION, password);
+    }
+
+    @Test
+    public void aProxmoxVmGetsItsWebsocketUrlAuthorizationHostPortAndPassword() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(vm.getInstanceName()).thenReturn("i-2-10-VM");
+        Mockito.when(host.getId()).thenReturn(7L);
+        Mockito.when(agentManager.send(Mockito.eq(7L), Mockito.any(GetVmWebsocketConsoleCommand.class))).thenReturn(proxmoxAnswer(PROXMOX_URL, "pa&ss"));
+        ConsoleConnectionDetails details = new ConsoleConnectionDetails("vm-vnc-password", "en", "tag", "name");
+
+        ConsoleConnectionDetails result = consoleAccessManager.getConsoleConnectionDetailsForWebsocketVm(details, vm, host);
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals(PROXMOX_URL, result.getWebsocketUrl());
+        Assert.assertEquals(PROXMOX_AUTHORIZATION, result.getWebsocketAuthorization());
+        Assert.assertEquals("10.0.32.74", result.getHost());
+        Assert.assertEquals(8006, result.getPort());
+        // the one-time password of this session replaces the VM's stored one, and the viewer is keyed by the session
+        Assert.assertEquals("pa&ss", result.getSid());
+        Assert.assertTrue(result.isSessionRequiresNewViewer());
+        ArgumentCaptor<GetVmWebsocketConsoleCommand> sent = ArgumentCaptor.forClass(GetVmWebsocketConsoleCommand.class);
+        Mockito.verify(agentManager).send(Mockito.eq(7L), sent.capture());
+        Assert.assertEquals("i-2-10-VM", sent.getValue().getVmName());
+    }
+
+    @Test
+    public void aProxmoxConsoleWithoutAPasswordKeepsTheVmsOne() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(agentManager.send(Mockito.anyLong(), Mockito.any(GetVmWebsocketConsoleCommand.class))).thenReturn(proxmoxAnswer(PROXMOX_URL, null));
+        ConsoleConnectionDetails details = new ConsoleConnectionDetails("vm-vnc-password", "en", "tag", "name");
+
+        ConsoleConnectionDetails result = consoleAccessManager.getConsoleConnectionDetailsForWebsocketVm(details, vm, host);
+
+        Assert.assertEquals("vm-vnc-password", result.getSid());
+    }
+
+    @Test
+    public void aProxmoxConsoleThatTheHostRefusesGivesNoDetails() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(agentManager.send(Mockito.anyLong(), Mockito.any(GetVmWebsocketConsoleCommand.class)))
+                .thenReturn(new GetVmWebsocketConsoleAnswer(new GetVmWebsocketConsoleCommand("i-2-10-VM"), "i-2-10-VM is not running, so it has no console"));
+
+        Assert.assertNull(consoleAccessManager.getConsoleConnectionDetailsForWebsocketVm(new ConsoleConnectionDetails("p", null, null, null), vm, host));
+    }
+
+    @Test
+    public void aProxmoxConsoleAnswerThatIsNotAWebsocketAnswerOrHasNoUrlGivesNoDetails() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(agentManager.send(Mockito.anyLong(), Mockito.any(GetVmWebsocketConsoleCommand.class))).thenReturn(new Answer(null, true, "ok"), null,
+                proxmoxAnswer(" ", "p"), proxmoxAnswer("wss://not a url", "p"));
+        ConsoleConnectionDetails details = new ConsoleConnectionDetails("p", null, null, null);
+
+        for (int i = 0; i < 4; i++) {
+            Assert.assertNull("answer " + i, consoleAccessManager.getConsoleConnectionDetailsForWebsocketVm(details, vm, host));
+        }
+    }
+
+    @Test
+    public void aProxmoxHostThatCannotBeReachedGivesNoDetails() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(agentManager.send(Mockito.anyLong(), Mockito.any(GetVmWebsocketConsoleCommand.class))).thenThrow(new AgentUnavailableException(7L));
+
+        Assert.assertNull(consoleAccessManager.getConsoleConnectionDetailsForWebsocketVm(new ConsoleConnectionDetails("p", null, null, null), vm, host));
+    }
+
+    @Test
+    public void theConsoleOfAProxmoxVmIsAskedFromItsHostAndNotFromAVncPort() throws Exception {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        Mockito.when(vm.getUuid()).thenReturn("vm-uuid");
+        Mockito.when(vm.getHostName()).thenReturn("vm-hostname");
+        Mockito.when(vm.getVncPassword()).thenReturn("vnc-password");
+        Mockito.when(host.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
+        Mockito.when(vmInstanceDetailsDao.listDetailsKeyPairs(Mockito.anyLong(), Mockito.anyList())).thenReturn(Map.of());
+        Mockito.when(agentManager.send(Mockito.anyLong(), Mockito.any(GetVmWebsocketConsoleCommand.class))).thenReturn(proxmoxAnswer(PROXMOX_URL, "pw"));
+
+        ConsoleConnectionDetails result = consoleAccessManager.getConsoleConnectionDetails(vm, host);
+
+        Assert.assertEquals(PROXMOX_URL, result.getWebsocketUrl());
+        Mockito.verify(managementServer, Mockito.never()).getVncPort(Mockito.any());
+    }
+
+    @Test
+    public void theWebsocketUrlAndAuthorizationGoIntoTheConsoleProxyParam() {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        ConsoleConnectionDetails details = new ConsoleConnectionDetails("pw", null, "tag", "name");
+        details.setHost("10.0.32.74");
+        details.setPort(8006);
+        details.setWebsocketUrl(PROXMOX_URL);
+        details.setWebsocketAuthorization(PROXMOX_AUTHORIZATION);
+
+        ConsoleProxyClientParam param = consoleAccessManager.generateConsoleProxyClientParam(details, "ticket", "sessionUuid", "127.0.0.1", null, vm, host);
+
+        Assert.assertEquals(PROXMOX_URL, param.getWebsocketUrl());
+        Assert.assertEquals(PROXMOX_AUTHORIZATION, param.getWebsocketAuthorization());
+    }
+
+    @Test
+    public void withoutAWebsocketNoAuthorizationIsInTheParam() {
+        ConsoleProxyClientParam param = consoleAccessManager.generateConsoleProxyClientParam(new ConsoleConnectionDetails("p", null, "t", "n"), "ticket",
+                "sessionUuid", "127.0.0.1", null, Mockito.mock(VirtualMachine.class), Mockito.mock(HostVO.class));
+
+        Assert.assertNull(param.getWebsocketUrl());
+        Assert.assertNull(param.getWebsocketAuthorization());
+    }
+
+    private String consoleUrlFor(ConsoleProxyClientParam param) {
+        VirtualMachine vm = Mockito.mock(VirtualMachine.class);
+        HostVO host = Mockito.mock(HostVO.class);
+        GuestOSVO guestOs = Mockito.mock(GuestOSVO.class);
+        Mockito.when(managementServer.getGuestOs(Mockito.anyLong())).thenReturn(guestOs);
+        return consoleAccessManager.generateConsoleAccessUrl("https://cpvm.example.org", param, "TOKEN", 8080, vm, host, null);
+    }
+
+    @Test
+    public void theViewerOfAWebsocketConsoleGetsTheVncPasswordEncodedInTheUrl() {
+        ConsoleProxyClientParam param = new ConsoleProxyClientParam();
+        param.setClientHostPassword("pa&ss#1+x");
+        param.setWebsocketAuthorization(PROXMOX_AUTHORIZATION);
+
+        String url = consoleUrlFor(param);
+
+        Assert.assertTrue(url, url.contains("&password=pa%26ss%231%2Bx"));
+        Assert.assertFalse(url, url.contains("PVEAPIToken"));
+    }
+
+    @Test
+    public void otherConsolesDoNotPutAPasswordInTheUrl() {
+        ConsoleProxyClientParam param = new ConsoleProxyClientParam();
+        param.setClientHostPassword("secret");
+
+        Assert.assertFalse(consoleUrlFor(param).contains("password="));
     }
 }

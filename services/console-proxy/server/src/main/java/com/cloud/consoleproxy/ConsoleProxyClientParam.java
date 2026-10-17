@@ -41,6 +41,12 @@ public class ConsoleProxyClientParam {
     private String password;
     private String websocketUrl;
 
+    /**
+     * The complete value of the Authorization header the websocket request to {@link #websocketUrl} must carry, for a hypervisor that authenticates it
+     * (for example "PVEAPIToken=user@realm!token=secret"); null when the websocket needs none.
+     */
+    private String websocketAuthorization;
+
     private boolean sessionRequiresNewViewer;
 
     /**
@@ -195,6 +201,14 @@ public class ConsoleProxyClientParam {
 
     public void setWebsocketUrl(String websocketUrl) {
         this.websocketUrl = websocketUrl;
+    }
+
+    public String getWebsocketAuthorization() {
+        return websocketAuthorization;
+    }
+
+    public void setWebsocketAuthorization(String websocketAuthorization) {
+        this.websocketAuthorization = websocketAuthorization;
     }
 
     public String getSessionUuid() {
