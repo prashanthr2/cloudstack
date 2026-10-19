@@ -358,3 +358,13 @@ client module must be rebuilt for jetty to load new server classes; the console 
 then `patchSystemVm forced=true`); a websocket connect that is not waited for hides failures; noVNC cannot answer a VNC password challenge on a page served
 over plain HTTP. Known limits: a console session is single use (a reload or a dropped connection needs "View console" again), and the API token secret is
 inside the console proxy token.
+
+### Phase 5 migration and HA: lab checks (2026-10-19)
+
+Design: design-phase5-migration-ha.md, section 8. Token `pveaudit@pam!cloudstack` (roles `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`,
+`PVESDNUser` on the zone).
+
+| # | What | Result |
+|---|---|---|
+| L1 | the token migrates a running VM: `POST /nodes/<node>/qemu/<vmid>/migrate` with `target=<node name>` and `online=1` | **Pass.** The node in the path and the target are node **names** (a node id such as `1` or `3` is refused: "does not look like a valid node name"). Task type `qmigrate`, registered on the source node; final status `stopped`, `exitstatus` **`OK`**. A running VM of 512 MB took **12 s** (start 1792420768, end 1792420780); an earlier offline move of a stopped VM (9204) took **2 s**. The VM was still `running` afterwards. Only `VM.Migrate` (in `PVEVMAdmin`) was needed |
+| L1 (root-only) | the same with `migration_type=insecure` | **Refused:** HTTP 400, `{"errors":{"migration_type":"Only root may use this option."}}`, no migration. The plugin must not send `migration_type`, `migration_network` or `force` |
