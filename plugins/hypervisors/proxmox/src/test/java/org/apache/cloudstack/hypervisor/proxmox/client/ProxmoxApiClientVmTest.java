@@ -320,4 +320,89 @@ public class ProxmoxApiClientVmTest {
 
         client.deleteStorage("cst-2");
     }
+
+    // ---- migration, bridges and HA (Phase 5) ----
+
+    @Test
+    public void aRunningVmIsMovedWithItsMemory() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/migrate", task("UPID:pve1:1:2:3:qmigrate:9204:u:"));
+
+        assertEquals("UPID:pve1:1:2:3:qmigrate:9204:u:", client.migrateRunningVm("pve1", 9204, "pve2"));
+        assertEquals("target=pve2&online=1", bodies.get(0));
+    }
+
+    @Test
+    public void theStateOfAVmOnANodeIsNullWhenTheNodeDoesNotHaveIt() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/status/current", "{\"data\":{\"status\":\"running\",\"vmid\":9204}}");
+
+        assertEquals("running", client.getVmStatus("pve1", 9204));
+        assertNull(client.getVmStatus("pve2", 9204));
+    }
+
+    @Test
+    public void aNodeWithAnEmptyEntryInNotAllowedNodesIsAllowed() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/migrate?target=pve2", "{\"data\":{\"allowed_nodes\":[\"pve2\"],"
+                + "\"not_allowed_nodes\":{\"pve2\":{},\"pve3\":{}},\"local_disks\":[],\"local_resources\":[],\"running\":1}}");
+
+        assertTrue(client.getMigrationProblems("pve1", 9204, "pve2").isEmpty());
+    }
+
+    @Test
+    public void everyReasonAgainstAMoveIsReported() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/migrate?target=pve2", "{\"data\":{\"allowed_nodes\":[],"
+                + "\"not_allowed_nodes\":{\"pve2\":{\"unavailable_storages\":[\"local-lvm\"]}},\"local_resources\":[\"pci0\"],"
+                + "\"local_disks\":[{\"volid\":\"local:iso/x.iso\",\"shared\":0,\"is_unused\":0},"
+                + "{\"volid\":\"cs-1:9204/y\",\"shared\":1,\"is_unused\":0},{\"volid\":\"local:old\",\"shared\":0,\"is_unused\":1}]}}");
+
+        List<String> problems = client.getMigrationProblems("pve1", 9204, "pve2");
+
+        assertEquals(3, problems.size());
+        assertTrue(problems.get(0), problems.get(0).contains("unavailable_storages"));
+        assertTrue(problems.get(1), problems.get(1).contains("pci0"));
+        assertTrue(problems.get(2), problems.get(2).contains("local:iso/x.iso"));
+    }
+
+    @Test
+    public void aTargetThatIsNotListedAtAllIsAProblem() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/migrate?target=pve2", "{\"data\":{\"allowed_nodes\":[\"pve3\"],\"not_allowed_nodes\":{},"
+                + "\"local_disks\":[],\"local_resources\":[]}}");
+
+        assertEquals(1, client.getMigrationProblems("pve1", 9204, "pve2").size());
+    }
+
+    @Test
+    public void bridgesAreReadWithTheirStateAndVlanAwareness() {
+        answer("GET /api2/json/nodes/pve1/network", "{\"data\":[{\"iface\":\"eth0\",\"type\":\"eth\",\"active\":1},"
+                + "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1},"
+                + "{\"iface\":\"vmbr1\",\"type\":\"bridge\",\"active\":1,\"bridge_vlan_aware\":1},"
+                + "{\"iface\":\"vmbr2\",\"type\":\"bridge\",\"active\":0,\"bridge_vlan_aware\":1},"
+                + "{\"iface\":\"ovs0\",\"type\":\"OVSBridge\",\"active\":1}]}");
+
+        List<ProxmoxApiClient.NodeBridge> bridges = client.listBridges("pve1");
+
+        assertEquals(4, bridges.size());
+        assertTrue(!bridges.get(0).isVlanAware() && bridges.get(0).isActive());
+        assertTrue(bridges.get(1).isVlanAware());
+        assertTrue(!bridges.get(2).isActive());
+        assertTrue(bridges.get(3).isVlanAware());
+    }
+
+    @Test
+    public void anHaResourceIsFoundBySidAndCreatedAndDeletedByTheVmId() {
+        answer("GET /api2/json/cluster/ha/resources", "{\"data\":[{\"sid\":\"vm:100\",\"state\":\"started\",\"comment\":\"CloudStack\"},"
+                + "{\"sid\":\"vm:101\",\"state\":\"stopped\"}]}");
+        answer("POST /api2/json/cluster/ha/resources", "{\"data\":null}");
+        answer("DELETE /api2/json/cluster/ha/resources/vm:100", "{\"data\":null}");
+
+        ProxmoxApiClient.HaResource found = client.findHaResource(100);
+        assertEquals("CloudStack", found.getComment());
+        assertEquals("started", found.getState());
+        assertNull(client.findHaResource(102));
+        assertNull(client.findHaResource(101).getComment());
+
+        client.createHaResource(9204, "CloudStack");
+        assertEquals("sid=vm%3A9204&state=started&comment=CloudStack", bodies.get(bodies.size() - 1));
+        client.deleteHaResource(100);
+        assertEquals("DELETE /api2/json/cluster/ha/resources/vm:100", requests.get(requests.size() - 1));
+    }
 }

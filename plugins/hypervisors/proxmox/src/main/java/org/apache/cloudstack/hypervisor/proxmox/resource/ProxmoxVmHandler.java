@@ -21,9 +21,14 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.LongConsumer;
+import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
@@ -39,8 +44,14 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.cloud.agent.api.Answer;
+import com.cloud.agent.api.CheckVirtualMachineAnswer;
+import com.cloud.agent.api.CheckVirtualMachineCommand;
 import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
 import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
+import com.cloud.agent.api.MigrateAnswer;
+import com.cloud.agent.api.MigrateCommand;
+import com.cloud.agent.api.PrepareForMigrationAnswer;
+import com.cloud.agent.api.PrepareForMigrationCommand;
 import com.cloud.agent.api.RebootAnswer;
 import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.StartAnswer;
@@ -50,9 +61,11 @@ import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.to.DataTO;
 import com.cloud.agent.api.to.DiskTO;
 import com.cloud.agent.api.to.NfsTO;
+import com.cloud.agent.api.to.NicTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.storage.Storage;
 import com.cloud.storage.Volume;
+import com.cloud.vm.VirtualMachine;
 
 /**
  * Deploying and running a VM on one Proxmox node: getting a template to the primary storage, creating the root volume (which in
@@ -70,6 +83,12 @@ class ProxmoxVmHandler {
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
     private static final String CREATE_MEMORY_MIB = "256";
     private static final int CREATE_ATTEMPTS = 3;
+    /** How often the real state of a VM is looked at while waiting for a start, a stop or a move; an HA request is only queued by its task. */
+    static final long VM_POLL_MS = 2000;
+    /** The comment of the HA resources this plugin makes; one without it was made by an administrator and is never changed. */
+    static final String HA_COMMENT = "CloudStack";
+    /** How long after the end of a migration timeout a mark left by PrepareForMigrationCommand is still believed. */
+    static final long MARK_MARGIN_MS = 300_000;
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
@@ -80,9 +99,22 @@ class ProxmoxVmHandler {
     private final Supplier<String> authorization;
     private final LongConsumer pauser;
     private final IntSupplier taskTimeoutSeconds;
+    private final IntSupplier migrationTimeoutSeconds;
+    private final BooleanSupplier manageHa;
+    private LongSupplier clock = System::currentTimeMillis;
+    /**
+     * VMs this node was asked to prepare for a migration (name to the time the mark ends). A stop for such a VM that is running on another
+     * node is the clean-up of a failed migration, see {@link #leftAloneAsMigrationCleanup}.
+     */
+    private final Map<String, Long> migrationMarks = new ConcurrentHashMap<>();
 
     ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
             LongConsumer pauser, IntSupplier taskTimeoutSeconds) {
+        this(clients, node, nodeAddress, apiPort, authorization, pauser, taskTimeoutSeconds, () -> 3600, () -> false);
+    }
+
+    ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
+            LongConsumer pauser, IntSupplier taskTimeoutSeconds, IntSupplier migrationTimeoutSeconds, BooleanSupplier manageHa) {
         this.clients = clients;
         this.nodeAddress = nodeAddress;
         this.apiPort = apiPort;
@@ -90,10 +122,44 @@ class ProxmoxVmHandler {
         this.node = node;
         this.pauser = pauser;
         this.taskTimeoutSeconds = taskTimeoutSeconds;
+        this.migrationTimeoutSeconds = migrationTimeoutSeconds;
+        this.manageHa = manageHa;
+    }
+
+    void setClock(LongSupplier clock) {
+        this.clock = clock;
     }
 
     private void waitFor(ProxmoxApiClient client, String upid) {
         client.waitForTask(upid, taskTimeoutSeconds.getAsInt());
+    }
+
+    /**
+     * Waits until the VM is as wanted, looking at its real state: for a VM under Proxmox HA the start, stop and migrate calls end their task at
+     * once and the work follows. The node the VM is expected on is asked first (that answer is exact; the cluster list can be seconds old),
+     * then the cluster list, which also finds a VM that moved. A VM that is gone counts as stopped.
+     */
+    private void waitForVm(ProxmoxApiClient client, long vmid, String expectedNode, String what, int timeoutSeconds,
+            Predicate<ProxmoxApiClient.VmLocation> done) {
+        long attempts = Math.max(1, timeoutSeconds * 1000L / VM_POLL_MS);
+        for (long attempt = 0; attempt < attempts; attempt++) {
+            ProxmoxApiClient.VmLocation location = null;
+            String status = expectedNode == null ? null : client.getVmStatus(expectedNode, vmid);
+            if (status != null) {
+                location = new ProxmoxApiClient.VmLocation(vmid, null, expectedNode, status);
+            } else {
+                location = client.findVm(vmid);
+            }
+            if (done.test(location)) {
+                return;
+            }
+            pauser.accept(VM_POLL_MS);
+        }
+        throw new ProxmoxApiException(String.format("Proxmox VM %d did not %s within %d seconds", vmid, what, timeoutSeconds));
+    }
+
+    private static boolean isStopped(ProxmoxApiClient.VmLocation location) {
+        return location == null || !location.isRunning();
     }
 
     // ---- copy: template to primary storage, and template to root volume ----
@@ -286,9 +352,13 @@ class ProxmoxVmHandler {
                 // the VM was created on whichever node got the volume command; a stopped VM on shared storage only moves its configuration
                 LOGGER.info("Moving Proxmox VM {} from node {} to {}", vmid, location.getNode(), node);
                 waitFor(client, client.migrateVm(location.getNode(), vmid, node));
+                // for a VM under Proxmox HA the task only queued the move
+                waitForVm(client, vmid, null, "move to node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()));
             }
             client.updateVmConfig(node, vmid, ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client)));
             waitFor(client, client.startVm(node, vmid));
+            waitForVm(client, vmid, node, "start on node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()) && l.isRunning());
+            applyHaFlag(client, vm, vmid);
             return new StartAnswer(cmd);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not start {}: {}", node, vm.getName(), e.getMessage());
@@ -321,12 +391,18 @@ class ProxmoxVmHandler {
             if (location == null) {
                 return new StopAnswer(cmd, "Proxmox has no VM " + cmd.getVmName() + ", nothing to stop", true);
             }
+            if (leftAloneAsMigrationCleanup(cmd.getVmName(), location)) {
+                return new StopAnswer(cmd, cmd.getVmName() + " is running on node " + location.getNode() + ", the source of a failed migration; "
+                        + "it was not touched", true);
+            }
             if (!location.isRunning()) {
                 return new StopAnswer(cmd, cmd.getVmName() + " is already stopped", true);
             }
             String task = cmd.isForceStop() ? client.stopVm(location.getNode(), location.getVmid())
                     : client.shutdownVm(location.getNode(), location.getVmid(), SHUTDOWN_TIMEOUT_SECONDS);
             waitFor(client, task);
+            // for a VM under Proxmox HA the task only queued the stop
+            waitForVm(client, location.getVmid(), location.getNode(), "stop", taskTimeoutSeconds.getAsInt(), ProxmoxVmHandler::isStopped);
             return new StopAnswer(cmd, "Stopped " + cmd.getVmName(), true);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not stop {}: {}", node, cmd.getVmName(), e.getMessage());
@@ -341,11 +417,187 @@ class ProxmoxVmHandler {
             if (location == null) {
                 return new RebootAnswer(cmd, "Proxmox has no VM " + cmd.getVmName(), false);
             }
+            if (leftAloneAsMigrationCleanup(cmd.getVmName(), location)) {
+                return new RebootAnswer(cmd, cmd.getVmName() + " is running on node " + location.getNode() + ", the source of a failed migration; "
+                        + "it was not touched", true);
+            }
             waitFor(client, client.rebootVm(location.getNode(), location.getVmid()));
             return new RebootAnswer(cmd, "Rebooted " + cmd.getVmName(), true);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not reboot {}: {}", node, cmd.getVmName(), e.getMessage());
             return new RebootAnswer(cmd, e.getMessage(), false);
+        }
+    }
+
+    /**
+     * A stop or reboot that arrives on the destination of a migration, for a VM that is running on another node, is what core sends after a
+     * failed migration (it cannot be told from a user's stop by the command, see docs/design-phase5-migration-ha.md); the VM is still
+     * running on the source and must be left alone. The mark made by PrepareForMigrationCommand is what tells the two apart, and is used up.
+     */
+    private boolean leftAloneAsMigrationCleanup(String vmName, ProxmoxApiClient.VmLocation location) {
+        Long until = migrationMarks.get(vmName);
+        if (until == null) {
+            return false;
+        }
+        if (until < clock.getAsLong()) {
+            migrationMarks.remove(vmName);
+            return false;
+        }
+        if (node.equals(location.getNode())) {
+            return false;
+        }
+        migrationMarks.remove(vmName);
+        LOGGER.info("Leaving {} alone on node {}: node {} was prepared as the target of a migration that did not complete", vmName,
+                location.getNode(), node);
+        return true;
+    }
+
+    /**
+     * Puts the VM under Proxmox HA when the offering has HA enabled, and takes a resource made by this plugin away when it does not. Only with
+     * the setting proxmox.ha.manage; a resource that an administrator made (another comment) is never changed. A VM whose owner believes it
+     * is protected must not run unprotected, so a failure to create the resource fails the start.
+     */
+    private void applyHaFlag(ProxmoxApiClient client, VirtualMachineTO vm, long vmid) {
+        if (!manageHa.getAsBoolean()) {
+            return;
+        }
+        try {
+            ProxmoxApiClient.HaResource existing = client.findHaResource(vmid);
+            if (vm.isEnableHA()) {
+                if (existing == null) {
+                    client.createHaResource(vmid, HA_COMMENT);
+                    LOGGER.info("Put Proxmox VM {} ({}) under Proxmox HA", vmid, vm.getName());
+                }
+            } else if (existing != null && HA_COMMENT.equals(existing.getComment())) {
+                client.deleteHaResource(vmid);
+                LOGGER.info("Took Proxmox VM {} ({}) out of Proxmox HA: its offering no longer has HA", vmid, vm.getName());
+            }
+        } catch (ProxmoxApiException e) {
+            if (!vm.isEnableHA()) {
+                LOGGER.warn("Could not check the Proxmox HA resource of {}: {}", vm.getName(), e.getMessage());
+                return;
+            }
+            String reason = e.getStatusCode() == 403 ? "the API token needs the privileges Sys.Audit and Sys.Console on / (see the Proxmox plugin "
+                    + "requirements)" : e.getMessage();
+            throw new ProxmoxApiException("Proxmox HA could not be enabled for " + vm.getName() + ": " + reason, e.getStatusCode(), e);
+        }
+    }
+
+    // ---- migration ----
+
+    /**
+     * On the destination, before core moves anything: checks that the VM can run here, so that a refusal changes nothing. Proxmox has no
+     * per-VLAN object to create, so what must exist is the bridge of every NIC (VLAN-aware for a tagged one).
+     */
+    Answer prepareForMigration(PrepareForMigrationCommand cmd) {
+        VirtualMachineTO vm = cmd.getVirtualMachine();
+        if (cmd.isRollback()) {
+            migrationMarks.remove(vm.getName());
+            return new PrepareForMigrationAnswer(cmd);
+        }
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.NodeInfo self = null;
+            for (ProxmoxApiClient.NodeInfo info : client.getClusterNodes(null)) {
+                if (node.equals(info.getName())) {
+                    self = info;
+                }
+            }
+            if (self == null || !self.isOnline()) {
+                return new PrepareForMigrationAnswer(cmd, "Proxmox node " + node + " is not online");
+            }
+            ProxmoxApiClient.VmLocation location = client.findVmByName(vm.getName());
+            if (location == null) {
+                return new PrepareForMigrationAnswer(cmd, "Proxmox has no VM " + vm.getName());
+            }
+            if (node.equals(location.getNode())) {
+                return new PrepareForMigrationAnswer(cmd, vm.getName() + " is already on Proxmox node " + node);
+            }
+            String missing = missingBridge(client, vm);
+            if (missing != null) {
+                return new PrepareForMigrationAnswer(cmd, missing);
+            }
+            List<String> problems = client.getMigrationProblems(location.getNode(), location.getVmid(), node);
+            if (!problems.isEmpty()) {
+                return new PrepareForMigrationAnswer(cmd, String.format("%s cannot move from node %s to %s: %s", vm.getName(), location.getNode(),
+                        node, String.join("; ", problems)));
+            }
+            migrationMarks.put(vm.getName(), clock.getAsLong() + migrationTimeoutSeconds.getAsInt() * 1000L + MARK_MARGIN_MS);
+            return new PrepareForMigrationAnswer(cmd);
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not prepare for the migration of {}: {}", node, vm.getName(), e.getMessage());
+            return new PrepareForMigrationAnswer(cmd, e.getMessage());
+        }
+    }
+
+    /** The reason the VM's NICs cannot be attached on this node, or null. */
+    private String missingBridge(ProxmoxApiClient client, VirtualMachineTO vm) {
+        if (vm.getNics() == null) {
+            return null;
+        }
+        List<ProxmoxApiClient.NodeBridge> bridges = client.listBridges(node);
+        for (NicTO nic : vm.getNics()) {
+            if (StringUtils.isBlank(nic.getName())) {
+                continue;
+            }
+            ProxmoxApiClient.NodeBridge bridge = bridges.stream().filter(b -> b.getName().equals(nic.getName())).findFirst().orElse(null);
+            if (bridge == null || !bridge.isActive()) {
+                return String.format("Proxmox node %s has no active bridge %s for NIC %d of %s", node, nic.getName(), nic.getDeviceId(), vm.getName());
+            }
+            if (ProxmoxVmConfig.vlanTag(nic.getBroadcastUri()) != null && !bridge.isVlanAware()) {
+                return String.format("Bridge %s on Proxmox node %s is not VLAN-aware, which NIC %d of %s needs", nic.getName(), node, nic.getDeviceId(),
+                        vm.getName());
+            }
+        }
+        return null;
+    }
+
+    /** On the source: moves the running VM to the node that has the destination address, and answers when it really is there and running. */
+    Answer migrate(MigrateCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            String target = null;
+            for (ProxmoxApiClient.NodeInfo info : client.getClusterNodes(null)) {
+                if (cmd.getDestinationIp() != null && cmd.getDestinationIp().equals(info.getIp())) {
+                    target = info.getName();
+                }
+            }
+            if (target == null) {
+                return new MigrateAnswer(cmd, false, cmd.getDestinationIp() + " is not a node of this Proxmox cluster", null);
+            }
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new MigrateAnswer(cmd, false, "Proxmox has no VM " + cmd.getVmName(), null);
+            }
+            if (target.equals(location.getNode())) {
+                return new MigrateAnswer(cmd, true, cmd.getVmName() + " is already on node " + target, null);
+            }
+            boolean wasRunning = location.isRunning();
+            String finalTarget = target;
+            int timeout = migrationTimeoutSeconds.getAsInt();
+            client.waitForTask(client.migrateRunningVm(location.getNode(), location.getVmid(), target), timeout);
+            // for a VM under Proxmox HA the task only queued the move
+            waitForVm(client, location.getVmid(), target, "move to node " + target, timeout,
+                    l -> l != null && finalTarget.equals(l.getNode()) && (!wasRunning || l.isRunning()));
+            LOGGER.info("Moved Proxmox VM {} ({}) from node {} to {}", location.getVmid(), cmd.getVmName(), location.getNode(), target);
+            return new MigrateAnswer(cmd, true, "Moved " + cmd.getVmName() + " to node " + target, null);
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox could not migrate {}: {}", cmd.getVmName(), e.getMessage());
+            return new MigrateAnswer(cmd, false, e.getMessage(), null);
+        }
+    }
+
+    /** On the destination, after a migration: is the VM running here? The answer also ends the mark of PrepareForMigrationCommand. */
+    Answer checkVirtualMachine(CheckVirtualMachineCommand cmd) {
+        try {
+            ProxmoxApiClient.VmLocation location = clients.get().findVmByName(cmd.getVmName());
+            if (location != null && node.equals(location.getNode()) && location.isRunning()) {
+                migrationMarks.remove(cmd.getVmName());
+                return new CheckVirtualMachineAnswer(cmd, VirtualMachine.PowerState.PowerOn, null);
+            }
+            return new CheckVirtualMachineAnswer(cmd, VirtualMachine.PowerState.PowerOff, null);
+        } catch (ProxmoxApiException e) {
+            return new CheckVirtualMachineAnswer(cmd, e.getMessage());
         }
     }
 
@@ -383,6 +635,7 @@ class ProxmoxVmHandler {
         }
         if (location.isRunning()) {
             waitFor(client, client.stopVm(location.getNode(), vmid));
+            waitForVm(client, vmid, location.getNode(), "stop", taskTimeoutSeconds.getAsInt(), ProxmoxVmHandler::isStopped);
         }
         waitFor(client, client.destroyVm(location.getNode(), vmid));
         LOGGER.info("Destroyed Proxmox VM {} with its disk", vmid);

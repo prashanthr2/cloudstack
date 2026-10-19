@@ -7541,8 +7541,8 @@ public class UserVmManagerImpl extends ManagerBase implements UserVmManager, Vir
         }
 
         if (!isOnSupportedHypevisorForMigration(vm)) {
-            logger.error(vm + " is not XenServer/VMware/KVM/Ovm/Hyperv, cannot migrate this VM from hypervisor type " + vm.getHypervisorType());
-            throw new InvalidParameterValueException("Unsupported Hypervisor Type for VM migration, we support XenServer/VMware/KVM/Ovm/Hyperv/Ovm3 only");
+            logger.error(vm + " is not XenServer/VMware/KVM/Ovm/Hyperv/Proxmox, cannot migrate this VM from hypervisor type " + vm.getHypervisorType());
+            throw new InvalidParameterValueException("Unsupported Hypervisor Type for VM migration, we support XenServer/VMware/KVM/Ovm/Hyperv/Ovm3/Proxmox only");
         }
 
         if (vm.getType().equals(VirtualMachine.Type.User) && vm.getHypervisorType().equals(HypervisorType.LXC)) {
@@ -7706,6 +7706,7 @@ public class UserVmManagerImpl extends ManagerBase implements UserVmManager, Vir
                 vm.getHypervisorType().equals(HypervisorType.KVM) ||
                 vm.getHypervisorType().equals(HypervisorType.Ovm) ||
                 vm.getHypervisorType().equals(HypervisorType.Hyperv) ||
+                vm.getHypervisorType().equals(HypervisorType.Proxmox) ||
                 vm.getHypervisorType().equals(HypervisorType.LXC) ||
                 vm.getHypervisorType().equals(HypervisorType.Simulator) ||
                 vm.getHypervisorType().equals(HypervisorType.Ovm3));

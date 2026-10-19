@@ -44,13 +44,23 @@ public class ProxmoxConfigTest {
     }
 
     @Test
+    public void aMoveMayTakeAnHourAndProxmoxHaIsLeftToTheAdministratorUnlessAskedFor() {
+        assertEquals(3600, (int) ProxmoxConfig.MigrationTimeout.value());
+        assertFalse(ProxmoxConfig.HaManage.value());
+    }
+
+    @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(4, config.getConfigKeys().length);
+        assertEquals(6, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.TaskTimeout));
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.MigrationTimeout));
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.HaManage));
+        assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
+        assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiConnectTimeout.isDynamic());
         assertTrue(ProxmoxConfig.ApiReadTimeout.isDynamic());

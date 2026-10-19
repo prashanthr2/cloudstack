@@ -792,6 +792,152 @@ public class ProxmoxApiClient implements Closeable {
         return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/migrate", form));
     }
 
+    /** Moves a running VM to another node with its memory (the disks are on shared storage). For an HA VM the call only queues the move. */
+    public String migrateRunningVm(String node, long vmid, String target) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("target", target);
+        form.put("online", "1");
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/migrate", form));
+    }
+
+    /** The state of a VM on one node ("running", "stopped" ...), or null when that node does not have the VM (it is elsewhere or gone). */
+    public String getVmStatus(String node, long vmid) {
+        try {
+            JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/status/current");
+            return data == null || data.path("status").isMissingNode() ? null : data.path("status").asText();
+        } catch (ProxmoxApiException e) {
+            if (e.getStatusCode() >= 400) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /** What Proxmox says about moving a VM to a node: the reasons it cannot be done (none when it can). */
+    public List<String> getMigrationProblems(String node, long vmid, String target) {
+        List<String> problems = new ArrayList<>();
+        JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/migrate?target=" + target);
+        boolean allowed = false;
+        for (JsonNode entry : data.path("allowed_nodes")) {
+            allowed |= target.equals(entry.isTextual() ? entry.asText() : entry.path("node").asText());
+        }
+        // every node is listed in not_allowed_nodes, with an empty entry when nothing is wrong, so only a reason counts
+        JsonNode reasons = data.path("not_allowed_nodes").path(target);
+        List<String> why = new ArrayList<>();
+        reasons.fields().forEachRemaining(field -> {
+            if (field.getValue().size() > 0) {
+                why.add(field.getKey() + " " + field.getValue());
+            }
+        });
+        if (!why.isEmpty()) {
+            problems.add("Proxmox does not allow node " + target + " as a target: " + String.join(", ", why));
+        } else if (!allowed) {
+            problems.add("Proxmox does not list node " + target + " as a possible target");
+        }
+        if (data.path("local_resources").size() > 0) {
+            problems.add("the VM uses resources that exist only on its node: " + data.path("local_resources"));
+        }
+        for (JsonNode disk : data.path("local_disks")) {
+            if (disk.path("shared").asInt(0) == 0 && disk.path("is_unused").asInt(0) == 0) {
+                problems.add("the disk " + disk.path("volid").asText() + " is not on shared storage");
+            }
+        }
+        return problems;
+    }
+
+    /** A bridge of a node and whether a VLAN tag can be used on it. */
+    public static class NodeBridge {
+        private final String name;
+        private final boolean active;
+        private final boolean vlanAware;
+
+        public NodeBridge(String name, boolean active, boolean vlanAware) {
+            this.name = name;
+            this.active = active;
+            this.vlanAware = vlanAware;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public boolean isActive() {
+            return active;
+        }
+
+        public boolean isVlanAware() {
+            return vlanAware;
+        }
+    }
+
+    /** The bridges (Linux and Open vSwitch) that the node has. */
+    public List<NodeBridge> listBridges(String node) {
+        List<NodeBridge> bridges = new ArrayList<>();
+        JsonNode data = get("/nodes/" + node + "/network");
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                String type = entry.path("type").asText();
+                if ("bridge".equals(type) || "OVSBridge".equals(type)) {
+                    bridges.add(new NodeBridge(entry.path("iface").asText(), entry.path("active").asInt(0) == 1,
+                            "OVSBridge".equals(type) || entry.path("bridge_vlan_aware").asInt(0) == 1));
+                }
+            }
+        }
+        return bridges;
+    }
+
+    /** A VM that Proxmox HA looks after. */
+    public static class HaResource {
+        private final String sid;
+        private final String state;
+        private final String comment;
+
+        public HaResource(String sid, String state, String comment) {
+            this.sid = sid;
+            this.state = state;
+            this.comment = comment;
+        }
+
+        public String getSid() {
+            return sid;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public String getComment() {
+            return comment;
+        }
+    }
+
+    /** The HA resource of a VM, or null when Proxmox HA does not look after it. */
+    public HaResource findHaResource(long vmid) {
+        JsonNode data = get("/cluster/ha/resources");
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                if (("vm:" + vmid).equals(entry.path("sid").asText())) {
+                    return new HaResource(entry.path("sid").asText(), entry.path("state").asText(null), entry.path("comment").asText(null));
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Puts a VM under Proxmox HA (state started, Proxmox's default restart and relocate limits, no group). */
+    public void createHaResource(long vmid, String comment) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("sid", "vm:" + vmid);
+        form.put("state", "started");
+        form.put("comment", comment);
+        post("/cluster/ha/resources", form);
+    }
+
+    /** Takes a VM out of Proxmox HA; the VM itself is left as it is. */
+    public void deleteHaResource(long vmid) {
+        delete("/cluster/ha/resources/vm:" + vmid);
+    }
+
     private static String taskId(JsonNode data) {
         if (data == null || !data.isTextual() || !data.asText().startsWith("UPID:")) {
             throw new ProxmoxApiException("Proxmox did not return a task id");

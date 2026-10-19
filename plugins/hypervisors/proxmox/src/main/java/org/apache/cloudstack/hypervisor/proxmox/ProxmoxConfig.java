@@ -44,6 +44,17 @@ public class ProxmoxConfig implements Configurable {
             "Seconds to wait for a Proxmox task (creating a VM from a template, starting or stopping it ...) to finish. A task that is "
                     + "still running afterwards is reported as failed to CloudStack but is not cancelled in Proxmox", true);
 
+    public static final ConfigKey<Integer> MigrationTimeout = new ConfigKey<>("Advanced", Integer.class,
+            "proxmox.migration.timeout", "3600",
+            "Seconds to wait for a Proxmox VM to move to another node. A large VM takes longer than a Proxmox task usually does. A move "
+                    + "that is still running afterwards is reported as failed to CloudStack but is not cancelled in Proxmox", true);
+
+    public static final ConfigKey<Boolean> HaManage = new ConfigKey<>("Advanced", Boolean.class,
+            "proxmox.ha.manage", "false",
+            "Let CloudStack put the VMs of compute offerings with HA enabled under Proxmox HA when they are started (and take them out "
+                    + "again when the offering no longer has HA). Needs the privileges Sys.Audit and Sys.Console on / for the API token, see "
+                    + "the Proxmox plugin documentation. When off, the HA flag has no effect on Proxmox and HA resources are managed in Proxmox", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -51,6 +62,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage};
     }
 }

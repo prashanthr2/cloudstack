@@ -411,6 +411,7 @@ public class ProxmoxVmHandlerTest {
     public void aVmOnThisNodeIsConfiguredAndStarted() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
 
         Answer answer = handler.start(startCommand("9204/vm-9204-disk-0.qcow2"));
 
@@ -430,7 +431,9 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aVmThatIsOnAnotherNodeIsMovedHereBeforeItIsStarted() {
-        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"));
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"))
+                .thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
         when(client.migrateVm("pve2", 9204L, NODE)).thenReturn("UPID:pve2:1:2:3:qmigrate:9204:u:");
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
 
@@ -582,6 +585,7 @@ public class ProxmoxVmHandlerTest {
     public void aVmThatIsStillRunningIsStoppedBeforeItIsDestroyed() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
         when(client.stopVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstop:9204:u:");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped");
         when(client.destroyVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmdestroy:9204:u:");
 
         assertTrue(handler.delete(delete(volumeAt("9204/vm-9204-disk-0.qcow2"))).getResult());

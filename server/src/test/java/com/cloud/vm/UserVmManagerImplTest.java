@@ -903,7 +903,7 @@ public class UserVmManagerImplTest {
     public void verifyIfHypervisorSupportRootdiskSizeOverrideTest() {
         Hypervisor.HypervisorType[] hypervisorTypeArray = Hypervisor.HypervisorType.values();
         int exceptionCounter = 0;
-        int expectedExceptionCounter = hypervisorTypeArray.length - 6;
+        int expectedExceptionCounter = hypervisorTypeArray.length - 7;
 
         for(int i = 0; i < hypervisorTypeArray.length; i++) {
             if (hypervisorTypeArray[i].isFunctionalitySupported(Hypervisor.HypervisorType.Functionality.RootDiskSizeOverride)) {

@@ -40,6 +40,7 @@ import com.cloud.agent.api.CheckHealthAnswer;
 import com.cloud.agent.api.CheckHealthCommand;
 import com.cloud.agent.api.CheckNetworkAnswer;
 import com.cloud.agent.api.CheckNetworkCommand;
+import com.cloud.agent.api.CheckVirtualMachineCommand;
 import com.cloud.agent.api.Command;
 import com.cloud.agent.api.CreateStoragePoolCommand;
 import com.cloud.agent.api.DeleteStoragePoolCommand;
@@ -52,11 +53,13 @@ import com.cloud.agent.api.HostStatsEntry;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.MaintainAnswer;
 import com.cloud.agent.api.MaintainCommand;
+import com.cloud.agent.api.MigrateCommand;
 import com.cloud.agent.api.ModifyStoragePoolAnswer;
 import com.cloud.agent.api.ModifyStoragePoolCommand;
 import com.cloud.agent.api.PingCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
+import com.cloud.agent.api.PrepareForMigrationCommand;
 import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
@@ -144,7 +147,7 @@ public class ProxmoxResource implements ServerResource {
         }
         client = createClient(tokenId, tokenSecret);
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
-                ProxmoxConfig.TaskTimeout::value);
+                ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
         return true;
     }
 
@@ -253,6 +256,12 @@ public class ProxmoxResource implements ServerResource {
                 return vmHandler.delete((DeleteCommand) cmd);
             } else if (cmd instanceof GetVmWebsocketConsoleCommand) {
                 return vmHandler.console((GetVmWebsocketConsoleCommand) cmd);
+            } else if (cmd instanceof PrepareForMigrationCommand) {
+                return vmHandler.prepareForMigration((PrepareForMigrationCommand) cmd);
+            } else if (cmd instanceof MigrateCommand) {
+                return vmHandler.migrate((MigrateCommand) cmd);
+            } else if (cmd instanceof CheckVirtualMachineCommand) {
+                return vmHandler.checkVirtualMachine((CheckVirtualMachineCommand) cmd);
             } else if (cmd instanceof StartCommand) {
                 return vmHandler.start((StartCommand) cmd);
             } else if (cmd instanceof StopCommand) {

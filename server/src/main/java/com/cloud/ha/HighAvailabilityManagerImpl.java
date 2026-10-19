@@ -331,7 +331,8 @@ public class HighAvailabilityManagerImpl extends ManagerBase implements Configur
             return;
         }
 
-        if (host.getHypervisorType() == HypervisorType.VMware || host.getHypervisorType() == HypervisorType.Hyperv) {
+        if (host.getHypervisorType() == HypervisorType.VMware || host.getHypervisorType() == HypervisorType.Hyperv
+                || host.getHypervisorType() == HypervisorType.Proxmox) {
             logger.info("Don't restart VMs on host {} as it is a {} host", host, host.getHypervisorType().toString());
             return;
         }
@@ -507,8 +508,9 @@ public class HighAvailabilityManagerImpl extends ManagerBase implements Configur
             }
         }
 
-        if (vm.getHypervisorType() == HypervisorType.VMware || vm.getHypervisorType() == HypervisorType.Hyperv) {
-            logger.info("Skip HA for VMware VM or Hyperv VM" + vm.getInstanceName());
+        if (vm.getHypervisorType() == HypervisorType.VMware || vm.getHypervisorType() == HypervisorType.Hyperv
+                || vm.getHypervisorType() == HypervisorType.Proxmox) {
+            logger.info("Skip HA for VMware, Hyperv or Proxmox VM " + vm.getInstanceName());
             return;
         }
 
@@ -552,8 +554,8 @@ public class HighAvailabilityManagerImpl extends ManagerBase implements Configur
             }
         }
 
-        if (vm.getHypervisorType() == HypervisorType.VMware) {
-            logger.info("Skip HA for VMware VM " + vm.getInstanceName());
+        if (vm.getHypervisorType() == HypervisorType.VMware || vm.getHypervisorType() == HypervisorType.Proxmox) {
+            logger.info("Skip HA for VMware or Proxmox VM " + vm.getInstanceName());
             return;
         }
 
