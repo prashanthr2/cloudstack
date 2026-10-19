@@ -397,3 +397,14 @@ Lab runs of the Phase 5 behaviour (each to be recorded here): P5-1 live migratio
 on the source and CloudStack Running on the source; P5-4 host maintenance moves every VM and the host reaches Maintenance; P5-5 `proxmox.ha.manage` on: an
 offering with HA creates the resource, stop and start work through HA, delete removes the resource, missing privileges give the clear message; P5-6 node failure
 (L6) with an HA VM: Proxmox restarts it and CloudStack follows it; P5-7 the report during a Proxmox-initiated move (L7).
+
+### Console after Phase 5: the VNC login raced with the browser (2026-10-19)
+
+Symptom on the lab: after Phase 5 was deployed, the console of a migrated VM and of a new VM closed at once (websocket code 1006, "frames from the host: 5, to the host: 3");
+a run of `console-check.py` against VM 100 on pve2 gave `101` and `RFB 003.008`, so Proxmox was fine. Cause, from the console proxy log timestamps: the login with Proxmox
+was done at 21:42:59,304 and the browser's own version and security choice (13 bytes, which `VncPasswordAuthenticator` answers itself and must not pass on) arrived at
+21:42:59,330, after it. The class only swallowed them while the login was still running, so they went to QEMU, which took them for the ClientInit and closed the connection
+right after its ServerInit. It had worked before because the login was slower (the race is between Proxmox's reply and the browser's reply). Fix: the first 13 bytes from
+the viewer are swallowed in every state. Two new tests (`aViewerThatAnswersAfterTheLoginIsDoneIsStillSwallowed`, and the same with ClientInit in the same write); console
+proxy tests 25 pass. Needs the system VM files rebuilt and the console proxy VM patched again (design-phase4-console.md, deployment steps).
+

@@ -137,6 +137,32 @@ public class VncPasswordAuthenticatorTest {
     }
 
     @Test
+    public void aViewerThatAnswersAfterTheLoginIsDoneIsStillSwallowed() throws Exception {
+        // a fast server (Proxmox, lab 2026-10-19) finishes the login before the browser has sent its version and choice; they must not reach the
+        // server, which would take them for the viewer's ClientInit and drop the connection
+        authenticator.fromServer(join(BANNER, new byte[] {1, 2}, CHALLENGE, OK));
+        Assert.assertTrue(authenticator.isRelaying());
+        byte[] sentToServer = toServer.toByteArray();
+
+        authenticator.fromViewer(BANNER);
+        authenticator.fromViewer(new byte[] {1});
+        Assert.assertArrayEquals(sentToServer, toServer.toByteArray());
+
+        authenticator.fromViewer(new byte[] {1});
+        Assert.assertArrayEquals(join(sentToServer, new byte[] {1}), toServer.toByteArray());
+    }
+
+    @Test
+    public void aViewerThatSendsItsNegotiationAndClientInitInOneWriteAfterTheLoginIsHandled() throws Exception {
+        authenticator.fromServer(join(BANNER, new byte[] {1, 2}, CHALLENGE, OK));
+        byte[] sentToServer = toServer.toByteArray();
+
+        authenticator.fromViewer(join(BANNER, new byte[] {1}, new byte[] {1}));
+
+        Assert.assertArrayEquals(join(sentToServer, new byte[] {1}), toServer.toByteArray());
+    }
+
+    @Test
     public void aServerThatNeedsNoPasswordIsUsedWithoutOne() throws Exception {
         authenticator.fromServer(join(BANNER, new byte[] {1, 1}));
         authenticator.fromServer(OK);

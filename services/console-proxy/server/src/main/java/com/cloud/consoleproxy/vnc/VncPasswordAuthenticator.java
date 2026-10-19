@@ -107,15 +107,18 @@ public class VncPasswordAuthenticator {
         if (state == State.FAILED) {
             return;
         }
-        if (state == State.RELAY) {
-            toServer.accept(data);
-            return;
-        }
-        // negotiation: the first 13 bytes are not passed on, whatever follows (the viewer's ClientInit) waits for the end of the login
+        // The first 13 bytes (version and choice) are answered by this class and never passed on, whenever they arrive: a fast server can finish the
+        // login before the browser has sent them. What follows (the viewer's ClientInit) waits for the end of the login.
         int swallowed = Math.min(data.length, viewerBytesToSwallow);
         viewerBytesToSwallow -= swallowed;
-        if (swallowed < data.length) {
-            fromViewerBuffer = concat(fromViewerBuffer, Arrays.copyOfRange(data, swallowed, data.length));
+        if (swallowed == data.length) {
+            return;
+        }
+        byte[] rest = swallowed == 0 ? data : Arrays.copyOfRange(data, swallowed, data.length);
+        if (state == State.RELAY) {
+            toServer.accept(rest);
+        } else {
+            fromViewerBuffer = concat(fromViewerBuffer, rest);
         }
     }
 
