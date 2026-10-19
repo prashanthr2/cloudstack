@@ -82,7 +82,10 @@ same cluster.
 - `status/start` -> task `hastart`, `ha-manager set vm:<id> --state started`; `status/stop` -> `hastop`, `ha-manager crm-command stop vm:<id> 0`;
   `status/shutdown` -> `hastop` with the timeout (`forceStop` is ignored on this path); `migrate` -> `hamigrate`, `ha-manager migrate vm:<id> <node>`
   (`online`, `bwlimit`, `targetstorage` are dropped). **These tasks only queue a request and end at once**; the real work follows later (a `qmigrate`
-  task started by the HA agent, a shutdown, a start). `reboot` and `reset` are not redirected.
+  task started by the HA agent, a shutdown, a start). `reboot` and `reset` are not redirected. **Confirmed on the lab (L4):** the three tasks (`hastop`,
+  `hastart`, `hamigrate`) return `HTTP 200` at once; measured on a small VM, a shutdown took up to about 75 s to take effect (the shutdown timeout plus the HA cycle), a
+  start about 20 s, and an HA migration began about 12 s after the request. The plugin's wait for the real state must therefore allow for minutes, not seconds
+  (`proxmox.task.timeout`, 600 s by default, and `proxmox.migration.timeout` for moves, are enough).
 - `DELETE` of an HA VM fails ("used in HA resources and purge parameter not set") unless `purge=1`, which also removes the HA resource. The plugin
   already sends `purge=1`.
 - HA API (`/cluster/ha/...`) privileges are U (standard: `Sys.Console` on `/` to write, `Sys.Audit` to read). **`PVEVMAdmin` does not contain
