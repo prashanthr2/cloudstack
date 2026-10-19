@@ -408,3 +408,6 @@ right after its ServerInit. It had worked before because the login was slower (t
 the viewer are swallowed in every state. Two new tests (`aViewerThatAnswersAfterTheLoginIsDoneIsStillSwallowed`, and the same with ClientInit in the same write); console
 proxy tests 25 pass. Needs the system VM files rebuilt and the console proxy VM patched again (design-phase4-console.md, deployment steps).
 
+
+Lab result (2026-10-19): after the fix and the system VM files patched again, the console works on a VM that was live-migrated and on a newly deployed VM. P5-1 (live migration
+from the UI) works; the migration error before it was a management server still running the old `server` jar (only the plugin and `client` had been rebuilt).
