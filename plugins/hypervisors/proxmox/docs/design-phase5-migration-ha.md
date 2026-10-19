@@ -206,7 +206,7 @@ leaves the source's list and appears on the target's; core's "missing report" gr
 - HA flag (only with `proxmox.ha.manage` on): `Sys.Audit` and `Sys.Console`, both on `/` (L3, confirmed by the 403 texts), **not in `PVEVMAdmin`**. `Sys.Console`
   is node console access, so granting it is a security decision. Create a custom role and grant it to the user and the token:
   `pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"`, then `pveum acl modify / --users <user> --tokens '<user>!<token>' --roles CloudStackHA --propagate 0`
-  (without propagation: the HA API checks `/` itself, node console access is checked on the node's own path; lab check L10 verifies that). Documented in requirements.md.
+  (without propagation: the HA API checks `/` itself, node console access is checked on the node's own path; **confirmed by lab check L10**). Documented in requirements.md.
 - Node maintenance: unknown (L8).
 
 ## 6. Risks and limits

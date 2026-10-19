@@ -196,7 +196,7 @@ roles above the HA API answers `HTTP 403`:
 **Security note:** `Sys.Console` is Proxmox's privilege for **console access to the node itself** (the Shell button), a much wider right than managing VMs, and
 the HA API needs it. Grant it only if you want CloudStack to manage HA, and keep the grant as narrow as possible: a role with only these two privileges, on `/`
 and **without propagation** (the HA API checks `/` itself, while node console access is checked on the node's own path, which a non-propagating entry at `/` does
-not reach; to be confirmed on your Proxmox version with the check below):
+not reach; **confirmed on Proxmox VE 8.4.21**, and you can check it on yours with the call below):
 
 ```bash
 pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"
