@@ -1466,11 +1466,11 @@ public class ManagementServerImpl extends MutualExclusiveIdsManagerBase implemen
             if (logger.isDebugEnabled()) {
                 logger.debug(vm + " is not XenServer/VMware/KVM/Ovm/Hyperv/Ovm3/Proxmox, cannot migrate this Instance.");
             }
-            throw new InvalidParameterValueException("Unsupported Hypervisor Type for Instance migration, we support " + "XenServer/VMware/KVM/Ovm/Hyperv/Ovm3 only");
+            throw new InvalidParameterValueException("Unsupported Hypervisor Type for Instance migration, we support " + "XenServer/VMware/KVM/Ovm/Hyperv/Ovm3/Proxmox only");
         }
 
         if (VirtualMachine.Type.User.equals(vm.getType()) && HypervisorType.LXC.equals(vm.getHypervisorType())) {
-            throw new InvalidParameterValueException("Unsupported Hypervisor Type for User instance migration, we support XenServer/VMware/KVM/Ovm/Hyperv/Ovm3 only");
+            throw new InvalidParameterValueException("Unsupported Hypervisor Type for User instance migration, we support XenServer/VMware/KVM/Ovm/Hyperv/Ovm3/Proxmox only");
         }
     }
 
