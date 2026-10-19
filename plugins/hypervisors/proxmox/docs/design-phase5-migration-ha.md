@@ -1,6 +1,7 @@
 # Phase 5 design: migration, host maintenance and HA
 
-Status: **proposal, for review.** Nothing described here is implemented. "V" means read in code (CloudStack in this repository; Proxmox in the
+Status: **implemented (2026-10-19)**, decisions 1 to 6 as recommended, with the maintenance fallback of lab check L8; unit tested, lab run of
+the commands pending (see test-log.md). Until then read the rest as the design that the code follows. "V" means read in code (CloudStack in this repository; Proxmox in the
 8.x mirrors under `promox-src`, branch `stable-bookworm`, qemu-server 8.4.10). "U" means **unverified**: it depends on `pve-manager`,
 `pve-ha-manager` or `pve-cluster`, which are not mirrored, or has not been run. Each U has a lab check in section 8.
 

@@ -160,15 +160,15 @@ when a host (re)connects, so a new value reaches a host the next time it connect
 - Proxmox HA restarts VMs after a node failure. CloudStack must not compete.
 - The investigator never reports `Down`, and `Down` is what makes CloudStack schedule VM restarts. It also reports
   Proxmox VMs as alive.
-- **Not done yet:** the explicit skips VMware and Hyper-V have in `HighAvailabilityManagerImpl` (host `Down` handling,
-  `scheduleRestart`) and in the out-of-band power-off restart in `VirtualMachineManagerImpl`. These must be added before
-  VMs are deployed on Proxmox.
+- **Done (Phase 5):** the explicit skips VMware and Hyper-V have in `HighAvailabilityManagerImpl` (host `Down` handling, `scheduleRestart`,
+  the second skip further down) and in the out-of-band power-off restart in `VirtualMachineManagerImpl` now include Proxmox, so there is
+  exactly one HA authority, Proxmox.
 
 For comparison, XenServer uses CloudStack-driven HA (storage heartbeat, investigator, fencing) and VMware relies on the
 hypervisor's HA with explicit skips in CloudStack. Proxmox follows the VMware model.
 
 **HA is per VM in Proxmox**, not a cluster setting as in VMware: a VM is protected only if it is an HA resource. Two ways to get there (design:
-design-phase5-migration-ha.md, 4.3; planned, not implemented yet):
+design-phase5-migration-ha.md, 4.3; implemented in Phase 5, not yet run on the lab):
 - **Default (global setting `proxmox.ha.manage` off):** the HA flag of the compute offering has **no effect** on Proxmox VMs. The Proxmox administrator
   makes VMs HA resources in Proxmox. CloudStack never restarts them itself and follows them when Proxmox moves or restarts them. No extra privilege.
 - **`proxmox.ha.manage` on:** CloudStack creates the Proxmox HA resource for a VM whose offering has HA enabled when it starts (and removes the one it
@@ -180,7 +180,8 @@ design-phase5-migration-ha.md, 4.3; planned, not implemented yet):
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
 `GetHostStatsCommand`, `UpdateHostPasswordCommand`, and for primary storage `CreateStoragePoolCommand`,
 `ModifyStoragePoolCommand`, `DeleteStoragePoolCommand`, `GetStorageStatsCommand`, and for VMs (section 10) `CopyCommand`,
-`DeleteCommand`, `StartCommand`, `StopCommand`, `RebootCommand`. Every other command is answered with an "unsupported" result, so missing
+`DeleteCommand`, `StartCommand`, `StopCommand`, `RebootCommand`, and for migration (section 12) `PrepareForMigrationCommand`,
+`MigrateCommand`, `CheckVirtualMachineCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
 ## 8. Changing the token of added hosts
@@ -297,6 +298,39 @@ password** (the browser's noVNC cannot on a page served over plain HTTP, and the
 - The API token secret is passed to the console proxy VM inside the encrypted console token.
 - Only the first ten frames of each direction are logged by the console proxy (their sizes), to make a stuck handshake visible.
 
+## 12. Migration, host maintenance and HA (Phase 5, implemented; unit tested, not yet run on the lab)
+
+Design and the reasons: design-phase5-migration-ha.md. What happens:
+
+- **Live migration** (`migrateVirtualMachine`, and the migration CloudStack does for host maintenance) is allowed for Proxmox (core: the two lists in
+  `ManagementServerImpl` and `UserVmManagerImpl`). Only the destination host is chosen; the storage is shared (NFS), so no storage motion.
+  - `PrepareForMigrationCommand` (destination): fails, before CloudStack changes anything, when the destination node is not online, the VM is unknown or already
+    on that node, a NIC's bridge is missing or not active on the destination (and VLAN-aware, when the NIC has a VLAN tag), or Proxmox's own check
+    (`GET .../migrate`) reports a reason: the node is not allowed (a non-empty reason in `not_allowed_nodes`; an empty entry means nothing), a local resource, or an
+    attached disk that is not on shared storage. Bridges are not created on the destination: keep them identical on all nodes.
+  - `MigrateCommand` (source): finds the node from the destination address, calls Proxmox with `online=1`, waits for the task for `proxmox.migration.timeout`
+    (default 3600 s) and then until the VM is really on the destination and running, because for an HA VM the call only queues the move. A VM already on
+    the destination is a success.
+  - `CheckVirtualMachineCommand` (destination): `PowerOn` only when the VM is running on this node.
+- **Stop, reboot, start, delete wait for the real state of the VM.** For a VM under Proxmox HA the stop, start and migrate calls end their task at once and
+  Proxmox does the work later (lab L4: up to about 75 s for a stop). The plugin polls the VM's state (every 2 s, up to `proxmox.task.timeout`, for a move
+  `proxmox.migration.timeout`) and fails with a clear message if it never gets there. Starting a VM that is on another node first moves it to the deployment
+  node and waits until it is there.
+- **A stop always acts on the node the VM really is on**, even right after Proxmox HA moved it (CloudStack learns of the new host within one `ping.interval`).
+  One exception: after a *failed* migration CloudStack sends a plain stop to the destination, while the VM is still running on the source. The destination
+  remembers (in memory) that it was prepared for that VM; a stop or reboot that arrives there for a VM running on another node is answered with success and
+  not carried out, once. The memory ends when `CheckVirtualMachineCommand` confirms the VM, when the preparation is rolled back, or after
+  `proxmox.migration.timeout` plus 5 minutes.
+- **HA from the offering (only with the global setting `proxmox.ha.manage`, default off).** When on: after a VM starts, if its compute offering has HA enabled
+  the plugin makes it a Proxmox HA resource (`vm:<id>`, state `started`, comment `CloudStack`); if the offering has no HA and the VM has a resource with
+  the comment `CloudStack`, the resource is removed. A resource without that comment (made by an administrator) is never changed. A change of the offering's
+  flag therefore takes effect at the next start. If the token lacks `Sys.Audit` and `Sys.Console` on `/`, the start of a VM that should be protected fails with
+  a message naming them (a VM without the flag starts anyway). When off, the flag has no effect on Proxmox. Deleting a VM uses `purge=1`, which also removes its
+  HA resource. A stop from CloudStack leaves the HA resource requesting `stopped`, so Proxmox does not restart a VM that CloudStack stopped.
+- **Host maintenance**: CloudStack migrates every VM away (needs the migration above). Proxmox's own HA maintenance mode has no REST endpoint (lab L8), so the
+  plugin does not set it; if Proxmox HA must also avoid the node, run `ha-manager crm-command node-maintenance enable <node>` on a node, and `disable` after.
+- **A node failure** is handled by Proxmox HA for the VMs that are HA resources; CloudStack does not restart anything and follows the VM to its new node.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
@@ -309,4 +343,5 @@ password** (the browser's noVNC cannot on a page served over plain HTTP, and the
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
-- Not yet implemented: data volumes, console, live migration, HA skips, system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
+- Not yet implemented: data volumes, system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
+- Proxmox's own maintenance state is not set by CloudStack (section 12).

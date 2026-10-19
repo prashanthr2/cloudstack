@@ -75,3 +75,18 @@ security problem: those are reported privately, not as public issues.
     that error. Not specific to Proxmox. (The lab has `expunge.delay` and `expunge.interval` set to 20 seconds, which is why the instance was removed
     so soon; with the defaults of one day the window for this error would be much longer, and users could delete the instance themselves.)
 
+## Migration and HA
+
+12. **`UserVmManagerImplTest.verifyIfHypervisorSupportRootdiskSizeOverrideTest` hard-codes the number of hypervisors without root-disk-size override**
+    (`hypervisorTypeArray.length - 6`), so it fails whenever a hypervisor type is added that does not support it. Proxmox made it 7. Possible direction:
+    count the types for which `isFunctionalitySupported` is false instead of a constant.
+13. **HA skips are per hypervisor type, repeated in four places.** `HighAvailabilityManagerImpl` (host handling, `scheduleRestart`, a further `VMware` check) and
+    `VirtualMachineManagerImpl` (out-of-band power off) each list VMware and Hyper-V by name; Proxmox is added to each, and the live-migration allow-lists
+    in `ManagementServerImpl` and `UserVmManagerImpl` are separate lists again. A capability on `HypervisorType` ("has its own HA", "supports live
+    migration") would replace six places.
+14. **The clean-up after a failed migration cannot be told from a user's stop.** Core sends a plain `StopCommand` (`checkBeforeCleanup=false`) to the
+    *destination* host while the VM still runs on the source. A hypervisor whose API is cluster-wide (Proxmox) would stop the real VM. The plugin works around
+    it with an in-memory mark made by `PrepareForMigrationCommand`. A flag on the command saying "this is the clean-up of a failed migration" would remove the guess.
+15. **Proxmox HA only queues start, stop and migrate**, so a command's task ends before the VM has changed state. Any plugin for an API with that property has to wait
+    for the real state; nothing in core helps (the `StopAnswer` is trusted at once and a stop of a still-running VM would be recorded as Stopped).
+

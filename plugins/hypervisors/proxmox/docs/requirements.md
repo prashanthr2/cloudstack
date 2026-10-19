@@ -178,7 +178,7 @@ pveum acl modify /sdn/zones/localnetwork --users <user> --tokens '<user>!<token>
 Migration, the console and everything else CloudStack does by default need nothing more than this. Migrating a VM with the token does not need
 root: only the options `force`, `migration_type` and `migration_network` are root-only, and the plugin never sends them (lab check L1).
 
-### Permissions for HA management from CloudStack (optional; planned for Phase 5, global setting `proxmox.ha.manage`)
+### Permissions for HA management from CloudStack (optional; global setting `proxmox.ha.manage`, Phase 5)
 
 **By default CloudStack does not manage Proxmox HA, and the token needs nothing beyond the previous section.** The global setting `proxmox.ha.manage`
 is **off**; then the HA flag of a compute offering has **no effect** on a VM in Proxmox, and an administrator makes VMs highly available in Proxmox itself

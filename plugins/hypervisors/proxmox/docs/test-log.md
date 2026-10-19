@@ -375,3 +375,25 @@ Design: design-phase5-migration-ha.md, section 8. Token `pveaudit@pam!cloudstack
 | L4 | with `vm:100` an HA resource created by the token (`state started`, comment `CloudStack`): `status/shutdown` (`timeout=30`, `forceStop=1`), `status/start`, `migrate` (`online=1`) by token | **Pass; confirms the redirects.** Each returned **at once, HTTP 200, with an HA task: `hastop`, `hastart`, `hamigrate`**. Shutdown: the VM was still `running` for the whole 33 s that was watched (`ha-manager status`: `started`, then `request_stop`) and was `stopped` within about 75 s of the call (so the shutdown timeout plus the HA cycle; `forceStop` makes no difference on this path). Start: the VM was `stopped` for about 18 s and `running` about 20 s after the call. Migrate: the HA state stayed `started` for about 12 s, then `migrate`, and was still `migrate` 30 s later (a direct, non-HA migration of the same VM took 12 s in all); the move finished: later `ha-manager status` showed `vm:100` `started` on pve3 and `qm list` there showed it `running` (pve1 and pve2 listed nothing), so an HA migration completes and the VM stays up. After the start, `ha-manager config` showed `vm:100` with `state started` |
 | L5 | delete an HA VM: a throwaway VM 9300 with an HA resource (`state stopped`, comment `CloudStack`, created by the token); `DELETE .../qemu/9300`, then `?purge=1` | **Pass.** Without `purge`: HTTP 500, `unable to remove VM 9300 - used in HA resources and purge parameter not set.` With `purge=1`: a `qmdestroy` task; 5 s later the VM was gone and `ha-manager config` listed only `vm:100`: purge removes the VM's HA resource too. The plugin already sends `purge=1` |
 | L8 | is there a REST endpoint for HA node maintenance: `pvesh ls /cluster/ha`, `pvesh usage /cluster/ha -v`, `ha-manager help` | **No endpoint.** `/cluster/ha` lists only `groups`, `resources` and `status`. Node maintenance exists only as the CLI command `ha-manager crm-command node-maintenance enable\|disable <node>`, which runs on a node. A token-only plugin cannot set it. Decision: CloudStack host maintenance migrates the VMs off (Phase 5 migration); the plugin does not set Proxmox's maintenance state, and the docs tell the admin to do it with `ha-manager` if they want Proxmox HA to stay away from the node |
+
+### Phase 5 implementation, unit tests (2026-10-19)
+
+Built on the decisions in design-phase5-migration-ha.md. New: `ProxmoxApiClient` calls (`migrateRunningVm` with `online=1`, `getVmStatus`, `getMigrationProblems`,
+`listBridges`, `findHaResource`, `createHaResource`, `deleteHaResource`), `ProxmoxVmHandler` (prepare, migrate, check, the mark, waits for the real state, HA flag),
+settings `proxmox.migration.timeout` and `proxmox.ha.manage`, and the core changes (Proxmox added to the two live-migration lists, and skipped like VMware in
+`HighAvailabilityManagerImpl` three times and in `VirtualMachineManagerImpl` once).
+
+Plugin: **182 tests pass** (was 150): `ProxmoxVmHandlerMigrationTest` (24: preparation refusals for bridge, VLAN, state, reason and offline node; the move waits until the VM
+is really on the target and running; already-there and unknown-address cases; failed and timed-out move; check answers; the mark is used up by one stop, covers
+reboot, is ignored when the VM is on this node, ends with a verified migration, a rollback or expiry; stop waits for the real state and times out; HA resource created,
+kept, removed only when made by the plugin, 403 fails a protected VM's start and not an unprotected one's; setting off changes nothing; start waits for running),
+`ProxmoxApiClientVmTest` (+7: the HA and migration calls against a fake Proxmox, including the empty-entry reading rule) and `ProxmoxConfigTest`. Core:
+`VirtualMachineManagerImplTest` (103), `HighAvailabilityManagerImplTest` (22), `ManagementServerImplTest` (71) and `UserVmManagerImplTest` (253) pass. The last needed
+a one-line change of a hard-coded count (`verifyIfHypervisorSupportRootdiskSizeOverrideTest`, expected exceptions = number of hypervisors minus 6, now 7:
+adding `Proxmox` to the enum broke it already in Phase 1, see upstream-notes.md 12).
+
+Lab runs of the Phase 5 behaviour (each to be recorded here): P5-1 live migration of a running VM from the UI between the nodes; P5-2 a refused migration
+(destination without the bridge, or a VM with a local CD-ROM) leaves the VM untouched; P5-3 a failed migration (node taken away mid-move) leaves the VM running
+on the source and CloudStack Running on the source; P5-4 host maintenance moves every VM and the host reaches Maintenance; P5-5 `proxmox.ha.manage` on: an
+offering with HA creates the resource, stop and start work through HA, delete removes the resource, missing privileges give the clear message; P5-6 node failure
+(L6) with an HA VM: Proxmox restarts it and CloudStack follows it; P5-7 the report during a Proxmox-initiated move (L7).
