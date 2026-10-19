@@ -205,7 +205,8 @@ leaves the source's list and appears on the target's; core's "missing report" gr
 - Migration: `VM.Migrate` (in `PVEVMAdmin`, already granted); nothing on the target node.
 - HA flag (only with `proxmox.ha.manage` on): `Sys.Audit` and `Sys.Console`, both on `/` (L3, confirmed by the 403 texts), **not in `PVEVMAdmin`**. `Sys.Console`
   is node console access, so granting it is a security decision. Create a custom role and grant it to the user and the token:
-  `pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"`, then `pveum acl modify / --users <user> --tokens '<user>!<token>' --roles CloudStackHA`.
+  `pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"`, then `pveum acl modify / --users <user> --tokens '<user>!<token>' --roles CloudStackHA --propagate 0`
+  (without propagation: the HA API checks `/` itself, node console access is checked on the node's own path; lab check L10 verifies that). Documented in requirements.md.
 - Node maintenance: unknown (L8).
 
 ## 6. Risks and limits
@@ -254,6 +255,8 @@ that holds the VM, `$ID` its vmid, `$T` another node.
   `node`.
 - **L9, networks of the destination:** `curl -ks -H "Authorization: PVEAPIToken=$TP" https://$H:8006/api2/json/nodes/$T/network`: record, for the bridge used by the
   guest network (`vmbr1`), the fields `type`, `active` and `bridge_vlan_aware`, so the preparation check can rely on them.
+- **L10, the narrow HA grant:** create the role and grant it to `pveaudit` and its token on `/` without propagation (commands in requirements.md), then repeat the
+  three HA calls of L3 (they must now work) and `POST /nodes/$N/termproxy` (it must still be refused with `Permission check failed (/nodes/<node>, Sys.Console)`).
 - **L8, maintenance:** `pvesh ls /cluster/ha` and `pvesh usage /cluster/ha -v` (is there any node-maintenance endpoint?), and as root
   `ha-manager crm-command node-maintenance enable $T`, `ha-manager status`, then `disable`.
 

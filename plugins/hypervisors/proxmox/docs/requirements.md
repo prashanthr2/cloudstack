@@ -151,13 +151,67 @@ Confirmed on the lab with a privilege-separated token: with only `PVEAuditor` cr
 Privileges are granted through a **role** on a **path**, not one by one; for the storage calls give the token a role that contains
 `Datastore.Allocate` (the built-in `PVEDatastoreAdmin`) on `/storage`, for example
 `pveum acl modify /storage --tokens '<token id>' --roles PVEDatastoreAdmin` **and** the same for the owning user
-(`--users <user>`). The privileges needed for VM and network management
-are listed here as those features are added.
+(`--users <user>`). The privileges for VMs, templates, networks, the console and migration are in the next section,
+and those for managing Proxmox HA from CloudStack in the one after.
 
 **A token without permissions looks half-working.** `version` and `nodes` answer 200, `cluster/status` answers 403, node
 status comes back without CPU and memory, and the VM list is empty. If adding a cluster fails with `HTTP 403`, or hosts show
 no capacity, check that the role was granted to the **token** itself (`pveum acl list` shows one line for the user and one
 for the token); a privilege-separated token never gets more than it is granted directly.
+
+### Permissions for VMs, templates, networks, the console and migration (Phases 3 to 5; confirmed on the lab)
+
+Give **both the user and the token** (a privilege-separated token gets only what both have) these roles:
+
+| Role | Path | Used for |
+|---|---|---|
+| `PVEVMAdmin` | `/vms` | create, configure, start, stop, move and destroy VMs; `VM.Console` (the console); `VM.Migrate` (migration) |
+| `PVEDatastoreAdmin` | `/storage` | the primary storage entry and the secondary storage entries (templates) |
+| `PVESDNUser` | `/sdn/zones/localnetwork` | attach a VM to a bridge (`SDN.Use` on `/sdn/zones/localnetwork/<bridge>/<vlan tag>`; without it a NIC is refused) |
+
+```bash
+pveum acl modify /vms --users <user> --tokens '<user>!<token>' --roles PVEVMAdmin
+pveum acl modify /storage --users <user> --tokens '<user>!<token>' --roles PVEDatastoreAdmin
+pveum acl modify /sdn/zones/localnetwork --users <user> --tokens '<user>!<token>' --roles PVESDNUser
+```
+
+Migration, the console and everything else CloudStack does by default need nothing more than this. Migrating a VM with the token does not need
+root: only the options `force`, `migration_type` and `migration_network` are root-only, and the plugin never sends them (lab check L1).
+
+### Permissions for HA management from CloudStack (optional; planned for Phase 5, global setting `proxmox.ha.manage`)
+
+**By default CloudStack does not manage Proxmox HA, and the token needs nothing beyond the previous section.** The global setting `proxmox.ha.manage`
+is **off**; then the HA flag of a compute offering has **no effect** on a VM in Proxmox, and an administrator makes VMs highly available in Proxmox itself
+(`ha-manager add vm:<id>`, or Datacenter > HA). Proxmox HA restarts such VMs after a node failure, and CloudStack follows them (see behaviour.md, section 6).
+
+**When the setting is turned on**, CloudStack makes a VM a Proxmox HA resource when its offering has HA enabled (and removes the resource it created when the
+flag is off), and the token then needs these **extra permissions on the root path `/`**, which `PVEVMAdmin` does not have. Confirmed on the lab: with only the
+roles above the HA API answers `HTTP 403`:
+
+| Call | Needs | Error without it |
+|---|---|---|
+| read `/cluster/ha/resources` | `Sys.Audit` on `/` | `Permission check failed (/, Sys.Audit)` |
+| create or remove a resource | `Sys.Console` on `/` | `Permission check failed (/, Sys.Console)` |
+
+**Security note:** `Sys.Console` is Proxmox's privilege for **console access to the node itself** (the Shell button), a much wider right than managing VMs, and
+the HA API needs it. Grant it only if you want CloudStack to manage HA, and keep the grant as narrow as possible: a role with only these two privileges, on `/`
+and **without propagation** (the HA API checks `/` itself, while node console access is checked on the node's own path, which a non-propagating entry at `/` does
+not reach; to be confirmed on your Proxmox version with the check below):
+
+```bash
+pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"
+pveum acl modify / --users <user> --tokens '<user>!<token>' --roles CloudStackHA --propagate 0
+```
+
+Check that the token can manage HA resources but cannot open a node console (this call must be refused: `Permission check failed (/nodes/<node>, Sys.Console)`; if it
+returns a port and a ticket, the grant reaches the nodes and should be removed):
+
+```bash
+curl -ks -w "\nHTTP %{http_code}\n" -X POST -H "Authorization: PVEAPIToken=<user>@<realm>!<token>=<secret>" https://<node>:8006/api2/json/nodes/<node>/termproxy
+```
+
+With the setting on and the permissions missing, starting a VM whose offering has HA enabled **fails** with a message that names the permissions, rather than starting a
+VM that its owner believes is protected.
 
 ### How the secret is stored
 

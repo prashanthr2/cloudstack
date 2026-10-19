@@ -167,6 +167,14 @@ when a host (re)connects, so a new value reaches a host the next time it connect
 For comparison, XenServer uses CloudStack-driven HA (storage heartbeat, investigator, fencing) and VMware relies on the
 hypervisor's HA with explicit skips in CloudStack. Proxmox follows the VMware model.
 
+**HA is per VM in Proxmox**, not a cluster setting as in VMware: a VM is protected only if it is an HA resource. Two ways to get there (design:
+design-phase5-migration-ha.md, 4.3; planned, not implemented yet):
+- **Default (global setting `proxmox.ha.manage` off):** the HA flag of the compute offering has **no effect** on Proxmox VMs. The Proxmox administrator
+  makes VMs HA resources in Proxmox. CloudStack never restarts them itself and follows them when Proxmox moves or restarts them. No extra privilege.
+- **`proxmox.ha.manage` on:** CloudStack creates the Proxmox HA resource for a VM whose offering has HA enabled when it starts (and removes the one it
+  created when the flag is off). This needs **extra permissions for the token** (`Sys.Audit` and `Sys.Console` on `/`; `Sys.Console` is node console
+  access): see requirements.md, "Permissions for HA management from CloudStack".
+
 ## 7. Commands the resource answers
 
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
