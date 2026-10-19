@@ -276,3 +276,10 @@ that holds the VM, `$ID` its vmid, `$T` another node.
 5. **Maintenance:** CloudStack empties the node first, then enables Proxmox maintenance (if the API allows it, L8); otherwise leave it to the
    administrator. Confirm, and say whether SSH access to the nodes is acceptable for this one purpose (not proposed).
 6. **New setting `proxmox.migration.timeout`** (default 3600 s).
+
+
+## Lab result L8: maintenance has no REST endpoint
+
+`/cluster/ha` offers only `groups`, `resources` and `status`; node maintenance is the command `ha-manager crm-command node-maintenance enable|disable <node>`, run on a
+node. Section 4.4 therefore takes its fallback: the plugin does not set Proxmox maintenance. CloudStack's host maintenance migrates the VMs away (the migration this
+phase adds) and the admin can run the `ha-manager` command if Proxmox HA must also avoid the node. No SSH is added.
