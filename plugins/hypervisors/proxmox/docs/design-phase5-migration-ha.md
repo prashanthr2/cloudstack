@@ -159,9 +159,13 @@ is an **HA resource** (`vm:<vmid>`, state `started`); the flag of the compute of
   `state=started`, `comment=CloudStack`; no group, Proxmox's default restart and relocate limits). If the flag is **not** set and a resource with the
   comment `CloudStack` exists (the flag was turned off), it removes it. A resource without that comment, which an administrator made by hand, is never
   touched. The change of the flag therefore takes effect at the next start of the VM (documented).
-- **Privileges:** the HA API needs more than `PVEVMAdmin` (standard: `Sys.Console` on `/` to write, `Sys.Audit` to read; U, lab check L3). If the token lacks
-  them and the flag is set, the **start fails with a clear message** ("Proxmox HA could not be enabled for <vm>: the token needs ... ") rather than
-  starting a VM that its owner believes is protected. (Decision 2.) A deployment that does not use HA needs no new privilege.
+- **Privileges (lab check L3, confirmed):** the HA API needs `Sys.Audit` on `/` to read and **`Sys.Console` on `/`** to create or remove a resource; neither is in
+  `PVEVMAdmin`. **`Sys.Console` is the privilege for console access to the node itself** (the Shell button; standard Proxmox documentation, U in source), so
+  giving it to the CloudStack token widens it from VMs and storage to the Proxmox hosts, which is a real security cost, not a formality. Therefore **this
+  part is opt-in**: a new global setting `proxmox.ha.manage` (default **false**). When false, the offering's HA flag has no effect on Proxmox (as for VMware) and
+  HA resources are managed in Proxmox by the administrator; no new privilege is needed. When true, the plugin does what is described above, and if the token
+  lacks the privileges and the VM's flag is set, the **start fails with a clear message** ("Proxmox HA could not be enabled for <vm>: the token needs Sys.Audit
+  and Sys.Console on /") rather than starting a VM that its owner believes is protected. (Decision 2.)
 - **Node failure:** nothing more is added. Proxmox HA restarts the VM, and CloudStack follows it (section 2).
 - **Stop, start and migrate of an HA resource are only requests to Proxmox.** The plugin therefore **waits for the VM's real state**, not only the task:
   after `shutdown` or `stop` it polls `status/current` until the VM is stopped (up to the timeout, then reports failure, so scenario (b) cannot mark a
@@ -199,8 +203,9 @@ leaves the source's list and appears on the target's; core's "missing report" gr
 ## 5. Privileges
 
 - Migration: `VM.Migrate` (in `PVEVMAdmin`, already granted); nothing on the target node.
-- HA flag: the HA API (`/cluster/ha/resources`), standard `Sys.Console` on `/` (write) and `Sys.Audit` (read): **not in `PVEVMAdmin`**, so a deployment that
-  wants HA must grant a role with them (for example a custom role) to the token and its user. Verified in lab check L3.
+- HA flag (only with `proxmox.ha.manage` on): `Sys.Audit` and `Sys.Console`, both on `/` (L3, confirmed by the 403 texts), **not in `PVEVMAdmin`**. `Sys.Console`
+  is node console access, so granting it is a security decision. Create a custom role and grant it to the user and the token:
+  `pveum role add CloudStackHA --privs "Sys.Audit Sys.Console"`, then `pveum acl modify / --users <user> --tokens '<user>!<token>' --roles CloudStackHA`.
 - Node maintenance: unknown (L8).
 
 ## 6. Risks and limits
@@ -256,8 +261,10 @@ that holds the VM, `$ID` its vmid, `$T` another node.
 
 1. **HA:** CloudStack's own HA never restarts Proxmox VMs, and **the offering's HA flag creates a Proxmox HA resource for the VM** (4.3); a change of
    the flag takes effect at the next start. Confirm.
-2. **If the token cannot create the HA resource** (it lacks the privileges) and the flag is set: **fail the start with a clear message**, or start the VM
-   without HA and log it? Recommendation: fail the start (the owner paid for HA).
+2. **Is it acceptable to give the CloudStack token `Sys.Console` (node console access) on `/`** so that the offering's HA flag can create HA resources? It is the
+   privilege Proxmox demands for the HA API. Recommendation: make it **opt-in** (`proxmox.ha.manage`, default false, as designed in 4.3). When on and the token lacks
+   the privileges, **fail the start** with a clear message rather than start a VM that is believed to be protected. Confirm, or choose to leave HA resources to the
+   Proxmox administrator for good.
 3. **Core changes:** the four places in 4.2 (two migration lists, three HA skips and one in the power-report restart), all adding Proxmox next to VMware.
 4. **Stop and reboot work on the VM's real node**, except for the cleanup of a failed migration (4.1, the mark). Confirm.
 5. **Maintenance:** CloudStack empties the node first, then enables Proxmox maintenance (if the API allows it, L8); otherwise leave it to the
