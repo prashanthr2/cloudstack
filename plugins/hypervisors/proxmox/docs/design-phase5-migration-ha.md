@@ -108,8 +108,11 @@ All three commands are answered by `ProxmoxResource`, with a new `ProxmoxMigrati
   **VLAN-aware bridge**, so there is no per-VLAN object to create: Proxmox adds the VLAN when the VM starts. What must exist on the destination is the
   bridge itself. So the command checks, for each NIC of the VM (its bridge name and VLAN are in the VM TO), that the destination node has that bridge,
   active and VLAN-aware when a tag is used (`GET /nodes/{node}/network`, U), and also that the destination is online, that the VM exists and is **not**
-  already on this node, and the precondition `GET .../migrate?target=<this node>`: the node must be in `allowed_nodes`, with no `local_disks` or
-  `local_resources`. Any problem fails the command with a clear reason **before** CloudStack changes the VM's state. Answers `PrepareForMigrationAnswer`.
+  already on this node, and the precondition `GET .../migrate?target=<this node>` (lab check L2 showed how to read it): the node must be in `allowed_nodes`
+  **and its entry in `not_allowed_nodes` must have no reason** (Proxmox lists every node there with an *empty* entry when nothing is wrong, so mere presence means
+  nothing; a reason is a non-empty `unavailable_storages` or `unavailable-resources`), `local_resources` must be empty, and `local_disks` must hold no
+  attached, non-shared volume (`shared` 0 and `is_unused` 0, for example a local CD-ROM image, which the call lists and does not mark in `allowed_nodes`).
+  Any problem fails the command with a clear reason **before** CloudStack changes the VM's state. Answers `PrepareForMigrationAnswer`.
   Creating the bridge on the destination is not attempted (it would need `Sys.Modify` on the node and a network reload); the administrator keeps the
   bridges identical on all nodes, which a deployment on any node already requires.
 - **`MigrateCommand`** (source host): maps `destinationIp` to the destination node name (the same lookup `PingTestCommand` uses, from the cluster's
