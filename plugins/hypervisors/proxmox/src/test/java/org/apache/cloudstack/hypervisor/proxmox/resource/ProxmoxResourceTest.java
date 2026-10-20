@@ -150,16 +150,17 @@ public class ProxmoxResourceTest {
     }
 
     @Test
-    public void pingReportsOnlyVmsOnThisNode() {
+    public void pingReportsOnlyTheRunningVmsOnThisNodeAndNeverAStoppedOne() {
         when(client.listVms(NODE)).thenReturn(Arrays.asList(
                 new ProxmoxApiClient.VmInfo(100, "i-2-10-VM", "running"),
                 new ProxmoxApiClient.VmInfo(101, "i-2-11-VM", "stopped")));
         PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
         Map<String, HostVmStateReportEntry> report = ping.getHostVmStateReport();
-        assertEquals(2, report.size());
+        // a stopped VM (one Proxmox HA has just moved here and not yet started, or one that was created and not started) is not reported as PowerOff
+        assertEquals(1, report.size());
         assertEquals(VirtualMachine.PowerState.PowerOn, report.get("i-2-10-VM").getState());
-        assertEquals(VirtualMachine.PowerState.PowerOff, report.get("i-2-11-VM").getState());
         assertEquals(NODE, report.get("i-2-10-VM").getHost());
+        assertFalse(report.containsKey("i-2-11-VM"));
     }
 
     @Test

@@ -214,16 +214,21 @@ public class ProxmoxResource implements ServerResource {
         }
     }
 
-    /** Reports only the VMs that are on this node right now, keyed by VM name (the CloudStack instance name). */
+    /**
+     * Reports the VMs that are <b>running</b> on this node right now, keyed by VM name (the CloudStack instance name), as KVM does (a stopped VM
+     * is simply not in the report). A VM that exists in Proxmox but is not running is not reported as PowerOff: a VM that Proxmox HA has just
+     * moved to this node appears here as stopped for a few seconds before it is started, a VM that was created for a root volume exists before it
+     * is first started, and CloudStack treats a PowerOff report as proof of an out-of-band stop (it then releases the VM's resources, lab 2026-10-20).
+     * A VM that really stopped on its own is found by CloudStack's missing-report rule after about two ping intervals.
+     */
     protected Map<String, HostVmStateReportEntry> getHostVmStateReport() {
         Map<String, HostVmStateReportEntry> report = new HashMap<>();
         List<ProxmoxApiClient.VmInfo> vms = client.listVms(node);
         for (ProxmoxApiClient.VmInfo vm : vms) {
-            if (StringUtils.isBlank(vm.getName())) {
+            if (StringUtils.isBlank(vm.getName()) || !vm.isRunning()) {
                 continue;
             }
-            VirtualMachine.PowerState state = vm.isRunning() ? VirtualMachine.PowerState.PowerOn : VirtualMachine.PowerState.PowerOff;
-            report.put(vm.getName(), new HostVmStateReportEntry(state, node));
+            report.put(vm.getName(), new HostVmStateReportEntry(VirtualMachine.PowerState.PowerOn, node));
         }
         return report;
     }

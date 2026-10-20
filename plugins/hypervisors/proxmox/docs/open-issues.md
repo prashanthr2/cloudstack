@@ -7,7 +7,7 @@ Last updated 2026-10-20.
 
 | # | Issue | What is known | Proposal | Status |
 |---|---|---|---|---|
-| 1 | **Spurious "Out of band VM power off" event and `ERROR ... Invalid answer received in response to a StopCommand` after a normal stop** | The plugin reports every VM on the node, stopped ones as PowerOff (`ProxmoxResource.getHostVmStateReport`). KVM reports only running VMs. After a stop, core gets a PowerOff report for a VM it knows is Stopped and runs its out-of-band handler (`VirtualMachineManagerImpl.handlePowerOffReportWithNoPendingJobsOnVM`). Harmless, seen in the management log at 15:25:22 on 2026-10-20 | Report only running VMs, like KVM. Out-of-band stops are then found by core's missing-report rule after about two ping intervals instead of one; HA and migration are unaffected | **Parked, awaiting a decision** |
+| 1 | **Report only running VMs** | **Done (2026-10-20)**, found necessary by P5-6: a stopped VM reported as PowerOff made CloudStack release the resources of an HA VM during recovery. To verify by repeating P5-6 (no `PowerOff` report and no Stopped state for the HA VM during the recovery). Trade-off: an out-of-band guest shutdown is found after about two ping intervals |
 | 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. Not reproduced: the forced stop on 2026-10-20 took about 1 s. The option is refused for HA resources ("Not applicable for HA resources") | Send it, and retry without it when Proxmox answers with that HA message | **Parked, add only if a stop is seen to fail** (test: Stop, then Force stop a few seconds later, on a guest that ignores shutdown) |
 
 ## To verify on the lab

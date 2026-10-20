@@ -48,8 +48,13 @@ two-factor authentication. Username/password login is possible later; the two ar
 
 **Code:** `ProxmoxResource.getCurrentStatus()`
 
-- Each ping lists the VMs on that node only (`/nodes/{node}/qemu`), keyed by VM name (the CloudStack instance name),
-  PowerOn or PowerOff. Reporting cluster-wide from every host would make the recorded power host flap.
+- Each ping lists the VMs on that node only (`/nodes/{node}/qemu`), keyed by VM name (the CloudStack instance name), and
+  reports only the **running** ones (PowerOn), like KVM; a VM that is not running is simply not in the report. Reporting cluster-wide from
+  every host would make the recorded power host flap. A stopped VM is deliberately *not* reported as PowerOff: CloudStack takes a PowerOff report
+  for a VM it thinks is Running as an out-of-band stop and releases its network and storage resources, and a VM that Proxmox HA has just moved to a
+  node shows up there as stopped for a few seconds before it is started (lab P5-6, 2026-10-20: Running, Stopped with resources released, Running again).
+  An out-of-band stop (the guest shut itself down) is therefore found by CloudStack's missing-report rule after about two ping intervals instead
+  of one, and a normal CloudStack stop no longer causes a spurious \"Out of band VM power off\" event.
 - Templates are skipped. VMs whose name is not a CloudStack instance name are ignored by the server.
 - If the API cannot be reached the ping returns `null`, which CloudStack treats as a disconnect.
 - A VM that Proxmox HA moves to another node is picked up through this report: the server notices the VM on a new host

@@ -467,3 +467,9 @@ of the same VM had `false`), and the agent queue holds such requests back per ho
 
 Lab result (2026-10-20): P-par-1 **pass**: with the guru change deployed, instances deployed at once are created in parallel (the `qmcreate` tasks start together). Open issue 13 is closed.
 
+P5-6 node failure (2026-10-20, `echo o > /proc/sysrq-trigger` on the node of an HA instance): Proxmox restarted the HA instances on another node after 3 to 4 minutes, the host of the failed node went to Alert (not Down), CloudStack
+did not restart anything, and the non-HA instances stayed Running in CloudStack (with the "Compute Resource Status is Offline" banner), as designed. **Finding:** during the recovery the new node reported the HA VM as PowerOff
+for ten seconds (Proxmox had moved its configuration there and not yet started it); CloudStack took that as an out-of-band stop, failed to stop it on the unreachable host, released its network and storage resources, set it
+Stopped, and then Running again on the new host when the VM started. Fix: the plugin reports only running VMs, like KVM (behaviour.md, section 3; open issue 1 is closed). Plugin: 222 tests pass. To verify on the lab: repeat
+P5-6 and check that the log shows no `PowerOff` report and no Stopped state for the HA VM during the recovery.
+
