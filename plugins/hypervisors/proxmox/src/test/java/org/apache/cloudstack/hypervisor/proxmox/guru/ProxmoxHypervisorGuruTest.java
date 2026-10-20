@@ -18,12 +18,15 @@ package org.apache.cloudstack.hypervisor.proxmox.guru;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import org.apache.cloudstack.storage.command.CopyCommand;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.cloud.agent.api.to.DataTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.host.HostVO;
 import com.cloud.host.dao.HostDao;
@@ -32,6 +35,7 @@ import com.cloud.storage.GuestOSHypervisorVO;
 import com.cloud.storage.GuestOSVO;
 import com.cloud.storage.dao.GuestOSDao;
 import com.cloud.storage.dao.GuestOSHypervisorDao;
+import com.cloud.utils.Pair;
 import com.cloud.vm.VirtualMachine;
 
 public class ProxmoxHypervisorGuruTest {
@@ -97,5 +101,41 @@ public class ProxmoxHypervisorGuruTest {
     public void theGuruServesProxmoxAndLeavesHostTrackingToThePowerReport() {
         assertEquals(Hypervisor.HypervisorType.Proxmox, guru.getHypervisorType());
         assertFalse(guru.trackVmHostChange());
+    }
+
+    private static DataTO dataOf(Hypervisor.HypervisorType type) {
+        DataTO data = mock(DataTO.class);
+        when(data.getHypervisorType()).thenReturn(type);
+        return data;
+    }
+
+    @Test
+    public void aCopyOfProxmoxIsNotQueuedPerHostAndTheOtherGurusAreNotAskedAfterwards() {
+        CopyCommand copy = new CopyCommand(dataOf(Hypervisor.HypervisorType.Proxmox), dataOf(Hypervisor.HypervisorType.Proxmox), 0, true);
+
+        Pair<Boolean, Long> result = guru.getCommandHostDelegation(15L, copy);
+
+        assertFalse(copy.executeInSequence());
+        assertTrue(result.first());
+        assertEquals(Long.valueOf(15L), result.second());
+    }
+
+    @Test
+    public void aCopyWhoseDestinationIsProxmoxIsNotQueuedEither() {
+        CopyCommand copy = new CopyCommand(dataOf(null), dataOf(Hypervisor.HypervisorType.Proxmox), 0, true);
+
+        assertTrue(guru.getCommandHostDelegation(15L, copy).first());
+        assertFalse(copy.executeInSequence());
+    }
+
+    @Test
+    public void aCopyOfAnotherHypervisorIsLeftAlone() {
+        CopyCommand copy = new CopyCommand(dataOf(Hypervisor.HypervisorType.VMware), dataOf(Hypervisor.HypervisorType.VMware), 0, true);
+
+        Pair<Boolean, Long> result = guru.getCommandHostDelegation(15L, copy);
+
+        assertTrue(copy.executeInSequence());
+        assertFalse(result.first());
+        assertEquals(Long.valueOf(15L), result.second());
     }
 }

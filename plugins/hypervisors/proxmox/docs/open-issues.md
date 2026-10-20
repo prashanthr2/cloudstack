@@ -14,7 +14,7 @@ Last updated 2026-10-20.
 
 | # | Item | Notes |
 |---|---|---|
-| 13 | **Do simultaneous deployments queue?** | Three instances deployed at once: the third Proxmox task started only after one of the first two finished. No lock or limit in the plugin; candidates are the global setting `execute.in.sequence.hypervisor.commands` (if true, commands to one host run one after the other; Proxmox is not in core's exempt list with KVM, XenServer, Hyper-V and LXC, so it follows the setting) and the plugin's HTTP client (Apache default of 2 connections per Proxmox address, which only matters for very many parallel commands). To check: the value of the setting and the log timestamps of the three `CopyCommand`s |
+| 13 | **Simultaneous deployments queued per host** | Root cause found (2026-10-20): `KVMGuru.getCommandHostDelegation` is asked about every command of every hypervisor and makes a copy to a primary storage `executeInSequence = true`, so CloudStack's agent queue sent them to a host one after the other (the log shows `"executeInSequence":"true"` on the copy although `execute.in.sequence.hypervisor.commands` is false). Fixed in the plugin: `ProxmoxHypervisorGuru.getCommandHostDelegation` takes the flag off the copy commands of Proxmox (222 tests pass). **To verify on the lab:** deploy three instances at once, all three `qmcreate` tasks should start together and `grep -a "Waiting for Seq" jetty.log` should show nothing new |
 
 ## To verify on the lab
 

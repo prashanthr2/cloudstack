@@ -92,4 +92,8 @@ security problem: those are reported privately, not as public issues.
 16. **The VM and template setting suggestions are a hard-coded list per hypervisor** (`QueryManagerImpl.fillVMOrTemplateDetailOptions`). A hypervisor that is not listed shows only the generic
     entries (keyboard, UEFI, cpu cores per socket, root disk size), so settings its plugin honours (Proxmox: `nicAdapter`, `rootDiskController`) are invisible in the UI until the list is extended.
     Proxmox is added to it (one block). A way for a hypervisor plugin to declare its own settings would avoid the edit.
+17. **`KVMGuru.getCommandHostDelegation` changes commands of every hypervisor.** `HypervisorGuruManagerImpl.getGuruProcessedCommandTargetHost(hostId, cmd)` asks all gurus, and `KVMGuru`
+    sets `executeInSequence` on every `StorageSubSystemCommand` (false) and on every `CopyCommand` to a primary storage (true) without looking at the hypervisor, before it returns that the host
+    did not change. A hypervisor that is not KVM therefore gets its copy commands serialised per host whatever `execute.in.sequence.hypervisor.commands` says (seen with Proxmox: three
+    deployments at once, the third waited). Possible direction: act only on commands whose `hypervisorType` is KVM. The Proxmox plugin works around it in its own guru.
 

@@ -358,6 +358,13 @@ Design and the lab results behind it: design-phase6-iso.md.
   them for Proxmox since the list of suggestions was extended in core (it is per hypervisor); a name can also be typed in.
 - **Migration** of a VM with an ISO attached is not blocked (the entry is shared; lab I6).
 
+## 14. Parallel deployments (2026-10-20)
+
+CloudStack's agent sends commands that are marked "execute in sequence" to a host one after the other. `KVMGuru` marks every copy to a primary storage that way, for every hypervisor, because
+CloudStack asks all hypervisor gurus about every command. For Proxmox that queued the root volumes of VMs deployed at the same time (a root volume is a `qmcreate` task, which Proxmox runs
+asynchronously and in parallel). `ProxmoxHypervisorGuru` therefore takes the flag off the copy commands of Proxmox, so deployments run in parallel. Because VMs created at once can be
+given the same free VM id (Proxmox does not reserve it), the creation retries a taken id up to 10 times with a growing pause (it was 3 times without a pause).
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

@@ -461,3 +461,7 @@ Phase 6 console observations (2026-10-20): (1) The console of an instance that C
 the VM stopped is still open (guest shutdown, crash, or a stop issued by someone; the Proxmox task history of VM 103 and the management server log decide). (2) On the instance deployed from the ISO the console
 worked and then reported "disconnected" once; connecting again worked (a console session is single use, see behaviour.md, section 11).
 
+Parallel deployments (2026-10-20): the log of three simultaneous deployments showed `"executeInSequence":"true"` on every root-volume `CopyCommand` while `execute.in.sequence.hypervisor.commands` is false (the StopCommand
+of the same VM had `false`), and the agent queue holds such requests back per host. Cause: `KVMGuru` (upstream-notes.md, 17). Fix in `ProxmoxHypervisorGuru` and a more patient VM id retry
+(`ProxmoxHypervisorGuruTest` +3, plugin 222 tests pass). Lab run to record: P-par-1, deploy three instances at once: all three `qmcreate` tasks start together; no new "Waiting for Seq" line in the management server log.
+

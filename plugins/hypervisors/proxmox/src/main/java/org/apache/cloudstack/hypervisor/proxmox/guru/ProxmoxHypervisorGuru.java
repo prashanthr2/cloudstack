@@ -19,7 +19,10 @@ package org.apache.cloudstack.hypervisor.proxmox.guru;
 import javax.inject.Inject;
 
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxVmConfig;
+import org.apache.cloudstack.storage.command.CopyCommand;
 
+import com.cloud.agent.api.Command;
+import com.cloud.agent.api.to.DataTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.host.HostVO;
 import com.cloud.host.dao.HostDao;
@@ -30,6 +33,7 @@ import com.cloud.storage.GuestOSHypervisorVO;
 import com.cloud.storage.GuestOSVO;
 import com.cloud.storage.dao.GuestOSDao;
 import com.cloud.storage.dao.GuestOSHypervisorDao;
+import com.cloud.utils.Pair;
 import com.cloud.vm.VirtualMachine;
 import com.cloud.vm.VirtualMachineProfile;
 
@@ -69,6 +73,27 @@ public class ProxmoxHypervisorGuru extends HypervisorGuruBase implements Hypervi
         String version = host == null ? null : host.getHypervisorVersion();
         GuestOSHypervisorVO mapping = guestOsHypervisorDao.findByOsIdAndHypervisor(guestOs.getId(), getHypervisorType().toString(), version);
         to.setPlatformEmulator(mapping == null ? ProxmoxVmConfig.DEFAULT_OS_TYPE : mapping.getGuestOsName());
+    }
+
+    /**
+     * CloudStack asks every hypervisor guru about every command (HypervisorGuruManagerImpl.getGuruProcessedCommandTargetHost), and KVMGuru makes any
+     * copy to a primary storage "execute in sequence" whatever the hypervisor is: the agent then sends such commands to a host one after the other,
+     * so deploying several VMs at once queues their root volumes (lab, 2026-10-20: the third waited for one of the first two, although
+     * execute.in.sequence.hypervisor.commands is false). Creating a root volume in Proxmox is an asynchronous task on the cluster and needs no such
+     * queue, so this guru takes the flag off the copy commands of Proxmox. It answers "host changed" (with the same host) so that the other gurus
+     * are not asked after it, which is what keeps KVMGuru from putting the flag back when it comes later in the list.
+     */
+    @Override
+    public Pair<Boolean, Long> getCommandHostDelegation(long hostId, Command cmd) {
+        if (cmd instanceof CopyCommand && (isProxmox(((CopyCommand) cmd).getSrcTO()) || isProxmox(((CopyCommand) cmd).getDestTO()))) {
+            ((CopyCommand) cmd).setExecuteInSequence(false);
+            return new Pair<>(true, hostId);
+        }
+        return super.getCommandHostDelegation(hostId, cmd);
+    }
+
+    private static boolean isProxmox(DataTO data) {
+        return data != null && data.getHypervisorType() == Hypervisor.HypervisorType.Proxmox;
     }
 
     @Override

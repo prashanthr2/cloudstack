@@ -87,7 +87,9 @@ class ProxmoxVmHandler {
     static final int SHUTDOWN_TIMEOUT_SECONDS = 60;
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
     private static final String CREATE_MEMORY_MIB = "256";
-    private static final int CREATE_ATTEMPTS = 3;
+    /** Several VMs created at once can be given the same free id (Proxmox does not reserve it), so a taken id is retried with a short pause. */
+    private static final int CREATE_ATTEMPTS = 10;
+    private static final long CREATE_RETRY_WAIT_MS = 500;
     private static final long GIB = 1024L * 1024 * 1024;
     /** How often the real state of a VM is looked at while waiting for a start, a stop or a move; an HA request is only queued by its task. */
     static final long VM_POLL_MS = 2000;
@@ -338,6 +340,7 @@ class ProxmoxVmHandler {
                 if (!taken || attempt == CREATE_ATTEMPTS) {
                     throw e;
                 }
+                pauser.accept(CREATE_RETRY_WAIT_MS * attempt);
             }
         }
         Map<String, String> config = client.getVmConfig(node, vmid);
