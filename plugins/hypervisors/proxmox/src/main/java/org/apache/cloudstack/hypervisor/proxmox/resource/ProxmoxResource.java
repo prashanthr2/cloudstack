@@ -28,8 +28,11 @@ import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CopyCommand;
+import org.apache.cloudstack.storage.command.CreateObjectCommand;
 import org.apache.cloudstack.storage.command.DeleteCommand;
+import org.apache.cloudstack.storage.command.DettachCommand;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -195,6 +198,8 @@ public class ProxmoxResource implements ServerResource {
         cmd.setVersion(ProxmoxResource.class.getPackage().getImplementationVersion());
         Map<String, String> hostDetails = new HashMap<>();
         hostDetails.put(DETAIL_NODE, node);
+        // IDE has four drives; without this core allows one CD-ROM per VM
+        hostDetails.put(Host.HOST_CDROM_MAX_COUNT, Integer.toString(ProxmoxVmConfig.CDROM_DRIVES.length));
         cmd.setHostDetails(hostDetails);
         return new StartupCommand[] {cmd};
     }
@@ -254,6 +259,12 @@ public class ProxmoxResource implements ServerResource {
                 return vmHandler.copy((CopyCommand) cmd);
             } else if (cmd instanceof DeleteCommand) {
                 return vmHandler.delete((DeleteCommand) cmd);
+            } else if (cmd instanceof CreateObjectCommand) {
+                return vmHandler.createObject((CreateObjectCommand) cmd);
+            } else if (cmd instanceof AttachCommand) {
+                return vmHandler.attachIso((AttachCommand) cmd);
+            } else if (cmd instanceof DettachCommand) {
+                return vmHandler.detachIso((DettachCommand) cmd);
             } else if (cmd instanceof GetVmWebsocketConsoleCommand) {
                 return vmHandler.console((GetVmWebsocketConsoleCommand) cmd);
             } else if (cmd instanceof PrepareForMigrationCommand) {

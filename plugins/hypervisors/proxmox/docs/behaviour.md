@@ -180,7 +180,8 @@ design-phase5-migration-ha.md, 4.3; implemented in Phase 5, not yet run on the l
 Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkCommand`, `MaintainCommand`,
 `GetHostStatsCommand`, `UpdateHostPasswordCommand`, and for primary storage `CreateStoragePoolCommand`,
 `ModifyStoragePoolCommand`, `DeleteStoragePoolCommand`, `GetStorageStatsCommand`, and for VMs (section 10) `CopyCommand`,
-`DeleteCommand`, `StartCommand`, `StopCommand`, `RebootCommand`, and for migration (section 12) `PrepareForMigrationCommand`,
+`DeleteCommand`, `StartCommand`, `StopCommand`, `RebootCommand`, for ISOs and blank volumes (section 13) `AttachCommand` and `DettachCommand` (ISO disks only) and
+`CreateObjectCommand` (root volumes only), and for migration (section 12) `PrepareForMigrationCommand`,
 `MigrateCommand`, `CheckVirtualMachineCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
@@ -331,6 +332,27 @@ Design and the reasons: design-phase5-migration-ha.md. What happens:
   plugin does not set it; if Proxmox HA must also avoid the node, run `ha-manager crm-command node-maintenance enable <node>` on a node, and `disable` after.
 - **A node failure** is handled by Proxmox HA for the VMs that are HA resources; CloudStack does not restart anything and follows the VM to its new node.
 
+## 13. ISOs (Phase 6, implemented; unit tested, not yet run on the lab)
+
+Design and the lab results behind it: design-phase6-iso.md.
+
+- **An ISO is a Proxmox volume `csi-<hash>:iso/<file>.iso`.** Proxmox allows no folder below `iso/` and CloudStack keeps each ISO in its own folder
+  (`template/tmpl/<account>/<id>/<file>`), so the first time an ISO is used the plugin adds a read-only, shared directory entry for **that ISO's folder** on the mount of the
+  secondary store (the `css-` NFS entry made for templates). The entry is kept after use and shared by every VM that uses the ISO; there is one per different ISO ever attached,
+  not per VM or account. Only `.iso` and `.img` files are accepted, and only ISOs on an NFS secondary store.
+- **CD-ROM drives.** A VM has up to four, `ide2`, `ide3`, `ide0`, `ide1` for CloudStack's slots 3, 4, 5, 6 (slot 3 is `ide2`, as everywhere in Proxmox). The host tells core it has four
+  (host detail `host.cdrom.max.count`, saved when the host connects), so `vm.iso.max.count` can be raised up to 4 per cluster (default 1).
+- **At start**, CloudStack sends every slot, filled or empty; the plugin makes a drive for each (`<volume>,media=cdrom`, or `none,media=cdrom`) and empties a drive that holds an ISO
+  detached since the last start. When the ISO in the first slot is bootable (core sets the boot loader to CD) the boot order is `ide2;scsi0`, otherwise `scsi0`.
+- **Attach and detach** work on a running VM only for a slot whose drive exists in the **running** configuration (`config?current=1`), because Proxmox keeps a drive that is added to a
+  running VM pending until the next restart (and still answers 200). Otherwise the command fails with "stop and start the instance". Attach sets the drive to the ISO; detach ejects it
+  and keeps the drive; detaching from an empty drive or one that holds another ISO is a success without a change. The disc changes at once (lab: QEMU opens and closes the file).
+- **Deploy from an ISO.** The root volume is created blank by `CreateObjectCommand`: the same VM as for a template, with an empty `scsi0` of the volume's size rounded up to whole GiB, and the
+  volume path in the usual form (`<vmid>/vm-<vmid>-disk-0.qcow2`). Only root volumes; a data volume is "unsupported" until data volumes exist.
+- **Guests without virtio drivers.** The VM detail `nicAdapter` (`virtio`, `e1000`, `e1000e`, `rtl8139`, `vmxnet3`) sets the NIC model; an unknown value fails the start. The detail
+  `rootDiskController` is **not yet honoured** (waiting for lab check I9 on moving the root disk to another controller): the root disk stays `scsi0` on a virtio-scsi controller.
+- **Migration** of a VM with an ISO attached is not blocked (the entry is shared; lab I6).
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
@@ -343,5 +365,5 @@ Design and the reasons: design-phase5-migration-ha.md. What happens:
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
-- Not yet implemented: data volumes, system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
+- Not yet implemented: data volumes (so `AttachCommand` for a volume and `CreateObjectCommand` for a data volume stay "unsupported"), system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
 - Proxmox's own maintenance state is not set by CloudStack (section 12).

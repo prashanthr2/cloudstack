@@ -76,4 +76,16 @@ public class ProxmoxStorageNamesTest {
     public void theStoreEntryAndTheTemplateEntriesCannotBeMistakenForEachOther() {
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary")));
     }
+
+    @Test
+    public void anIsoEntryStartsWithALetterIsDerivedFromTheFolderAndIsNotATemplateEntry() {
+        String first = ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211");
+
+        assertTrue(first, first.startsWith("csi-") && ProxmoxStorageNames.isIsoStorageId(first));
+        assertEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211"));
+        assertNotEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/212"));
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId(first));
+        assertFalse(ProxmoxStorageNames.isIsoStorageId(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211")));
+        assertFalse(ProxmoxStorageNames.isIsoStorageId(null));
+    }
 }

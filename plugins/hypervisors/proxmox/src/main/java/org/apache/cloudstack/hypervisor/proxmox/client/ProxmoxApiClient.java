@@ -584,6 +584,24 @@ public class ProxmoxApiClient implements Closeable {
      * Adds the NFS entry of a secondary store: the only entry that mounts it. The store is read-only, so Proxmox is told not to create the
      * folders of the content type in it ({@code create-subdirs 0}); without that, adding the entry fails with "mkdir ... Read-only file system".
      */
+    /**
+     * Creates the entry that exposes one ISO folder of the secondary store's mount as {@code <id>:iso/<file>}: read-only like the mount, so Proxmox must
+     * not create folders in it, and shared because the same file is seen by every node (a VM with the ISO can then move between nodes).
+     */
+    public void createIsoDirStorage(String id, String mountPath, String folder) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "dir");
+        form.put("path", mountPath);
+        form.put("content", "iso");
+        form.put("content-dirs", "iso=" + folder);
+        form.put("is_mountpoint", "yes");
+        form.put("shared", "1");
+        form.put("create-subdirs", "0");
+        form.put("create-base-path", "0");
+        post("/storage", form);
+    }
+
     public void createSecondaryNfsStorage(String id, String server, String export, String mountPath, String options) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("storage", id);
@@ -740,6 +758,19 @@ public class ProxmoxApiClient implements Closeable {
     public Map<String, String> getVmConfig(String node, long vmid) {
         Map<String, String> config = new LinkedHashMap<>();
         JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/config");
+        if (data != null && data.isObject()) {
+            data.fields().forEachRemaining(field -> config.put(field.getKey(), field.getValue().asText()));
+        }
+        return config;
+    }
+
+    /**
+     * The configuration of a VM as it is in the running VM ({@code current=1}), without changes that are still pending (a drive added to a running
+     * VM stays pending until it is restarted).
+     */
+    public Map<String, String> getRunningVmConfig(String node, long vmid) {
+        Map<String, String> config = new LinkedHashMap<>();
+        JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/config?current=1");
         if (data != null && data.isObject()) {
             data.fields().forEachRemaining(field -> config.put(field.getKey(), field.getValue().asText()));
         }

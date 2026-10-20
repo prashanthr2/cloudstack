@@ -18,6 +18,7 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
@@ -25,6 +26,8 @@ import org.apache.commons.lang3.StringUtils;
 
 import com.cloud.agent.api.to.NicTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
+import com.cloud.template.VirtualMachineTemplate.BootloaderType;
+import com.cloud.vm.VmDetailConstants;
 
 /**
  * Turns what CloudStack knows about a VM into the options of a Proxmox VM, and reads back what Proxmox reports about its disks.
@@ -35,6 +38,13 @@ public final class ProxmoxVmConfig {
     public static final String ROOT_DISK = "scsi0";
     /** Used when the guest OS has no mapping: Proxmox's own default for "unspecified OS". */
     public static final String DEFAULT_OS_TYPE = "other";
+    /** CloudStack's number for the first CD-ROM slot (TemplateManager.CDROM_PRIMARY_DEVICE_SEQ); the slots that follow are the next numbers. */
+    public static final int FIRST_CDROM_SEQ = 3;
+    /** The drive of slot 3, 4, 5, 6: IDE has four, and the first is ide2 as everywhere in Proxmox. */
+    static final String[] CDROM_DRIVES = {"ide2", "ide3", "ide0", "ide1"};
+    /** A CD-ROM drive without a disc. */
+    public static final String EMPTY_CDROM = "none,media=cdrom";
+    private static final String DEFAULT_NIC_MODEL = "virtio";
     private static final long MIB = 1024L * 1024L;
     private static final int CPU_UNITS_MAX = 10000;
 
@@ -48,6 +58,15 @@ public final class ProxmoxVmConfig {
      * @param hostCpuCapacityMhz CPU cores times MHz of the node, to scale the CPU weight; 0 when unknown (the weight is then left at Proxmox's default)
      */
     public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz) {
+        return startOptions(vm, hostCpuCapacityMhz, new LinkedHashMap<>());
+    }
+
+    /**
+     * As above, with the CD-ROM drives: drive name to its value ("&lt;volume&gt;,media=cdrom" or {@link #EMPTY_CDROM}), the drives that CloudStack
+     * asked for with the ISO disks of the start command (filled or empty). When the first slot holds a bootable ISO (the boot loader is CD) the
+     * VM boots from it first.
+     */
+    public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms) {
         Map<String, String> options = new LinkedHashMap<>();
         if (StringUtils.isNotBlank(vm.getName())) {
             options.put("name", vm.getName());
@@ -63,13 +82,67 @@ public final class ProxmoxVmConfig {
         options.put("balloon", "0");
         options.put("ostype", StringUtils.defaultIfBlank(vm.getPlatformEmulator(), DEFAULT_OS_TYPE));
         options.put("scsihw", "virtio-scsi-single");
-        options.put("boot", "order=" + ROOT_DISK);
+        String firstDrive = CDROM_DRIVES[0];
+        boolean bootFromCd = vm.getBootloader() == BootloaderType.CD && cdroms.containsKey(firstDrive);
+        options.put("boot", "order=" + (bootFromCd ? firstDrive + ";" : "") + ROOT_DISK);
+        options.putAll(cdroms);
         if (vm.getNics() != null) {
+            String model = nicModel(vm);
             for (NicTO nic : vm.getNics()) {
-                options.put("net" + nic.getDeviceId(), netOption(nic));
+                options.put("net" + nic.getDeviceId(), netOption(nic, model));
             }
         }
         return options;
+    }
+
+    /** The IDE drive of a CloudStack CD-ROM slot (a null slot is the first). */
+    public static String cdromDrive(Long diskSeq) {
+        int index = diskSeq == null ? 0 : (int) (diskSeq - FIRST_CDROM_SEQ);
+        if (index < 0 || index >= CDROM_DRIVES.length) {
+            throw new ProxmoxApiException(String.format("CD-ROM slot %d cannot be used: a Proxmox VM has %d CD-ROM drives (slots %d to %d)", diskSeq,
+                    CDROM_DRIVES.length, FIRST_CDROM_SEQ, FIRST_CDROM_SEQ + CDROM_DRIVES.length - 1));
+        }
+        return CDROM_DRIVES[index];
+    }
+
+    /** True for the value of a CD-ROM drive in a VM's configuration ("&lt;volume&gt;,media=cdrom" or "none,media=cdrom"). */
+    public static boolean isCdrom(String driveValue) {
+        return driveValue != null && driveValue.contains("media=cdrom");
+    }
+
+    /** True when the drive holds no disc. */
+    public static boolean isEmptyCdrom(String driveValue) {
+        return isCdrom(driveValue) && driveValue.startsWith("none,");
+    }
+
+    public static String cdromValue(String volume) {
+        return volume + ",media=cdrom";
+    }
+
+    /**
+     * The network adapter model from the VM detail "nicAdapter" (as on KVM), for a guest that has no virtio driver; virtio when it is not set.
+     * Refused when Proxmox has no such model, so that the VM does not start with something else than was asked for.
+     */
+    static String nicModel(VirtualMachineTO vm) {
+        String requested = vm.getDetails() == null ? null : vm.getDetails().get(VmDetailConstants.NIC_ADAPTER);
+        if (StringUtils.isBlank(requested)) {
+            return DEFAULT_NIC_MODEL;
+        }
+        switch (requested.trim().toLowerCase(Locale.ROOT)) {
+            case "virtio":
+            case "virtio-net":
+                return "virtio";
+            case "e1000":
+                return "e1000";
+            case "e1000e":
+                return "e1000e";
+            case "rtl8139":
+                return "rtl8139";
+            case "vmxnet3":
+                return "vmxnet3";
+            default:
+                throw new ProxmoxApiException("The network adapter " + requested + " is not supported for Proxmox: use virtio, e1000, e1000e, rtl8139 or vmxnet3");
+        }
     }
 
     /**
@@ -88,11 +161,16 @@ public final class ProxmoxVmConfig {
 
     /** {@code virtio=<mac>,bridge=<bridge>,tag=<vlan>,rate=<MB/s>,firewall=0} */
     static String netOption(NicTO nic) {
+        return netOption(nic, DEFAULT_NIC_MODEL);
+    }
+
+    /** As above with the adapter model in place of virtio: {@code <model>=<mac>,bridge=...}. */
+    static String netOption(NicTO nic, String model) {
         if (StringUtils.isBlank(nic.getName())) {
             throw new ProxmoxApiException(String.format("NIC %d (MAC %s) has no bridge: set the KVM traffic label of the physical network to "
                     + "the Proxmox bridge", nic.getDeviceId(), nic.getMac()));
         }
-        StringBuilder option = new StringBuilder("virtio=").append(nic.getMac()).append(",bridge=").append(nic.getName());
+        StringBuilder option = new StringBuilder(model).append('=').append(nic.getMac()).append(",bridge=").append(nic.getName());
         String tag = vlanTag(nic.getBroadcastUri());
         if (tag != null) {
             option.append(",tag=").append(tag);

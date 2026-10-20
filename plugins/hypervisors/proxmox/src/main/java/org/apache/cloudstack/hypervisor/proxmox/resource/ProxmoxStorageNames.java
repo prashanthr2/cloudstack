@@ -43,6 +43,12 @@ public final class ProxmoxStorageNames {
      */
     public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
 
+    /**
+     * A directory entry on the mount of a secondary store that exposes the one folder of an ISO ("template/tmpl/&lt;account&gt;/&lt;id&gt;"), so the ISO
+     * is the volume "&lt;entry&gt;:iso/&lt;file&gt;" (Proxmox allows no folder below "iso/"). Same letter-first rule as above.
+     */
+    public static final String ISO_STORAGE_ID_PREFIX = "csi-";
+
     private ProxmoxStorageNames() {
     }
 
@@ -73,6 +79,15 @@ public final class ProxmoxStorageNames {
      */
     public static String templateStorageId(String server, String export, String folder) {
         return TEMPLATE_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The entry for the ISO folder {@code folder} of the NFS export {@code server:export}, derived like the template entry. */
+    public static String isoStorageId(String server, String export, String folder) {
+        return ISO_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static boolean isIsoStorageId(String id) {
+        return id != null && id.startsWith(ISO_STORAGE_ID_PREFIX);
     }
 
     public static boolean isTemplateStorageId(String id) {

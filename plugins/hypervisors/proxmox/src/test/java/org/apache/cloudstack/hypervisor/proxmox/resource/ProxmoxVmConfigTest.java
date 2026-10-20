@@ -17,7 +17,9 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -172,5 +174,88 @@ public class ProxmoxVmConfigTest {
         assertEquals(0L, ProxmoxVmConfig.diskSizeBytes("a:b"));
         assertEquals(0L, ProxmoxVmConfig.diskSizeBytes(null));
         assertEquals(0L, ProxmoxVmConfig.diskSizeBytes("a:b,size=big"));
+    }
+
+    // ---- ISOs (Phase 6) ----
+
+    @Test
+    public void cdromSlotsMapToIdeDrivesStartingWithIde2() {
+        assertEquals("ide2", ProxmoxVmConfig.cdromDrive(3L));
+        assertEquals("ide2", ProxmoxVmConfig.cdromDrive(null));
+        assertEquals("ide3", ProxmoxVmConfig.cdromDrive(4L));
+        assertEquals("ide0", ProxmoxVmConfig.cdromDrive(5L));
+        assertEquals("ide1", ProxmoxVmConfig.cdromDrive(6L));
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void aSlotBeyondTheFourDrivesIsRefused() {
+        ProxmoxVmConfig.cdromDrive(7L);
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void aSlotBelowTheFirstCdromSlotIsRefused() {
+        ProxmoxVmConfig.cdromDrive(2L);
+    }
+
+    @Test
+    public void aCdromValueIsRecognisedWithAndWithoutADisc() {
+        assertTrue(ProxmoxVmConfig.isCdrom("none,media=cdrom"));
+        assertTrue(ProxmoxVmConfig.isCdrom("csi-x:iso/a.iso,media=cdrom,size=350K"));
+        assertFalse(ProxmoxVmConfig.isCdrom("cs-x:9204/vm-9204-disk-0.qcow2,size=8G"));
+        assertFalse(ProxmoxVmConfig.isCdrom(null));
+        assertTrue(ProxmoxVmConfig.isEmptyCdrom("none,media=cdrom"));
+        assertFalse(ProxmoxVmConfig.isEmptyCdrom("csi-x:iso/a.iso,media=cdrom"));
+        assertEquals("csi-x:iso/a.iso,media=cdrom", ProxmoxVmConfig.cdromValue("csi-x:iso/a.iso"));
+    }
+
+    @Test
+    public void theNetworkAdapterComesFromTheVmDetailAndDefaultsToVirtio() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        assertEquals("virtio", ProxmoxVmConfig.nicModel(vm));
+
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("nicAdapter", "E1000"));
+        assertEquals("e1000", ProxmoxVmConfig.nicModel(vm));
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("nicAdapter", "Virtio"));
+        assertEquals("virtio", ProxmoxVmConfig.nicModel(vm));
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("nicAdapter", " "));
+        assertEquals("virtio", ProxmoxVmConfig.nicModel(vm));
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void anAdapterProxmoxDoesNotHaveIsRefused() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("nicAdapter", "pcnet"));
+
+        ProxmoxVmConfig.nicModel(vm);
+    }
+
+    @Test
+    public void theNicOptionUsesTheModelInPlaceOfVirtio() {
+        NicTO nic = mock(NicTO.class);
+        when(nic.getMac()).thenReturn("02:00:00:aa:bb:01");
+        when(nic.getName()).thenReturn("vmbr1");
+
+        assertEquals("e1000=02:00:00:aa:bb:01,bridge=vmbr1,firewall=0", ProxmoxVmConfig.netOption(nic, "e1000"));
+        assertEquals("virtio=02:00:00:aa:bb:01,bridge=vmbr1,firewall=0", ProxmoxVmConfig.netOption(nic));
+    }
+
+    @Test
+    public void aBootableIsoInTheFirstSlotIsBootedBeforeTheDiskAndOtherwiseTheDiskIsFirst() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        when(vm.getCpus()).thenReturn(1);
+        when(vm.getMaxRam()).thenReturn(1024L * 1024 * 1024);
+        Map<String, String> cdroms = new java.util.LinkedHashMap<>();
+        cdroms.put("ide2", "csi-x:iso/a.iso,media=cdrom");
+        cdroms.put("ide3", "none,media=cdrom");
+
+        assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, cdroms).get("boot"));
+
+        when(vm.getBootloader()).thenReturn(com.cloud.template.VirtualMachineTemplate.BootloaderType.CD);
+        Map<String, String> options = ProxmoxVmConfig.startOptions(vm, 0, cdroms);
+        assertEquals("order=ide2;scsi0", options.get("boot"));
+        assertEquals("csi-x:iso/a.iso,media=cdrom", options.get("ide2"));
+        assertEquals("none,media=cdrom", options.get("ide3"));
+
+        assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>()).get("boot"));
     }
 }

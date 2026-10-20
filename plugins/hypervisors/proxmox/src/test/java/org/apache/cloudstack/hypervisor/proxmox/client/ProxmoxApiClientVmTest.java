@@ -405,4 +405,29 @@ public class ProxmoxApiClientVmTest {
         client.deleteHaResource(100);
         assertEquals("DELETE /api2/json/cluster/ha/resources/vm:100", requests.get(requests.size() - 1));
     }
+
+    // ---- ISOs (Phase 6) ----
+
+    @Test
+    public void theEntryOfAnIsoFolderIsADirectoryOnTheSecondaryMountThatIsSharedAndReadOnlyLike() {
+        answer("POST /api2/json/storage", "{\"data\":{\"storage\":\"csi-x\",\"type\":\"dir\"}}");
+
+        client.createIsoDirStorage("csi-x", "/mnt/css-y", "template/tmpl/2/211");
+
+        String body = bodies.get(0);
+        assertTrue(body, body.contains("storage=csi-x") && body.contains("type=dir") && body.contains("path=%2Fmnt%2Fcss-y"));
+        assertTrue(body, body.contains("content=iso") && body.contains("content-dirs=iso%3Dtemplate%2Ftmpl%2F2%2F211"));
+        assertTrue(body, body.contains("is_mountpoint=yes") && body.contains("shared=1"));
+        assertTrue(body, body.contains("create-subdirs=0") && body.contains("create-base-path=0"));
+    }
+
+    @Test
+    public void theRunningConfigurationIsReadWithCurrentAndNotThePendingOne() {
+        answer("GET /api2/json/nodes/pve1/qemu/9204/config?current=1", "{\"data\":{\"ide2\":\"none,media=cdrom\"}}");
+
+        Map<String, String> config = client.getRunningVmConfig("pve1", 9204);
+
+        assertEquals("none,media=cdrom", config.get("ide2"));
+        assertNull(config.get("ide3"));
+    }
 }

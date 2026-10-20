@@ -135,6 +135,15 @@ public class ProxmoxResourceTest {
     }
 
     @Test
+    public void theHostSaysItHasFourCdromDrivesSoCoreAllowsMoreThanOneIsoPerVm() {
+        when(client.getNodeStatus(NODE)).thenReturn(new ProxmoxApiClient.NodeStatus(3, 1, 2400L, 8330162176L, 1L, 2L, 0.1, "pve-manager/8.4.21"));
+
+        StartupRoutingCommand cmd = (StartupRoutingCommand) resource.initialize()[0];
+
+        assertEquals("4", cmd.getHostDetails().get(com.cloud.host.Host.HOST_CDROM_MAX_COUNT));
+    }
+
+    @Test
     public void initializeReturnsNullWhenTheApiIsUnreachable() {
         when(client.getNodeStatus(anyString())).thenThrow(new ProxmoxApiException("boom"));
         assertNull(resource.initialize());

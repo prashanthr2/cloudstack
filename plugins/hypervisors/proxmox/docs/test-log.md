@@ -419,3 +419,16 @@ the ISO; attach, swap and eject work on a stopped and a running VM (checked by w
 checks the running configuration first; a blank VM with `scsi0=<pool>:2,format=qcow2` boots from the CD-ROM first; the migration precondition has no local disk with an ISO from a shared
 entry; a concurrent create of the same entry gives one 200 and one 500 (handled like the template entries); a non-ISO file is refused by Proxmox.
 
+### Phase 6 implementation, unit tests (2026-10-20)
+
+New: `ProxmoxStorageNames.isoStorageId`, `ProxmoxApiClient.createIsoDirStorage` and `getRunningVmConfig`, `ProxmoxVmConfig` (CD-ROM drive mapping, `nicAdapter`, boot order), `ProxmoxVmHandler`
+(`attachIso`, `detachIso`, `createObject`, the drives at start, `ensureSecondaryMount` shared with the template copy), host detail `host.cdrom.max.count` = 4, and the three commands in
+`ProxmoxResource`. Plugin: **209 tests pass** (was 182): `ProxmoxVmHandlerIsoTest` (15: entries and volume, second slot, a running VM without the drive is refused without a change, a
+stopped VM gets it, bad slot / name / path / non-NFS store, unknown VM, data volume unsupported, detach and its no-op cases, every slot of the start command becomes a drive, boot order,
+a drive emptied after a detach, a bad ISO fails the start, blank root volume rounded to whole GiB with the usual path, only root volumes), `ProxmoxVmConfigTest` (+8),
+`ProxmoxApiClientVmTest` (+2), `ProxmoxStorageNamesTest` (+1), `ProxmoxResourceTest` (+1).
+
+Lab runs to record: P6-1 attach an ISO to a running instance with `vm.iso.max.count` = 2 (after the hosts reconnected, the instance restarted); P6-2 swap and detach; P6-3 start an instance
+that has an ISO attached; P6-4 attach to a running instance without a drive (expect the clear message); P6-5 deploy a VM from an ISO and boot the installer; P6-6 `nicAdapter` = e1000;
+P6-7 migrate an instance with an ISO attached; P6-8 delete an instance with an ISO attached, then delete the ISO.
+
