@@ -350,7 +350,9 @@ Design and the lab results behind it: design-phase6-iso.md.
 - **Deploy from an ISO.** The root volume is created blank by `CreateObjectCommand`: the same VM as for a template, with an empty `scsi0` of the volume's size rounded up to whole GiB, and the
   volume path in the usual form (`<vmid>/vm-<vmid>-disk-0.qcow2`). Only root volumes; a data volume is "unsupported" until data volumes exist.
 - **Guests without virtio drivers.** The VM detail `nicAdapter` (`virtio`, `e1000`, `e1000e`, `rtl8139`, `vmxnet3`) sets the NIC model; an unknown value fails the start. The detail
-  `rootDiskController` is **not yet honoured** (waiting for lab check I9 on moving the root disk to another controller): the root disk stays `scsi0` on a virtio-scsi controller.
+  `rootDiskController` sets the drive of the root disk: `scsi` (the default, also `osdefault` and `virtio-scsi`) is `scsi0` on the virtio-scsi controller, `virtio` is `virtio0`,
+  `sata` is `sata0`; `ide` and anything else fail the start with a message (the IDE drives are the CD-ROM drives). The disk is created on `scsi0`; at start it is moved in one call that
+  deletes the old drive and sets the new one to the same volume (lab I9), and the boot order names the new drive. A later change of the detail moves it back or elsewhere at the next start.
 - **Migration** of a VM with an ISO attached is not blocked (the entry is shared; lab I6).
 
 ## Known gaps and open questions

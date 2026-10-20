@@ -432,3 +432,8 @@ Lab runs to record: P6-1 attach an ISO to a running instance with `vm.iso.max.co
 that has an ISO attached; P6-4 attach to a running instance without a drive (expect the clear message); P6-5 deploy a VM from an ISO and boot the installer; P6-6 `nicAdapter` = e1000;
 P6-7 migrate an instance with an ISO attached; P6-8 delete an instance with an ISO attached, then delete the ISO.
 
+Phase 6, lab check I9 and `rootDiskController` (2026-10-20): the one-call move of the root disk from `scsi0` to `sata0` works with the token (see design-phase6-iso.md, section 9). Implemented as
+`ProxmoxVmHandler.moveRootDisk` with `ProxmoxVmConfig.rootDiskDrive` / `rootDriveOf`; the boot order names the drive. Plugin: **219 tests pass** (was 209): the mapping (scsi, osdefault, virtio-scsi, virtio,
+sata; ide and unknown refused), the drive found by the volume it holds, the move to sata, the default leaving the disk alone, a move back, a bootable ISO before the moved disk, ide failing the start
+before anything changes, and a root disk that is on no drive.
+

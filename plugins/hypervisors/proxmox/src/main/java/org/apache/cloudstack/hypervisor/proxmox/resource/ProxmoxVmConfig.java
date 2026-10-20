@@ -67,6 +67,11 @@ public final class ProxmoxVmConfig {
      * VM boots from it first.
      */
     public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms) {
+        return startOptions(vm, hostCpuCapacityMhz, cdroms, ROOT_DISK);
+    }
+
+    /** As above, with the drive the root disk is on ({@link #rootDiskDrive}), which the boot order names. */
+    public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms, String rootDrive) {
         Map<String, String> options = new LinkedHashMap<>();
         if (StringUtils.isNotBlank(vm.getName())) {
             options.put("name", vm.getName());
@@ -84,7 +89,7 @@ public final class ProxmoxVmConfig {
         options.put("scsihw", "virtio-scsi-single");
         String firstDrive = CDROM_DRIVES[0];
         boolean bootFromCd = vm.getBootloader() == BootloaderType.CD && cdroms.containsKey(firstDrive);
-        options.put("boot", "order=" + (bootFromCd ? firstDrive + ";" : "") + ROOT_DISK);
+        options.put("boot", "order=" + (bootFromCd ? firstDrive + ";" : "") + rootDrive);
         options.putAll(cdroms);
         if (vm.getNics() != null) {
             String model = nicModel(vm);
@@ -93,6 +98,46 @@ public final class ProxmoxVmConfig {
             }
         }
         return options;
+    }
+
+    /** The drives a root disk can be on. */
+    static final String[] ROOT_DRIVES = {ROOT_DISK, "sata0", "virtio0"};
+
+    /**
+     * The drive of the root disk from the VM detail "rootDiskController" (as on KVM): scsi (the default, also "osdefault" and "virtio-scsi") is
+     * scsi0 on the virtio-scsi controller, virtio is a virtio block disk, sata is sata0. ide is refused, because the IDE drives are the CD-ROM drives.
+     */
+    static String rootDiskDrive(VirtualMachineTO vm) {
+        String requested = vm.getDetails() == null ? null : vm.getDetails().get(VmDetailConstants.ROOT_DISK_CONTROLLER);
+        if (StringUtils.isBlank(requested)) {
+            return ROOT_DISK;
+        }
+        switch (requested.trim().toLowerCase(Locale.ROOT)) {
+            case "osdefault":
+            case "scsi":
+            case "virtio-scsi":
+                return ROOT_DISK;
+            case "virtio":
+                return "virtio0";
+            case "sata":
+                return "sata0";
+            case "ide":
+                throw new ProxmoxApiException("The root disk controller ide is not supported for Proxmox, because the IDE drives are the CD-ROM drives: use sata, "
+                        + "scsi or virtio");
+            default:
+                throw new ProxmoxApiException("The root disk controller " + requested + " is not supported for Proxmox: use scsi, virtio or sata");
+        }
+    }
+
+    /** The drive of a VM's configuration that holds the root volume ({@code volumePath}, "&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-0.qcow2"), or null. */
+    static String rootDriveOf(Map<String, String> config, String volumePath) {
+        for (String drive : ROOT_DRIVES) {
+            String value = config.get(drive);
+            if (value != null && volumePath != null && value.contains(volumePath)) {
+                return drive;
+            }
+        }
+        return null;
     }
 
     /** The IDE drive of a CloudStack CD-ROM slot (a null slot is the first). */

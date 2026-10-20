@@ -404,9 +404,12 @@ class ProxmoxVmHandler {
                 waitForVm(client, vmid, null, "move to node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()));
             }
             Map<String, String> cdroms = cdromDrives(client, vm);
-            Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms);
+            String rootDrive = ProxmoxVmConfig.rootDiskDrive(vm);
+            Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive);
+            Map<String, String> current = client.getVmConfig(node, vmid);
+            moveRootDisk(options, current, rootVolumePath(vm), rootDrive, vm.getName());
             // a drive the VM has from an earlier start but that the command does not list was detached: it must not keep its disc
-            for (Map.Entry<String, String> existing : client.getVmConfig(node, vmid).entrySet()) {
+            for (Map.Entry<String, String> existing : current.entrySet()) {
                 if (Arrays.asList(ProxmoxVmConfig.CDROM_DRIVES).contains(existing.getKey()) && ProxmoxVmConfig.isCdrom(existing.getValue())
                         && !cdroms.containsKey(existing.getKey())) {
                     options.put(existing.getKey(), ProxmoxVmConfig.EMPTY_CDROM);
@@ -447,6 +450,36 @@ class ProxmoxVmHandler {
     private long cpuCapacityMhz(ProxmoxApiClient client) {
         ProxmoxApiClient.NodeStatus status = client.getNodeStatus(node);
         return status == null ? 0 : status.getCpus() * status.getCpuMhz();
+    }
+
+    /**
+     * The root disk is created on scsi0; a guest without a driver for that (the detail "rootDiskController") has it on another drive. Proxmox moves
+     * a disk between drives in one call that deletes the old drive and sets the new one to the same volume (lab I9); the size is kept.
+     */
+    private void moveRootDisk(Map<String, String> options, Map<String, String> current, String volumePath, String wanted, String vmName) {
+        String drive = ProxmoxVmConfig.rootDriveOf(current, volumePath);
+        if (drive == null) {
+            if (!ProxmoxVmConfig.ROOT_DISK.equals(wanted)) {
+                throw new ProxmoxApiException("The root disk " + volumePath + " of " + vmName + " is not on a drive of the VM: cannot move it to " + wanted);
+            }
+            return;
+        }
+        if (!drive.equals(wanted)) {
+            options.put("delete", drive);
+            options.put(wanted, StringUtils.substringBefore(current.get(drive), ","));
+            LOGGER.info("Moving the root disk of {} from {} to {}", vmName, drive, wanted);
+        }
+    }
+
+    private static String rootVolumePath(VirtualMachineTO vm) {
+        if (vm.getDisks() != null) {
+            for (DiskTO disk : vm.getDisks()) {
+                if (disk.getType() == Volume.Type.ROOT && disk.getData() instanceof VolumeObjectTO) {
+                    return ((VolumeObjectTO) disk.getData()).getPath();
+                }
+            }
+        }
+        return null;
     }
 
     private static Long rootVmId(VirtualMachineTO vm) {

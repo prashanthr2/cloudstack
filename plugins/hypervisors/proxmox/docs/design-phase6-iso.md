@@ -1,6 +1,6 @@
 # Phase 6 design: ISOs (attach, detach, an ISO at start, deploy from an ISO)
 
-Status: **decisions 1 to 5 accepted (2026-10-20); lab checks I1 to I8 done (section 9); I9 pending; implementation starting.** "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
+Status: **decisions 1 to 5 accepted (2026-10-20); lab checks I1 to I9 done (section 9); implemented.** "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
 `promox-src`, branch `stable-bookworm`, pve-storage and qemu-server). "U" means **unverified**: it has not been run, and each U has a lab check in section 7.
 
 ## 1. Goal and scope
@@ -163,6 +163,7 @@ Notes from the lab: form values that contain `=` or `,` must be URL-encoded (cur
 `invalid format - duplicate key in comma-separated list property: file`. `qm create` adds the new CD-ROM drive to the boot order by itself (`order=scsi0;ide2`), so the plugin always
 sets `boot` explicitly at start.
 
-**I9 (pending): changing the root disk controller of a stopped VM.** Decision 3 needs the root disk, which was created as `scsi0`, to become `sata0` for guests without virtio
-drivers. Whether `delete=scsi0` and `sata0=<same volume>` in one call works (or in two) decides how the plugin does it.
+**I9: changing the root disk controller of a stopped VM. Pass.** `PUT config` with `delete=scsi0` and `sata0=<same volume>` in **one call** by the token: HTTP 200; `qm config` then shows
+`sata0: <same volume>,size=1G` with no `scsi0` and **no `unused0`**; the `boot` option is left empty, so the plugin always sets it explicitly at start. The volume is given without its `size=`
+(Proxmox adds it back). The plugin does this at start (`moveRootDisk`): drives `scsi0` (default), `virtio0`, `sata0`; `ide` is refused.
 

@@ -349,4 +349,78 @@ public class ProxmoxVmHandlerIsoTest {
         Answer noSize = handler.createObject(blankRootVolume(null, Volume.Type.ROOT));
         assertFalse(noSize.getResult());
     }
+
+    // ---- the root disk controller ----
+
+    private static final String ROOT_VOLUME = POOL + ":9204/vm-9204-disk-0.qcow2";
+
+    private StartCommand startWithController(String controller, String currentRootDrive) {
+        StartCommand cmd = startWithIsos(null);
+        VirtualMachineTO vm = cmd.getVirtualMachine();
+        if (controller != null) {
+            when(vm.getDetails()).thenReturn(Collections.singletonMap("rootDiskController", controller));
+        }
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config(currentRootDrive, ROOT_VOLUME + ",size=8G"));
+        return cmd;
+    }
+
+    @Test
+    public void aGuestWithoutVirtioHasItsRootDiskMovedToSataInOneCallAndBootsFromThere() {
+        assertTrue(handler.start(startWithController("sata", "scsi0")).getResult());
+
+        Map<String, String> options = startOptions();
+        assertEquals("scsi0", options.get("delete"));
+        assertEquals(ROOT_VOLUME, options.get("sata0"));
+        assertEquals("order=sata0", options.get("boot"));
+    }
+
+    @Test
+    public void theDefaultLeavesTheRootDiskWhereItIs() {
+        assertTrue(handler.start(startWithController(null, "scsi0")).getResult());
+
+        Map<String, String> options = startOptions();
+        assertFalse(options.containsKey("delete"));
+        assertFalse(options.containsKey("sata0"));
+        assertEquals("order=scsi0", options.get("boot"));
+    }
+
+    @Test
+    public void aDiskThatWasMovedBeforeIsMovedBackWhenTheDetailIsRemoved() {
+        assertTrue(handler.start(startWithController(null, "sata0")).getResult());
+
+        Map<String, String> options = startOptions();
+        assertEquals("sata0", options.get("delete"));
+        assertEquals(ROOT_VOLUME, options.get("scsi0"));
+    }
+
+    @Test
+    public void aBootableIsoIsBootedBeforeTheMovedRootDisk() {
+        StartCommand cmd = startWithIsos(BootloaderType.CD, isoDisk(iso(FOLDER + "/" + FILE), 3));
+        when(cmd.getVirtualMachine().getDetails()).thenReturn(Collections.singletonMap("rootDiskController", "virtio"));
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("scsi0", ROOT_VOLUME + ",size=8G"));
+
+        assertTrue(handler.start(cmd).getResult());
+        assertEquals("order=ide2;virtio0", startOptions().get("boot"));
+    }
+
+    @Test
+    public void ideAsRootDiskControllerFailsTheStartBeforeAnythingIsChanged() {
+        Answer answer = handler.start(startWithController("ide", "scsi0"));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("CD-ROM drives"));
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
+        verify(client, never()).startVm(anyString(), anyLong());
+    }
+
+    @Test
+    public void aRootDiskThatIsNotOnAnyDriveCannotBeMoved() {
+        StartCommand cmd = startWithController("sata", "scsi0");
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("ide2", "none,media=cdrom"));
+
+        Answer answer = handler.start(cmd);
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("not on a drive"));
+    }
 }

@@ -258,4 +258,59 @@ public class ProxmoxVmConfigTest {
 
         assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>()).get("boot"));
     }
+
+    @Test
+    public void theRootDiskControllerDetailPicksTheDriveOfTheRootDisk() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        assertEquals("scsi0", ProxmoxVmConfig.rootDiskDrive(vm));
+        for (String scsi : new String[] {"scsi", "osdefault", "virtio-scsi", " SCSI ", ""}) {
+            when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("rootDiskController", scsi));
+            assertEquals(scsi, "scsi0", ProxmoxVmConfig.rootDiskDrive(vm));
+        }
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("rootDiskController", "virtio"));
+        assertEquals("virtio0", ProxmoxVmConfig.rootDiskDrive(vm));
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("rootDiskController", "sata"));
+        assertEquals("sata0", ProxmoxVmConfig.rootDiskDrive(vm));
+    }
+
+    @Test
+    public void ideAndUnknownControllersAreRefusedWithAReason() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("rootDiskController", "ide"));
+        try {
+            ProxmoxVmConfig.rootDiskDrive(vm);
+            org.junit.Assert.fail("ide must be refused");
+        } catch (ProxmoxApiException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("CD-ROM drives"));
+        }
+        when(vm.getDetails()).thenReturn(java.util.Collections.singletonMap("rootDiskController", "nvme"));
+        try {
+            ProxmoxVmConfig.rootDiskDrive(vm);
+            org.junit.Assert.fail("nvme must be refused");
+        } catch (ProxmoxApiException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("nvme"));
+        }
+    }
+
+    @Test
+    public void theRootDriveIsFoundByTheVolumeItHolds() {
+        Map<String, String> config = new java.util.HashMap<>();
+        config.put("ide2", "none,media=cdrom");
+        config.put("sata0", "cs-x:9204/vm-9204-disk-0.qcow2,size=8G");
+        config.put("scsi1", "cs-x:9204/vm-9204-disk-1.qcow2,size=1G");
+
+        assertEquals("sata0", ProxmoxVmConfig.rootDriveOf(config, "9204/vm-9204-disk-0.qcow2"));
+        assertNull(ProxmoxVmConfig.rootDriveOf(config, "9204/vm-9204-disk-7.qcow2"));
+        assertNull(ProxmoxVmConfig.rootDriveOf(config, null));
+    }
+
+    @Test
+    public void theBootOrderNamesTheDriveOfTheRootDisk() {
+        VirtualMachineTO vm = mock(VirtualMachineTO.class);
+        when(vm.getCpus()).thenReturn(1);
+        when(vm.getMaxRam()).thenReturn(1024L * 1024 * 1024);
+
+        assertEquals("order=sata0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "sata0").get("boot"));
+        assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>()).get("boot"));
+    }
 }
