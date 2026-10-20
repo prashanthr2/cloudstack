@@ -353,6 +353,9 @@ Design and the lab results behind it: design-phase6-iso.md.
   `rootDiskController` sets the drive of the root disk: `scsi` (the default, also `osdefault` and `virtio-scsi`) is `scsi0` on the virtio-scsi controller, `virtio` is `virtio0`,
   `sata` is `sata0`; `ide` and anything else fail the start with a message (the IDE drives are the CD-ROM drives). The disk is created on `scsi0`; at start it is moved in one call that
   deletes the old drive and sets the new one to the same volume (lab I9), and the boot order names the new drive. A later change of the detail moves it back or elsewhere at the next start.
+  The details are set on the instance (Settings tab, while it is stopped) or on the template (then every instance from it gets them; the right place for an old guest such as CentOS 5,
+  which has no virtio-scsi driver and panics with "Volume group VolGroup00 not found"). The names are case sensitive: `rootDiskController`, `nicAdapter`. The Settings dropdown offers
+  them for Proxmox since the list of suggestions was extended in core (it is per hypervisor); a name can also be typed in.
 - **Migration** of a VM with an ISO attached is not blocked (the entry is shared; lab I6).
 
 ## Known gaps and open questions

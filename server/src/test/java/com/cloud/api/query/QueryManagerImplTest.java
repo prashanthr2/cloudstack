@@ -335,6 +335,24 @@ public class QueryManagerImplTest {
     }
 
     @Test
+    public void proxmoxOffersTheNicAdapterAndTheRootDiskControllerItSupports() throws Exception {
+        java.lang.reflect.Method fill = QueryManagerImpl.class.getDeclaredMethod("fillVMOrTemplateDetailOptions", Map.class,
+                com.cloud.hypervisor.Hypervisor.HypervisorType.class);
+        fill.setAccessible(true);
+        Map<String, List<String>> options = new java.util.HashMap<>();
+
+        fill.invoke(queryManager, options, com.cloud.hypervisor.Hypervisor.HypervisorType.Proxmox);
+
+        Assert.assertEquals(Arrays.asList("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3"), options.get("nicAdapter"));
+        Assert.assertEquals(Arrays.asList("scsi", "virtio", "sata"), options.get("rootDiskController"));
+        Assert.assertFalse(options.containsKey("videoHardware"));
+
+        Map<String, List<String>> none = new java.util.HashMap<>();
+        fill.invoke(queryManager, none, com.cloud.hypervisor.Hypervisor.HypervisorType.None);
+        Assert.assertFalse(none.containsKey("rootDiskController"));
+    }
+
+    @Test
     public void applyPublicTemplateRestrictionsTestDoesNotApplyRestrictionsWhenCallerIsRootAdmin() {
         Mockito.when(accountMock.getType()).thenReturn(Account.Type.ADMIN);
 

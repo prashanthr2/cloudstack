@@ -89,4 +89,7 @@ security problem: those are reported privately, not as public issues.
     it with an in-memory mark made by `PrepareForMigrationCommand`. A flag on the command saying "this is the clean-up of a failed migration" would remove the guess.
 15. **Proxmox HA only queues start, stop and migrate**, so a command's task ends before the VM has changed state. Any plugin for an API with that property has to wait
     for the real state; nothing in core helps (the `StopAnswer` is trusted at once and a stop of a still-running VM would be recorded as Stopped).
+16. **The VM and template setting suggestions are a hard-coded list per hypervisor** (`QueryManagerImpl.fillVMOrTemplateDetailOptions`). A hypervisor that is not listed shows only the generic
+    entries (keyboard, UEFI, cpu cores per socket, root disk size), so settings its plugin honours (Proxmox: `nicAdapter`, `rootDiskController`) are invisible in the UI until the list is extended.
+    Proxmox is added to it (one block). A way for a hypervisor plugin to declare its own settings would avoid the edit.
 

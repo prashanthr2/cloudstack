@@ -452,3 +452,7 @@ Phase 6, lab check I9 and `rootDiskController` (2026-10-20): the one-call move o
 sata; ide and unknown refused), the drive found by the volume it holds, the move to sata, the default leaving the disk alone, a move back, a bootable ISO before the moved disk, ide failing the start
 before anything changes, and a root disk that is on no drive.
 
+Phase 6 lab finding (2026-10-20): P6-1 passed (attach to a running instance). P6-3 showed a guest kernel panic ("Volume group VolGroup00 not found ... Kernel panic"): the instance is CentOS 5, whose boot ramdisk has no
+virtio-scsi driver, so its root disk on `scsi0` is invisible; the ISO is not the cause (the boot order was `scsi0` only). The setting `rootDiskController` was not in the Settings dropdown for a Proxmox
+instance because the suggestions are a per-hypervisor list in core; Proxmox is added (`QueryManagerImplTest`, 37 pass). To verify: set `rootDiskController` = `sata` on the stopped instance and start it.
+
