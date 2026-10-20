@@ -392,11 +392,17 @@ kept, removed only when made by the plugin, 403 fails a protected VM's start and
 a one-line change of a hard-coded count (`verifyIfHypervisorSupportRootdiskSizeOverrideTest`, expected exceptions = number of hypervisors minus 6, now 7:
 adding `Proxmox` to the enum broke it already in Phase 1, see upstream-notes.md 12).
 
-Lab runs of the Phase 5 behaviour (each to be recorded here): P5-1 live migration of a running VM from the UI between the nodes; P5-2 a refused migration
-(destination without the bridge, or a VM with a local CD-ROM) leaves the VM untouched; P5-3 a failed migration (node taken away mid-move) leaves the VM running
-on the source and CloudStack Running on the source; P5-4 host maintenance moves every VM and the host reaches Maintenance; P5-5 `proxmox.ha.manage` on: an
-offering with HA creates the resource, stop and start work through HA, delete removes the resource, missing privileges give the clear message; P5-6 node failure
-(L6) with an HA VM: Proxmox restarts it and CloudStack follows it; P5-7 the report during a Proxmox-initiated move (L7).
+Lab runs of the Phase 5 behaviour (fill in the Result column as they are run):
+
+| # | Steps | Expected | Result |
+|---|---|---|---|
+| P5-1 | Live-migrate a running instance to another host from the UI | The instance keeps running; CloudStack shows it on the new host | **Pass** (2026-10-19; the console works after it) |
+| P5-2 | Try to migrate an instance to a host that lacks its bridge, or an instance with a local CD-ROM | The migration is refused with a clear reason and the instance is untouched on its host | |
+| P5-3 | Start a migration and take the destination away mid-move (for example stop its Proxmox networking) | The VM keeps running on the source; CloudStack shows it Running on the source | |
+| P5-4 | Put a host that has an instance on it into maintenance (`vm.ha.enabled` = true), then cancel maintenance | The instance moves away and the host reaches Maintenance; cancelling brings it back to Up | |
+| P5-5 | Set `proxmox.ha.manage` = true. Start an instance from an HA-enabled offering; then stop, start and delete it from CloudStack | `ha-manager config` shows `vm:<id>` with comment `CloudStack`; stop and start work through HA; the delete removes the resource. Without the privileges the start fails naming `Sys.Audit` and `Sys.Console` | |
+| P5-6 | With an HA instance, power off its node (lab check L6) | Proxmox restarts the VM on another node and CloudStack follows it | |
+| P5-7 | Move an HA instance with `ha-manager migrate` while watching CloudStack (lab check L7) | CloudStack's report of the VM during the move does not mark it Stopped | |
 
 ### Console after Phase 5: the VNC login raced with the browser (2026-10-19)
 
@@ -428,9 +434,18 @@ stopped VM gets it, bad slot / name / path / non-NFS store, unknown VM, data vol
 a drive emptied after a detach, a bad ISO fails the start, blank root volume rounded to whole GiB with the usual path, only root volumes), `ProxmoxVmConfigTest` (+8),
 `ProxmoxApiClientVmTest` (+2), `ProxmoxStorageNamesTest` (+1), `ProxmoxResourceTest` (+1).
 
-Lab runs to record: P6-1 attach an ISO to a running instance with `vm.iso.max.count` = 2 (after the hosts reconnected, the instance restarted); P6-2 swap and detach; P6-3 start an instance
-that has an ISO attached; P6-4 attach to a running instance without a drive (expect the clear message); P6-5 deploy a VM from an ISO and boot the installer; P6-6 `nicAdapter` = e1000;
-P6-7 migrate an instance with an ISO attached; P6-8 delete an instance with an ISO attached, then delete the ISO.
+Lab runs to record (fill in the Result column as they are run):
+
+| # | Steps | Expected | Result |
+|---|---|---|---|
+| P6-1 | Set `vm.iso.max.count` to 2 (zone or cluster scope). Restart the management server so the hosts reconnect (they then report 4 CD-ROM drives). Stop and start a test instance. Attach an ISO to the running instance. | The attach succeeds; Proxmox shows `ide2: csi-...:iso/<file>.iso,media=cdrom`; a `csi-...` entry exists for the ISO's folder | |
+| P6-2 | On the same instance, attach a second ISO (second drive, `ide3`), then detach the first ISO | The second ISO is in `ide3`; after the detach `ide2` is `none,media=cdrom` and the drive is kept | |
+| P6-3 | Stop the instance and start it again with an ISO attached | The drives are in place at start (`ide2` holds the ISO, a second slot is empty); the ISO is still attached after the start | |
+| P6-4 | On an instance that was started before step P6-1 (no CD-ROM drive in its running configuration), attach an ISO while it runs | The attach fails with "stop and start the instance"; Proxmox has no pending change (`qm pending` shows no `ide`) | |
+| P6-5 | Deploy a new instance from an ISO (a bootable installer, if available) | A blank 'scsi0' disk of the chosen size; the console shows the ISO booting first (with the 350 KB lab ISO: "Booting from DVD/CD... Boot failed") | |
+| P6-6 | On a stopped instance set the details `rootDiskController` = `sata` and `nicAdapter` = `e1000`, then start it | In Proxmox the root disk is `sata0` (no `scsi0`, no `unused0`) and the NIC is `e1000=...`; the boot order names `sata0` | |
+| P6-7 | Migrate an instance that has an ISO attached to another host | The migration succeeds; the ISO is still attached on the new host | |
+| P6-8 | Delete an instance that has an ISO attached, then delete the ISO in CloudStack | Both deletes succeed; the `csi-...` entry stays (it is kept by design) | |
 
 Phase 6, lab check I9 and `rootDiskController` (2026-10-20): the one-call move of the root disk from `scsi0` to `sata0` works with the token (see design-phase6-iso.md, section 9). Implemented as
 `ProxmoxVmHandler.moveRootDisk` with `ProxmoxVmConfig.rootDiskDrive` / `rootDriveOf`; the boot order names the drive. Plugin: **219 tests pass** (was 209): the mapping (scsi, osdefault, virtio-scsi, virtio,
