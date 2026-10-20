@@ -438,14 +438,14 @@ Lab runs to record (fill in the Result column as they are run):
 
 | # | Steps | Expected | Result |
 |---|---|---|---|
-| P6-1 | Set `vm.iso.max.count` to 2 (zone or cluster scope). Restart the management server so the hosts reconnect (they then report 4 CD-ROM drives). Stop and start a test instance. Attach an ISO to the running instance. | The attach succeeds; Proxmox shows `ide2: csi-...:iso/<file>.iso,media=cdrom`; a `csi-...` entry exists for the ISO's folder | |
-| P6-2 | On the same instance, attach a second ISO (second drive, `ide3`), then detach the first ISO | The second ISO is in `ide3`; after the detach `ide2` is `none,media=cdrom` and the drive is kept | |
-| P6-3 | Stop the instance and start it again with an ISO attached | The drives are in place at start (`ide2` holds the ISO, a second slot is empty); the ISO is still attached after the start | |
-| P6-4 | On an instance that was started before step P6-1 (no CD-ROM drive in its running configuration), attach an ISO while it runs | The attach fails with "stop and start the instance"; Proxmox has no pending change (`qm pending` shows no `ide`) | |
-| P6-5 | Deploy a new instance from an ISO (a bootable installer, if available) | A blank 'scsi0' disk of the chosen size; the console shows the ISO booting first (with the 350 KB lab ISO: "Booting from DVD/CD... Boot failed") | |
-| P6-6 | On a stopped instance set the details `rootDiskController` = `sata` and `nicAdapter` = `e1000`, then start it | In Proxmox the root disk is `sata0` (no `scsi0`, no `unused0`) and the NIC is `e1000=...`; the boot order names `sata0` | |
-| P6-7 | Migrate an instance that has an ISO attached to another host | The migration succeeds; the ISO is still attached on the new host | |
-| P6-8 | Delete an instance that has an ISO attached, then delete the ISO in CloudStack | Both deletes succeed; the `csi-...` entry stays (it is kept by design) | |
+| P6-1 | Set `vm.iso.max.count` to 2 (zone or cluster scope). Restart the management server so the hosts reconnect (they then report 4 CD-ROM drives). Stop and start a test instance. Attach an ISO to the running instance. | The attach succeeds; Proxmox shows `ide2: csi-...:iso/<file>.iso,media=cdrom`; a `csi-...` entry exists for the ISO's folder | **Pass** (2026-10-20) |
+| P6-2 | On the same instance, attach a second ISO (second drive, `ide3`), then detach the first ISO | The second ISO is in `ide3`; after the detach `ide2` is `none,media=cdrom` and the drive is kept | **Pass** (2026-10-20) |
+| P6-3 | Stop the instance and start it again with an ISO attached | The drives are in place at start (`ide2` holds the ISO, a second slot is empty); the ISO is still attached after the start | **Pass** (2026-10-20); the CentOS 5 instance panicked at boot for a guest-driver reason, see the finding above |
+| P6-4 | On an instance that was started before step P6-1 (no CD-ROM drive in its running configuration), attach an ISO while it runs | The attach fails with "stop and start the instance"; Proxmox has no pending change (`qm pending` shows no `ide`) | **Pass** (2026-10-20): the UI shows "failed to attach ISO" |
+| P6-5 | Deploy a new instance from an ISO (a bootable installer, if available) | A blank 'scsi0' disk of the chosen size; the console shows the ISO booting first (with the 350 KB lab ISO: "Booting from DVD/CD... Boot failed") | **Pass on the second attempt** (2026-10-20); on the first the console failed because the VM was found stopped in Proxmox, cause open (below) |
+| P6-6 | On a stopped instance set the details `rootDiskController` = `sata` and `nicAdapter` = `e1000`, then start it | In Proxmox the root disk is `sata0` (no `scsi0`, no `unused0`) and the NIC is `e1000=...`; the boot order names `sata0` | **Pass** (2026-10-20) |
+| P6-7 | Migrate an instance that has an ISO attached to another host | The migration succeeds; the ISO is still attached on the new host | **Pass** (2026-10-20) |
+| P6-8 | Delete an instance that has an ISO attached, then delete the ISO in CloudStack | Both deletes succeed; the `csi-...` entry stays (it is kept by design) | **Pass** (2026-10-20) |
 
 Phase 6, lab check I9 and `rootDiskController` (2026-10-20): the one-call move of the root disk from `scsi0` to `sata0` works with the token (see design-phase6-iso.md, section 9). Implemented as
 `ProxmoxVmHandler.moveRootDisk` with `ProxmoxVmConfig.rootDiskDrive` / `rootDriveOf`; the boot order names the drive. Plugin: **219 tests pass** (was 209): the mapping (scsi, osdefault, virtio-scsi, virtio,
@@ -455,4 +455,9 @@ before anything changes, and a root disk that is on no drive.
 Phase 6 lab finding (2026-10-20): P6-1 passed (attach to a running instance). P6-3 showed a guest kernel panic ("Volume group VolGroup00 not found ... Kernel panic"): the instance is CentOS 5, whose boot ramdisk has no
 virtio-scsi driver, so its root disk on `scsi0` is invisible; the ISO is not the cause (the boot order was `scsi0` only). The setting `rootDiskController` was not in the Settings dropdown for a Proxmox
 instance because the suggestions are a per-hypervisor list in core; Proxmox is added (`QueryManagerImplTest`, 37 pass). To verify: set `rootDiskController` = `sata` on the stopped instance and start it.
+
+Phase 6 console observations (2026-10-20): (1) The console of an instance that CloudStack still showed Running failed with "VM ... must be running to connect console" while the VM was **stopped in Proxmox**
+(VM 103, `i-2-26-VM`): CloudStack learns of a power-off through the host ping (`ping.interval`, 60 s), so the state can be wrong for up to a minute, and the error was raised after it had caught up. Why
+the VM stopped is still open (guest shutdown, crash, or a stop issued by someone; the Proxmox task history of VM 103 and the management server log decide). (2) On the instance deployed from the ISO the console
+worked and then reported "disconnected" once; connecting again worked (a console session is single use, see behaviour.md, section 11).
 
