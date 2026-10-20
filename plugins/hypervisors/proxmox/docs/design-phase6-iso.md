@@ -20,7 +20,7 @@ ISOs registered for *direct download*, config-drive ISOs (the same disk type, ha
 - **Running VM**: `TemplateManagerImpl.attachISOToVM` sends `AttachCommand` / `DettachCommand` to the VM's host, **only when the VM is Running**; for a stopped VM it
   only records the attachment and the ISO is given to the VM at the next start. The command holds a `DiskTO` of type `ISO` with `diskSeq` (the slot) and a
   `TemplateObjectTO` whose data store is the NFS secondary store (`NfsTO`, with the URL) and whose path is the file below it, for example
-  `template/iso/2/231/9f1c....iso`; and the VM name.
+  `template/tmpl/2/231/9f1c....iso`; and the VM name.
 - **Start**: `prepareIsoForVmProfile` adds one `ISO` disk to the `StartCommand` for **every CD-ROM slot** of the VM, an ISO where one is attached and an
   **empty** `TemplateObjectTO` (no path) where not. Slots are numbered from `CDROM_PRIMARY_DEVICE_SEQ` = 3; how many exist is the setting `vm.iso.max.count`
   per cluster, clamped to what the host advertises in the host detail `host.cdrom.max.count` (default 1 when the host says nothing). The comment in core says
@@ -42,7 +42,7 @@ ISOs registered for *direct download*, config-drive ISOs (the same disk type, ha
   extension is `.iso` or `.img`). A storage entry lists ISOs from one folder of its path (`content-dirs iso=<folder>`).
 - **An absolute path** instead of a volume is accepted only for `root@pam` (the same rule as `import-from`, V in Phase 3), so the token cannot use
   `/mnt/.../x.iso`.
-- CloudStack keeps each ISO **in its own folder** (`template/iso/<account>/<id>/<file>`), so no single entry sees them as `iso/<file>`: one entry per ISO folder is needed.
+- CloudStack keeps each ISO **in its own folder** (`template/tmpl/<account>/<id>/<file>`), so no single entry sees them as `iso/<file>`: one entry per ISO folder is needed.
 - **Boot order** is the VM option `boot=order=<dev>;<dev>` (the plugin sets `order=scsi0` today).
 - **Migration with an ISO attached:** the precondition (`GET .../migrate`) lists a CD-ROM volume under `local_disks` unless its storage is shared (`shared=1`),
   which Phase 5 treats as a blocker; the ISO entry must therefore be `shared=1` like the template entries (U: lab check I6).
@@ -60,7 +60,7 @@ directory entry for the ISO's folder, **on the mounted secondary store**:
 dir: csi-<hash of server, export and folder>
     path /mnt/css-<...>                      (the secondary store's mount point)
     content iso
-    content-dirs iso=template/iso/2/231
+    content-dirs iso=template/tmpl/2/231
     shared 1
     is_mountpoint yes
     create-subdirs 0
