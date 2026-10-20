@@ -1,6 +1,6 @@
 # Phase 6 design: ISOs (attach, detach, an ISO at start, deploy from an ISO)
 
-Status: **proposal, for review.** Nothing described here is implemented. "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
+Status: **decisions 1 to 5 accepted (2026-10-20); lab checks I1 to I8 done (section 9); I9 pending; implementation starting.** "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
 `promox-src`, branch `stable-bookworm`, pve-storage and qemu-server). "U" means **unverified**: it has not been run, and each U has a lab check in section 7.
 
 ## 1. Goal and scope
@@ -37,7 +37,8 @@ ISOs registered for *direct download*, config-drive ISOs (the same disk type, ha
 
 - **A CD-ROM drive** is a disk option with `media=cdrom`: `ide0` to `ide3`, `sata0` to `sata5` or `scsi<n>` (V). `ide2=<volid>,media=cdrom` is the usual one; an **empty**
   drive is `ide2=none,media=cdrom`. Changing the medium of an existing drive of a running VM is applied at once; adding a drive to a running VM is not (IDE is
-  not hot-pluggable, U for what the API does: lab check I3).
+  not hot-pluggable; **confirmed by lab check I3: a drive added to a running VM is only *pending* (the call still answers 200, and Proxmox also adds it to the
+  pending boot order), so the plugin must look at the running configuration, `GET .../config?current=1`, before attaching**).
 - **An ISO is a volume `<storage entry>:iso/<file>.iso`**, and the name allows **no folder** below `iso/` (`Plugin.pm`: `^iso/([^/]+<iso extension>)$`, V; the
   extension is `.iso` or `.img`). A storage entry lists ISOs from one folder of its path (`content-dirs iso=<folder>`).
 - **An absolute path** instead of a volume is accepted only for `root@pam` (the same rule as `import-from`, V in Phase 3), so the token cannot use
@@ -78,8 +79,9 @@ The file name must end in `.iso` or `.img`, otherwise Proxmox would not list it:
 
 - **`AttachCommand` and `DettachCommand` (ISO only)**, answered by `ProxmoxResource` through the VM handler. For anything that is not an ISO disk (a data volume) the answer
   stays "unsupported" until data volumes exist.
-  - Attach: find the VM by name (cluster-wide, like stop); map `diskSeq` to the drive (4.3); make sure the entry exists and is active on the VM's node; set
-    `<drive>=<volid>,media=cdrom` on the VM and wait for the task. For an HA VM the configuration change is not redirected, so there is nothing to wait for.
+  - Attach: find the VM by name (cluster-wide, like stop); map `diskSeq` to the drive (4.3); **for a running VM check that the drive is in its running
+    configuration (`?current=1`) and fail with the "stop and start" message if not, without sending anything** (a PUT would leave a pending change); make sure the
+    entry exists and is active on the VM's node; set `<drive>=<volid>,media=cdrom` on the VM (applied at once; no task, so nothing to wait for; an HA VM is not redirected).
   - Detach: set the drive to `none,media=cdrom` (eject), which keeps the drive for the next ISO. An ISO that is not the one in the drive is answered with success.
   - A drive that does not exist on a running VM cannot be added (IDE): the command **fails with a clear message** ("stop and start the instance to add a CD-ROM
     drive"). This cannot happen when the drives were created at start (below) and `vm.iso.max.count` was not raised afterwards.
@@ -136,10 +138,31 @@ All with the API token (typed with `read -rs`, never pasted), unless a check say
 | I7 | Create the entry with the same path from two nodes' view at once (two POSTs) and a repeated POST | the "exists already" handling (as for templates) |
 | I8 | Create a VM with `ide2=<volid>,media=cdrom`, an unsupported file name (`x.txt`) in the folder: is it listed? | the message for a wrong extension |
 
-## 8. Decisions for the reviewer
+## 8. Decisions (all accepted 2026-10-20)
 
 1. **One entry per ISO folder, kept after use (4.1).** Alternatives (a flat folder for all ISOs, a core change) were rejected: they change where CloudStack stores ISOs.
 2. **Up to four CD-ROM drives, IDE `ide2`, `ide3`, `ide0`, `ide1` (4.3)**, advertised through `host.cdrom.max.count` = 4. A smaller number if you prefer one only.
 3. **Honour `rootDiskController` and `nicAdapter` (4.4)**, so that Windows installs work, or **leave them for later** and document that the guest needs virtio drivers.
 4. **A CD-ROM drive is never added to a running VM**; the command fails with an explanation (stop and start).
 5. **Only root volumes are created by `CreateObjectCommand`** for now; data volumes come with their own phase.
+
+## 9. Lab results (2026-10-20, token `pveaudit@pam!cloudstack`, roles `PVEVMAdmin`, `PVEDatastoreAdmin`, and the narrow `CloudStackHA`)
+
+| # | Result |
+|---|---|
+| I1 | **Pass.** `POST /storage` (type `dir`, `path` the secondary mount, `content iso`, `content-dirs iso=template/tmpl/2/211`, `is_mountpoint yes`, `shared 1`, `create-subdirs 0`, `create-base-path 0`) by the token: HTTP 200, entry active at once; `GET .../storage/<id>/content?content=iso` lists exactly `<id>:iso/211-2-....iso` (358400 bytes) and not `template.properties` |
+| I2 | **Pass.** On a stopped VM `ide2=<volid>,media=cdrom` by the token: HTTP 200; `qm config` shows `...,media=cdrom,size=350K` |
+| I3 | **Pass for the swap, as predicted for a new drive.** On a running VM, QEMU held the ISO file open after the attach, closed it after `ide2=none,media=cdrom`, and held it again after re-attaching (all HTTP 200, applied at once). `ide3=none,media=cdrom` on the running VM answered 200 but was **pending only** (`qm pending`: `new ide3`, and `new boot: order=scsi0;ide2;ide3`) |
+| I4 | **Pass.** A blank VM created by the token with `scsi0=<pool>:2,format=qcow2`, `ide2=<volid>,media=cdrom`, `boot=order=ide2;scsi0`: HTTP 200; the disk is `<pool>:9401/vm-9401-disk-0.qcow2`, 2 GiB (the path form the other commands use). The console shows SeaBIOS "Booting from DVD/CD... Boot failed: Could not read from CDROM", then "Booting from Hard Disk": the CD-ROM is tried first (the lab ISO is 350 KB and not bootable) |
+| I5 | **Pass.** I1 to I4 all worked with the documented roles; no 403 |
+| I6 | **Pass.** With the ISO attached from a `shared=1` entry, `GET .../migrate?target=<node>` has `local_disks: []` and both other nodes in `allowed_nodes` |
+| I7 | **Pass, with the expected race.** Two simultaneous `POST /storage` for the same id: one HTTP 200, one HTTP 500; a later one: HTTP 500 `create storage failed: storage ID 'csi-labtest2' already defined`. The plugin's "create, and if it fails check that the entry now exists" handling (used for the template entries) covers this |
+| I8 | **Pass.** `ide3=csi-labtest:iso/template.properties,media=cdrom`: HTTP 500 `unable to parse directory volume name 'iso/template.properties'` |
+
+Notes from the lab: form values that contain `=` or `,` must be URL-encoded (curl `--data-urlencode`; the plugin does), otherwise Proxmox answers
+`invalid format - duplicate key in comma-separated list property: file`. `qm create` adds the new CD-ROM drive to the boot order by itself (`order=scsi0;ide2`), so the plugin always
+sets `boot` explicitly at start.
+
+**I9 (pending): changing the root disk controller of a stopped VM.** Decision 3 needs the root disk, which was created as `scsi0`, to become `sata0` for guests without virtio
+drivers. Whether `delete=scsi0` and `sata0=<same volume>` in one call works (or in two) decides how the plugin does it.
+

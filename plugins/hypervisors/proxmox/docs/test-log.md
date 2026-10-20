@@ -411,3 +411,11 @@ proxy tests 25 pass. Needs the system VM files rebuilt and the console proxy VM 
 
 Lab result (2026-10-19): after the fix and the system VM files patched again, the console works on a VM that was live-migrated and on a newly deployed VM. P5-1 (live migration
 from the UI) works; the migration error before it was a management server still running the old `server` jar (only the plugin and `client` had been rebuilt).
+
+## Phase 6 (ISOs): lab checks I1 to I8 (2026-10-20)
+
+Design: design-phase6-iso.md, sections 7 and 9 (commands and results). All eight pass with the token and the documented roles: the per-ISO-folder directory entry is created and lists
+the ISO; attach, swap and eject work on a stopped and a running VM (checked by whether QEMU holds the file open); a new drive added to a running VM is only pending, so the plugin
+checks the running configuration first; a blank VM with `scsi0=<pool>:2,format=qcow2` boots from the CD-ROM first; the migration precondition has no local disk with an ISO from a shared
+entry; a concurrent create of the same entry gives one 200 and one 500 (handled like the template entries); a non-ISO file is refused by Proxmox.
+
