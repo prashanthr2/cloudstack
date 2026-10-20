@@ -10,12 +10,6 @@ Last updated 2026-10-20.
 | 1 | **Spurious "Out of band VM power off" event and `ERROR ... Invalid answer received in response to a StopCommand` after a normal stop** | The plugin reports every VM on the node, stopped ones as PowerOff (`ProxmoxResource.getHostVmStateReport`). KVM reports only running VMs. After a stop, core gets a PowerOff report for a VM it knows is Stopped and runs its out-of-band handler (`VirtualMachineManagerImpl.handlePowerOffReportWithNoPendingJobsOnVM`). Harmless, seen in the management log at 15:25:22 on 2026-10-20 | Report only running VMs, like KVM. Out-of-band stops are then found by core's missing-report rule after about two ping intervals instead of one; HA and migration are unaffected | **Parked, awaiting a decision** |
 | 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. Not reproduced: the forced stop on 2026-10-20 took about 1 s. The option is refused for HA resources ("Not applicable for HA resources") | Send it, and retry without it when Proxmox answers with that HA message | **Parked, add only if a stop is seen to fail** (test: Stop, then Force stop a few seconds later, on a guest that ignores shutdown) |
 
-## Being investigated
-
-| # | Item | Notes |
-|---|---|---|
-| 13 | **Simultaneous deployments queued per host** | Root cause found (2026-10-20): `KVMGuru.getCommandHostDelegation` is asked about every command of every hypervisor and makes a copy to a primary storage `executeInSequence = true`, so CloudStack's agent queue sent them to a host one after the other (the log shows `"executeInSequence":"true"` on the copy although `execute.in.sequence.hypervisor.commands` is false). Fixed in the plugin: `ProxmoxHypervisorGuru.getCommandHostDelegation` takes the flag off the copy commands of Proxmox (222 tests pass). **To verify on the lab:** deploy three instances at once, all three `qmcreate` tasks should start together and `grep -a "Waiting for Seq" jetty.log` should show nothing new |
-
 ## To verify on the lab
 
 | # | Item | Notes |

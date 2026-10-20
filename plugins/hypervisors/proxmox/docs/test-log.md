@@ -465,3 +465,5 @@ Parallel deployments (2026-10-20): the log of three simultaneous deployments sho
 of the same VM had `false`), and the agent queue holds such requests back per host. Cause: `KVMGuru` (upstream-notes.md, 17). Fix in `ProxmoxHypervisorGuru` and a more patient VM id retry
 (`ProxmoxHypervisorGuruTest` +3, plugin 222 tests pass). Lab run to record: P-par-1, deploy three instances at once: all three `qmcreate` tasks start together; no new "Waiting for Seq" line in the management server log.
 
+Lab result (2026-10-20): P-par-1 **pass**: with the guru change deployed, instances deployed at once are created in parallel (the `qmcreate` tasks start together). Open issue 13 is closed.
+
