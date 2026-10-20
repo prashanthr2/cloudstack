@@ -15,7 +15,7 @@ Last updated 2026-10-20.
 | # | Item | Notes |
 |---|---|---|
 | 3 | **CentOS 5 instance boots with `rootDiskController` = `sata`** | The P6-3 instance panicked at boot ("Volume group VolGroup00 not found"): the guest's ramdisk has no virtio-scsi driver, the ISO is not the cause. Set the detail on the stopped instance (or on the template) and start it. If it still panics, try `vm.iso.max.count` = 1 to rule out the four CD drives |
-| 4 | **Phase 5 runs still open** | P5-3 (failed migration), P5-6 (node failure, L6), P5-7 (report during a Proxmox-initiated move, L7). P5-1, P5-2, P5-4 and P5-5 pass. Steps and expected results are in test-log.md |
+| 4 | **Phase 5 runs still open** | P5-6 (node failure, L6) and P5-7 (report during a Proxmox-initiated move, L7). P5-1 to P5-5 pass. Steps and expected results are in test-log.md |
 | 5 | **HA stop and the shutdown timeout** | After a CloudStack stop `ha-manager` shows the resource `stopped` (confirmed in P5-5). Still not measured: whether the HA stop honours the 60 s shutdown timeout (the VM stopped after about 30 s in L4) |
 
 ## Known limits (not bugs; confirm they are acceptable)
