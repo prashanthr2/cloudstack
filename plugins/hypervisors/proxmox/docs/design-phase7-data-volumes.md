@@ -1,6 +1,6 @@
 # Phase 7 design: data volumes (create, attach, detach, resize, delete)
 
-Status: **proposal, for review.** Nothing described here is implemented. "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
+Status: **proposal; lab checks D1 to D6 and D8 to D12 done (section 10), D7 to be repeated; decisions 1 to 6 accepted (per-account holder).** Nothing described here is implemented. "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
 `promox-src`, branch `stable-bookworm`, qemu-server and pve-storage). "U" means **unverified**: `pve-manager` (the storage content API) is not mirrored, or it has not been run.
 Each U has a lab check in section 8.
 
@@ -39,7 +39,8 @@ primary storage, `CheckVolumeCommand` / repair, and encrypted volumes.
     entry always deletes the volume (V, the API text says "Unlink of unused[n] always cause physical removal"), which is why it matters that none is created.
   - **Destroying the VM** (`destroy_vm`, which also runs for the plugin's `purge=1`) frees only disks whose owner is that VM (V: `return if ... ($owner != $vmid)`), so a disk owned by another
     vmid is kept. **But** `qm destroy` by default also destroys *unreferenced* disks that belong to the VM's own vmid (`destroy-unreferenced-disks`, default 1): so a disk must never be owned by the
-    vmid of a VM that can be destroyed.
+    vmid of a VM that can be destroyed. (Lab D8 showed that the **API** call `DELETE .../qemu/<id>?purge=1` keeps such unreferenced disks; the Proxmox UI offers the option as a checkbox, so an administrator
+    can still remove them by hand.)
 - **Controllers:** `scsi0..30` (with `scsihw` virtio-scsi), `virtio0..15`, `sata0..5`. Disks are hot-plugged on the default `hotplug=network,disk,usb` for SCSI and VirtIO, SATA is not
   hot-pluggable (U, lab D10). A drive added to a running VM that cannot be hot-plugged stays *pending* (as seen for the CD-ROM in Phase 6).
 - **Resize:** `PUT /nodes/{node}/qemu/{vmid}/resize` (`disk`, `size` absolute or `+nG`) works on a disk of a VM, running or stopped, grows only. There is no resize for a disk that no VM uses (V: it
@@ -158,3 +159,21 @@ instance, detach, re-attach to another instance, resize while attached, delete, 
 4. **A SATA (non-hot-pluggable) attach to a running instance fails with "stop and start" and leaves nothing pending** (4.2).
 5. **Disk offering iops and bandwidth limits become drive options, for data and root disks** (4.5), or later.
 6. **Everything listed under "out of scope" answers "not supported for Proxmox yet"** with the reason, for this phase.
+
+## 10. Lab results (2026-10-21, token `pveaudit@pam!cloudstack`, the documented roles)
+
+| # | Result |
+|---|---|
+| D1 | **Pass.** `POST /nodes/<n>/storage/<pool>/content` (`vmid=900000002`, `filename=vm-900000002-labtest-a.qcow2`, `size=1G`, `format=qcow2`) allocated the image although no VM has that id; the answer is the volume ID `cs-<pool uuid>:900000002/vm-900000002-labtest-a.qcow2`; `GET .../content?vmid=900000002` lists it (`size` 1073741824, `used` 524288, `vmid` 900000002); the file is `images/900000002/vm-900000002-labtest-a.qcow2` on the pool |
+| D2 | **Pass.** `PUT config scsi1=<volume ID>` on a stopped VM that does not own the disk: HTTP 200, `qm config` shows it |
+| D3 | **Pass.** On the running VM `PUT config scsi2=<volume ID>` was applied live: `qm config --current` shows it and QEMU holds the file open |
+| D4 | **Pass.** `PUT config delete=scsi2` on the running VM unplugged it (file no longer open), left **no `unusedN` entry**, and the file stayed in the folder |
+| D5 | **Pass.** The same image attached again to the same VM and then to another VM |
+| D6 | **Pass.** `DELETE .../qemu/<id>?purge=1` of a VM that had a holder-owned disk attached destroyed the VM; both images were still listed afterwards |
+| D7 | **Command error, to repeat:** `size=+1G` was sent unencoded (`+` became a space, "value does not match the regex pattern"), and the "shrink" test asked for the size the disk already had. Use `--data-urlencode` (the plugin encodes properly) |
+| D8 | **Pass, and softer than assumed.** An unreferenced image `vm-9502-orphan.qcow2` of vmid 9502 was **kept** when the API destroyed VM 9502 with `purge=1` (the VM's own disk was removed). So the API does not destroy unreferenced disks by default (the UI checkbox does) |
+| D9 | **Pass, with a limit.** `DELETE .../storage/<pool>/content/<volume ID>` (the volume ID URL-encoded) by the token returned an `imgdel` task and removed the image, **also while a stopped VM still referenced it** (no protection, a dangling reference is left). CloudStack only deletes detached volumes, so the plugin relies on that |
+| D10 | **Pass.** A SATA drive added to the running VM is **pending** (`qm pending` shows it, `--current` does not) and `PUT config revert=sata1` removes it; a VirtIO drive is applied live and `delete=virtio1` removes it |
+| D11 | **Pass.** `GET .../content/<volume ID>` returns `size`, `used`, `format` and `path` (enough for `GetVolumeStatsCommand`) |
+| D12 | **Pass.** `GET .../migrate?target=<node>` of the running VM with a holder-owned disk: `local_disks` is empty, both other nodes are allowed |
+
