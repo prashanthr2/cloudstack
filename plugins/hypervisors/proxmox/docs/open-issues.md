@@ -7,13 +7,12 @@ Last updated 2026-10-21.
 
 | # | Issue | What is known | Proposal | Status |
 |---|---|---|---|---|
-| 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. Not reproduced: the forced stop on 2026-10-20 took about 1 s. The option is refused for HA resources ("Not applicable for HA resources") | Send it, and retry without it when Proxmox answers with that HA message | **Parked, add only if a stop is seen to fail** (test: Stop, then Force stop a few seconds later, on a guest that ignores shutdown) |
+| 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. CloudStack itself serialises the jobs of one VM (a forced stop waits for a graceful stop job that is still running), so the plugin only meets this when a shutdown was started **outside CloudStack** (the Proxmox UI, `qm shutdown`, HA). The option is refused for HA resources ("Not applicable for HA resources") | If a forced stop is seen to fail on the shutdown's lock: send it, and retry without it when Proxmox answers with that HA message | **Being tested (2026-10-21)**: a shutdown with a long timeout started in Proxmox on a guest that ignores it, then a force stop from CloudStack |
 
 ## To verify on the lab
 
 | # | Item | Notes |
 |---|---|---|
-| 3 | **CentOS 5 instance boots with `rootDiskController` = `sata`** | The P6-3 instance panicked at boot ("Volume group VolGroup00 not found"): the guest's ramdisk has no virtio-scsi driver, the ISO is not the cause. Set the detail on the stopped instance (or on the template) and start it. If it still panics, try `vm.iso.max.count` = 1 to rule out the four CD drives |
 | 4 | **Phase 5 runs still open** | a repeat of P5-6 to verify the "report only running VMs" fix during a node failure (P5-7 already shows the fix works for a Proxmox-initiated move; the trade-off of the fix is that an out-of-band guest shutdown is found after about two ping intervals). P5-1 to P5-7 pass. Steps and expected results are in test-log.md |
 | 5 | **HA stop and the shutdown timeout** | After a CloudStack stop `ha-manager` shows the resource `stopped` (confirmed in P5-5). Still not measured: whether the HA stop honours the 60 s shutdown timeout (the VM stopped after about 30 s in L4) |
 
