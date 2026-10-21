@@ -518,3 +518,5 @@ Lab finding (2026-10-21, open issue 2): with a graceful shutdown started in Prox
 `Proxmox task qmstop failed: can't lock file '/var/lock/qemu-server/lock-<vmid>.conf' - got timeout`. CloudStack serialises the jobs of one VM, so this only happens for a shutdown started outside CloudStack. Fixed in
 `ProxmoxApiClient.stopVm` (`overrule-shutdown=1`, repeated without the option on an HTTP 400 for HA VMs; `ProxmoxApiClientVmTest` +3, plugin 270 tests pass). To verify: repeat the same test, the force stop should succeed within a few seconds.
 
+Lab result (2026-10-21): the repeat of the forced-stop test passes: with a graceful shutdown started in Proxmox on a guest that ignores it, a force stop from CloudStack now succeeds (`overrule-shutdown`). Open issue 2 is closed.
+
