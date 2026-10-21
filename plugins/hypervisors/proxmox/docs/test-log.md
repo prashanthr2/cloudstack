@@ -484,7 +484,7 @@ Lab runs to record (fill in the Result column as they are run; use an account ot
 
 | # | Steps | Expected | Result |
 |---|---|---|---|
-| P7-1 | Create a data volume and attach it to a running instance (scsi controller) | The attach succeeds; Proxmox shows a `scsi1` drive `...:900000002/vm-900000002-<uuid>.qcow2`; the file is in `images/900000002/` | |
+| P7-1 | Create a data volume and attach it to a running instance (scsi controller) | The attach succeeds; Proxmox shows a `scsi1` drive `...:900000002/vm-900000002-<uuid>.qcow2`; the file is in `images/900000002/` | **Pass** (2026-10-21, after the AttachAnswer fix): a data volume created and attached to a running instance |
 | P7-2 | Format and mount it in the guest, write a file, detach the volume, attach it to another instance | The data is there on the second instance; no `unusedN` line in the first VM's configuration | |
 | P7-3 | Grow the attached volume (resize to a larger size) | The size grows in CloudStack and in Proxmox; the guest sees it after a rescan | |
 | P7-4 | Try to resize a detached volume, and to shrink an attached one | Both fail with a clear message | |
