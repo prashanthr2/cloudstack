@@ -178,6 +178,15 @@ pveum acl modify /sdn/zones/localnetwork --users <user> --tokens '<user>!<token>
 Migration, the console and everything else CloudStack does by default need nothing more than this. Migrating a VM with the token does not need
 root: only the options `force`, `migration_type` and `migration_network` are root-only, and the plugin never sends them (lab check L1).
 
+### Data volumes (Phase 7): reserved VM ids and the permissions they need (lab D1 to D12, 2026-10-21)
+
+**The VM ids 900000001 to 999999999 are reserved for CloudStack.** The data volumes of an account are disk images owned by the vmid `900000000 + <account id>`, a number that is never a VM, so that they survive the
+deletion of instances. **Never create a VM with an id in that range, and do not set the cluster's `next-id` range (Datacenter > Options) there.** Destroying a VM that has such an id with the option "Destroy unreferenced
+disks owned by guest" would remove that account's volumes.
+
+No permission beyond the previous sections is needed: with the roles `PVEVMAdmin` on `/vms` and `PVEDatastoreAdmin` on `/storage` the token can allocate an image for a holder id, use it in any VM (`Datastore.Allocate` on the
+storage, or `Datastore.Audit` on the storage and `VM.Config.Disk` on `/vms/<holder>`), hot-plug and unplug it, resize it and delete it. The token needs `Datastore.Allocate` (in `PVEDatastoreAdmin`) to delete an image.
+
 ### Permissions for HA management from CloudStack (optional; global setting `proxmox.ha.manage`, Phase 5)
 
 **By default CloudStack does not manage Proxmox HA, and the token needs nothing beyond the previous section.** The global setting `proxmox.ha.manage`

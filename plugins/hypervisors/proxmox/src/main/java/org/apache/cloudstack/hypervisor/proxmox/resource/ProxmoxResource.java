@@ -52,6 +52,7 @@ import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.GetStorageStatsAnswer;
 import com.cloud.agent.api.GetStorageStatsCommand;
 import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
+import com.cloud.agent.api.GetVolumeStatsCommand;
 import com.cloud.agent.api.HostStatsEntry;
 import com.cloud.agent.api.HostVmStateReportEntry;
 import com.cloud.agent.api.MaintainAnswer;
@@ -72,6 +73,7 @@ import com.cloud.agent.api.StartupRoutingCommand;
 import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
+import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.to.StorageFilerTO;
 import com.cloud.host.Host;
 import com.cloud.hypervisor.Hypervisor;
@@ -267,9 +269,13 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof CreateObjectCommand) {
                 return vmHandler.createObject((CreateObjectCommand) cmd);
             } else if (cmd instanceof AttachCommand) {
-                return vmHandler.attachIso((AttachCommand) cmd);
+                return vmHandler.attach((AttachCommand) cmd);
             } else if (cmd instanceof DettachCommand) {
-                return vmHandler.detachIso((DettachCommand) cmd);
+                return vmHandler.detach((DettachCommand) cmd);
+            } else if (cmd instanceof ResizeVolumeCommand) {
+                return vmHandler.resize((ResizeVolumeCommand) cmd);
+            } else if (cmd instanceof GetVolumeStatsCommand) {
+                return vmHandler.volumeStats((GetVolumeStatsCommand) cmd);
             } else if (cmd instanceof GetVmWebsocketConsoleCommand) {
                 return vmHandler.console((GetVmWebsocketConsoleCommand) cmd);
             } else if (cmd instanceof PrepareForMigrationCommand) {

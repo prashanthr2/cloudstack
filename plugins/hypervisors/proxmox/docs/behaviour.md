@@ -370,6 +370,34 @@ CloudStack asks all hypervisor gurus about every command. For Proxmox that queue
 asynchronously and in parallel). `ProxmoxHypervisorGuru` therefore takes the flag off the copy commands of Proxmox, so deployments run in parallel. Because VMs created at once can be
 given the same free VM id (Proxmox does not reserve it), the creation retries a taken id up to 10 times with a growing pause (it was 3 times without a pause).
 
+## 15. Data volumes (Phase 7, implemented; unit tested, not yet run on the lab)
+
+Design and the lab results behind it: design-phase7-data-volumes.md.
+
+- **A data volume is a disk image owned by the account's "holder" vmid, `900000000 + account id`** (account 2 is `900000002`), named after the CloudStack volume:
+  `<pool entry>:900000002/vm-900000002-<volume uuid>.qcow2`. The files of an account are together in `images/<holder>/` on the primary storage. The image belongs to no VM, so it can
+  be attached to any, **deleting or expunging an instance never removes its data volumes** (a VM destroy removes only the disks it owns), and a detach leaves no `unusedN` entry (Proxmox only
+  registers one for a disk the VM owns; removing one would delete the file).
+- **The vmids 900000001 to 999999999 are reserved for CloudStack.** Never create a VM with such an id and never set the cluster's `next-id` range there: destroying a VM with an account's holder id
+  (with the "destroy unreferenced disks" option of the Proxmox UI) would remove that account's volumes. The plugin refuses to create a VM if Proxmox offers an id in that range, and an account id
+  above 99999999 cannot have data volumes.
+- **Create** (`CreateObjectCommand`): CloudStack creates the disk at the first attach. The plugin allocates the image with the size rounded up to whole GiB (thin qcow2) and answers with its path; a repeated
+  command answers with the image that exists.
+- **Attach** (`AttachCommand`, DATADISK): the drive is `<controller><device id>`. The controller is the instance detail `dataDiskController` (`scsi`, `virtio`, `sata`), by default the family of the root disk
+  (so a guest that needed `sata` for its root disk gets `sata` data disks); device ids run 1 to 30 on `scsi`, 1 to 15 on `virtio`, 1 to 5 on `sata`. The drive gets the disk offering's cache mode and
+  iops and bandwidth limits (`iops_rd`, `iops_wr`, `mbps_rd`, `mbps_wr`). SCSI and VirtIO drives are hot-plugged into a running instance; **a SATA drive cannot be**: Proxmox would keep it pending, so the plugin takes the
+  change back and fails with "stop and start the instance". A drive that holds another disk fails; the same volume on the drive is a success.
+- **Detach** (`DettachCommand`): removes the drive that holds the volume (live on SCSI and VirtIO; a SATA drive cannot be unplugged from a running instance, the answer says to stop it first). The image stays where it is.
+- **At start** every data volume of the start command becomes a drive, and a drive that holds a volume that is no longer in the command (detached since the last start) is deleted (in one `delete` list with a moved root disk).
+  The disk offering limits and cache mode are also applied to the **root disk** when it does not have them yet.
+- **Resize** (`ResizeVolumeCommand`): grows the disk that holds the volume in the instance's configuration, running or stopped, to whole GiB. **A volume that no instance has attached cannot be resized** (Proxmox has no
+  such operation: attach it first), and a **disk never shrinks**, whatever `shrinkok` says.
+- **Delete** (`DeleteCommand`): a data volume (by its type, or a path in the reserved range) deletes its disk image and never a VM; an image that is gone is a success. CloudStack only deletes detached volumes; Proxmox itself
+  would delete an image that a VM still refers to, so nothing relies on it.
+- **Statistics** (`GetVolumeStatsCommand`): size and used space of each image.
+- **Not supported yet** (answered with a reason): copying a volume to or from the secondary store (upload, download, volume snapshots, create from snapshot or from a data disk template), moving a volume to another
+  primary storage, `CheckVolumeCommand`.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.
@@ -382,5 +410,5 @@ given the same free VM id (Proxmox does not reserve it), the creation retries a 
 - Token permissions: the lab uses a `root@pam` token. The read-only set for the current features (`PVEAuditor`) is
   documented in requirements.md but still to be verified; the set for VM, storage and network features comes with them.
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
-- Not yet implemented: data volumes (so `AttachCommand` for a volume and `CreateObjectCommand` for a data volume stay "unsupported"), system VMs and virtual routers, snapshots (see section 10 for what a VM can do now).
+- Not yet implemented: system VMs and virtual routers, snapshots, uploading and downloading volumes (see section 10 for what a VM can do now).
 - Proxmox's own maintenance state is not set by CloudStack (section 12).

@@ -5582,6 +5582,7 @@ public class QueryManagerImpl extends MutualExclusiveIdsManagerBase implements Q
         if (HypervisorType.Proxmox.equals(hypervisorType)) {
             options.put(VmDetailConstants.NIC_ADAPTER, Arrays.asList("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3"));
             options.put(VmDetailConstants.ROOT_DISK_CONTROLLER, Arrays.asList("scsi", "virtio", "sata"));
+            options.put(VmDetailConstants.DATA_DISK_CONTROLLER, Arrays.asList("scsi", "virtio", "sata"));
         }
 
         if (HypervisorType.VMware.equals(hypervisorType)) {

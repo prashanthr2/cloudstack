@@ -21,6 +21,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,8 @@ import com.cloud.agent.api.Answer;
 import com.cloud.agent.api.CheckVirtualMachineAnswer;
 import com.cloud.agent.api.CheckVirtualMachineCommand;
 import com.cloud.agent.api.GetVmWebsocketConsoleAnswer;
+import com.cloud.agent.api.GetVolumeStatsAnswer;
+import com.cloud.agent.api.GetVolumeStatsCommand;
 import com.cloud.agent.api.GetVmWebsocketConsoleCommand;
 import com.cloud.agent.api.MigrateAnswer;
 import com.cloud.agent.api.MigrateCommand;
@@ -63,6 +66,9 @@ import com.cloud.agent.api.StartAnswer;
 import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StopAnswer;
 import com.cloud.agent.api.StopCommand;
+import com.cloud.agent.api.VolumeStatsEntry;
+import com.cloud.agent.api.storage.ResizeVolumeAnswer;
+import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.to.DataTO;
 import com.cloud.agent.api.to.DiskTO;
 import com.cloud.agent.api.to.NfsTO;
@@ -293,27 +299,56 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * A blank root volume (a VM deployed from an ISO): the same VM as for a template, with an empty disk of the volume's size, rounded up to whole
-     * GiB. Only root volumes are supported until data volumes have their own phase.
+     * Creates a volume on the primary storage. A root volume is a blank VM (a VM deployed from an ISO): the same VM as for a template, with an empty disk
+     * of the volume's size rounded up to whole GiB. A data volume is a disk image owned by the account's holder vmid (see createDataVolume).
      */
     Answer createObject(CreateObjectCommand cmd) {
         DataTO data = cmd.getData();
-        if (!(data instanceof VolumeObjectTO) || ((VolumeObjectTO) data).getVolumeType() != Volume.Type.ROOT
-                || !(data.getDataStore() instanceof PrimaryDataStoreTO)) {
+        if (!(data instanceof VolumeObjectTO) || !(data.getDataStore() instanceof PrimaryDataStoreTO)) {
             return Answer.createUnsupportedCommandAnswer(cmd);
         }
         VolumeObjectTO volume = (VolumeObjectTO) data;
+        if (volume.getVolumeType() != Volume.Type.ROOT && volume.getVolumeType() != Volume.Type.DATADISK) {
+            return Answer.createUnsupportedCommandAnswer(cmd);
+        }
         if (volume.getSize() == null || volume.getSize() <= 0) {
-            return new CreateObjectAnswer("The root volume has no size");
+            return new CreateObjectAnswer("The volume has no size");
         }
         try {
             String poolStorage = ProxmoxStorageNames.storageId(((PrimaryDataStoreTO) volume.getDataStore()).getUuid());
             long gib = (volume.getSize() + GIB - 1) / GIB;
+            if (volume.getVolumeType() == Volume.Type.DATADISK) {
+                return new CreateObjectAnswer(createDataVolume(clients.get(), volume, poolStorage, gib));
+            }
             return new CreateObjectAnswer(createVmWithRootDisk(clients.get(), volume, poolStorage + ":" + gib + ",format=qcow2"));
         } catch (ProxmoxApiException e) {
-            LOGGER.error("Proxmox node {} could not create the root volume: {}", node, e.getMessage());
+            LOGGER.error("Proxmox node {} could not create the volume: {}", node, e.getMessage());
             return new CreateObjectAnswer(e.getMessage());
         }
+    }
+
+    /**
+     * A data volume is a disk image owned by the holder vmid of the account ("900000000 + account id"), named after the CloudStack volume, so it belongs
+     * to no VM: it can be attached to any, survives the deletion of an instance, and leaves no "unused" entry when it is detached.
+     * Idempotent: an image that exists already (a repeated command) is answered as it is.
+     */
+    private VolumeObjectTO createDataVolume(ProxmoxApiClient client, VolumeObjectTO volume, String poolStorage, long gib) {
+        String path = ProxmoxVmConfig.dataVolumePath(volume.getAccountId(), volume.getUuid());
+        String volumeId = poolStorage + ":" + path;
+        ProxmoxApiClient.ImageInfo existing = client.getImageInfo(node, volumeId);
+        long size;
+        if (existing == null) {
+            client.allocateImage(node, poolStorage, ProxmoxVmConfig.holderVmId(volume.getAccountId()), StringUtils.substringAfter(path, "/"), gib);
+            size = gib * GIB;
+            LOGGER.info("Created Proxmox data volume {}", volumeId);
+        } else {
+            size = existing.getSize();
+        }
+        VolumeObjectTO created = new VolumeObjectTO();
+        created.setPath(path);
+        created.setSize(size);
+        created.setFormat(Storage.ImageFormat.QCOW2);
+        return created;
     }
 
     /**
@@ -330,6 +365,9 @@ class ProxmoxVmHandler {
         long vmid = 0;
         for (int attempt = 1; attempt <= CREATE_ATTEMPTS; attempt++) {
             vmid = client.nextVmId();
+            if (ProxmoxVmConfig.isReservedVmId(vmid)) {
+                throw new ProxmoxApiException("Proxmox offered the VM id " + vmid + ", which is in the range 900000001 to 999999999 that CloudStack keeps for the owners of data volumes");
+            }
             try {
                 waitFor(client, client.createVm(node, vmid, params));
                 break;
@@ -352,7 +390,7 @@ class ProxmoxVmHandler {
         long size = ProxmoxVmConfig.diskSizeBytes(disk);
         if (volume.getSize() != null && volume.getSize() > size) {
             try {
-                client.resizeDisk(node, vmid, ProxmoxVmConfig.ROOT_DISK, Long.toString(volume.getSize()));
+                waitFor(client, client.resizeDisk(node, vmid, ProxmoxVmConfig.ROOT_DISK, Long.toString(volume.getSize())));
                 size = volume.getSize();
             } catch (ProxmoxApiException e) {
                 destroyQuietly(client, vmid, false);
@@ -411,6 +449,16 @@ class ProxmoxVmHandler {
             Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive);
             Map<String, String> current = client.getVmConfig(node, vmid);
             moveRootDisk(options, current, rootVolumePath(vm), rootDrive, vm.getName());
+            applyRootDriveOptions(options, current, vm, rootDrive);
+            Map<String, String> dataDrives = dataDrives(vm, rootDrive);
+            options.putAll(dataDrives);
+            // a data volume that the VM has from an earlier start but that the command does not list was detached: it must not stay
+            for (Map.Entry<String, String> existing : current.entrySet()) {
+                if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && ProxmoxVmConfig.isHolderVolume(existing.getValue())
+                        && !dataDrives.containsKey(existing.getKey()) && !existing.getKey().equals(rootDrive)) {
+                    addDelete(options, existing.getKey());
+                }
+            }
             // a drive the VM has from an earlier start but that the command does not list was detached: it must not keep its disc
             for (Map.Entry<String, String> existing : current.entrySet()) {
                 if (Arrays.asList(ProxmoxVmConfig.CDROM_DRIVES).contains(existing.getKey()) && ProxmoxVmConfig.isCdrom(existing.getValue())
@@ -468,10 +516,75 @@ class ProxmoxVmHandler {
             return;
         }
         if (!drive.equals(wanted)) {
-            options.put("delete", drive);
+            addDelete(options, drive);
             options.put(wanted, StringUtils.substringBefore(current.get(drive), ","));
             LOGGER.info("Moving the root disk of {} from {} to {}", vmName, drive, wanted);
         }
+    }
+
+    /** Adds a drive to the list of settings a configuration change deletes. */
+    private static void addDelete(Map<String, String> options, String drive) {
+        String deletes = options.get("delete");
+        options.put("delete", deletes == null ? drive : deletes + "," + drive);
+    }
+
+    /**
+     * The limits and the cache mode of the disk offering are options of the root drive as well. They are applied when the VM starts, and only when
+     * the offering has some and the drive does not have them yet (the drive is set again with its volume, and Proxmox adds the size itself).
+     */
+    private void applyRootDriveOptions(Map<String, String> options, Map<String, String> current, VirtualMachineTO vm, String rootDrive) {
+        VolumeObjectTO root = rootVolume(vm);
+        if (root == null) {
+            return;
+        }
+        String wanted = ProxmoxVmConfig.driveOptions(root);
+        if (wanted.isEmpty()) {
+            return;
+        }
+        String base = options.containsKey(rootDrive) ? options.get(rootDrive) : current.get(rootDrive);
+        if (base == null || (!options.containsKey(rootDrive) && ProxmoxVmConfig.driveHasOptions(base, wanted))) {
+            return;
+        }
+        options.put(rootDrive, StringUtils.substringBefore(base, ",") + wanted);
+    }
+
+    /** The drive and value for every data volume of a start command; fails on a slot that is used twice or that the controller does not have. */
+    private Map<String, String> dataDrives(VirtualMachineTO vm, String rootDrive) {
+        Map<String, String> drives = new LinkedHashMap<>();
+        if (vm.getDisks() == null) {
+            return drives;
+        }
+        for (DiskTO disk : vm.getDisks()) {
+            if (disk.getType() != Volume.Type.DATADISK || !(disk.getData() instanceof VolumeObjectTO)) {
+                continue;
+            }
+            VolumeObjectTO volume = (VolumeObjectTO) disk.getData();
+            String drive = ProxmoxVmConfig.dataDrive(disk.getDiskSeq(), vm.getDetails());
+            if (drive.equals(rootDrive) || drives.containsKey(drive)) {
+                throw new ProxmoxApiException("The drive " + drive + " of " + vm.getName() + " is used by two disks");
+            }
+            drives.put(drive, volumeId(volume) + ProxmoxVmConfig.driveOptions(volume));
+        }
+        return drives;
+    }
+
+    /** The volume id in Proxmox: "&lt;pool entry&gt;:&lt;path&gt;". */
+    private static String volumeId(VolumeObjectTO volume) {
+        if (StringUtils.isBlank(volume.getPath()) || !(volume.getDataStore() instanceof PrimaryDataStoreTO)) {
+            throw new ProxmoxApiException("The volume " + volume.getUuid() + " has no path on a primary storage");
+        }
+        return ProxmoxStorageNames.storageId(((PrimaryDataStoreTO) volume.getDataStore()).getUuid()) + ":" + volume.getPath();
+    }
+
+    private static VolumeObjectTO rootVolume(VirtualMachineTO vm) {
+        if (vm.getDisks() != null) {
+            for (DiskTO disk : vm.getDisks()) {
+                if (disk.getType() == Volume.Type.ROOT && disk.getData() instanceof VolumeObjectTO) {
+                    return (VolumeObjectTO) disk.getData();
+                }
+            }
+        }
+        return null;
     }
 
     private static String rootVolumePath(VirtualMachineTO vm) {
@@ -690,6 +803,136 @@ class ProxmoxVmHandler {
         }
     }
 
+    // ---- data volumes ----
+
+    /** Attach: an ISO goes into a CD-ROM drive, a data volume becomes a disk drive; anything else is not supported. */
+    Answer attach(AttachCommand cmd) {
+        DiskTO disk = cmd.getDisk();
+        if (disk != null && disk.getType() == Volume.Type.DATADISK && disk.getData() instanceof VolumeObjectTO) {
+            return attachDataVolume(cmd, disk, (VolumeObjectTO) disk.getData());
+        }
+        return attachIso(cmd);
+    }
+
+    /** Detach: the counterpart of {@link #attach}. */
+    Answer detach(DettachCommand cmd) {
+        DiskTO disk = cmd.getDisk();
+        if (disk != null && disk.getType() == Volume.Type.DATADISK && disk.getData() instanceof VolumeObjectTO) {
+            return detachDataVolume(cmd, disk, (VolumeObjectTO) disk.getData());
+        }
+        return detachIso(cmd);
+    }
+
+    /**
+     * Sets the drive of the volume's slot to the volume. For a running VM the drive must really appear in the running configuration: a controller that
+     * cannot hot-plug (SATA) only keeps the change pending, which is taken back again so that the VM and CloudStack agree.
+     */
+    private Answer attachDataVolume(AttachCommand cmd, DiskTO disk, VolumeObjectTO volume) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new Answer(cmd, false, "Proxmox has no VM " + cmd.getVmName());
+            }
+            String drive = ProxmoxVmConfig.dataDrive(disk.getDiskSeq(), cmd.getControllerInfo());
+            String existing = client.getVmConfig(location.getNode(), location.getVmid()).get(drive);
+            if (existing != null) {
+                if (existing.contains(":" + volume.getPath())) {
+                    return new Answer(cmd, true, "The volume is already on " + drive);
+                }
+                return new Answer(cmd, false, "The drive " + drive + " of " + cmd.getVmName() + " already holds another disk");
+            }
+            String value = volumeId(volume) + ProxmoxVmConfig.driveOptions(volume);
+            client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, value));
+            if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) == null) {
+                client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
+                return new Answer(cmd, false, String.format("Proxmox cannot add the drive %s to the running VM %s (it needs a restart: the %s controller is not hot-pluggable): "
+                        + "stop and start the instance, or use the scsi or virtio controller", drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
+            }
+            LOGGER.info("Attached {} to {} as {}", volume.getPath(), cmd.getVmName(), drive);
+            return new Answer(cmd, true, "Attached " + volume.getPath() + " as " + drive);
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not attach {} to {}: {}", node, volume.getPath(), cmd.getVmName(), e.getMessage());
+            return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    /** Removes the drive that holds the volume. The image stays where it is, and Proxmox leaves no "unused" entry for a disk the VM does not own. */
+    private Answer detachDataVolume(DettachCommand cmd, DiskTO disk, VolumeObjectTO volume) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new Answer(cmd, true, "Proxmox has no VM " + cmd.getVmName() + ", nothing to detach");
+            }
+            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()), volume.getPath());
+            if (drive == null) {
+                return new Answer(cmd, true, "The volume is not on a drive of " + cmd.getVmName() + ", nothing to detach");
+            }
+            client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", drive));
+            if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) != null) {
+                client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
+                return new Answer(cmd, false, String.format("Proxmox cannot remove the drive %s from the running VM %s (the %s controller is not hot-pluggable): stop the instance first",
+                        drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
+            }
+            LOGGER.info("Detached {} from {} ({})", volume.getPath(), cmd.getVmName(), drive);
+            return new Answer(cmd, true, "Detached " + volume.getPath() + " from " + drive);
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not detach {} from {}: {}", node, volume.getPath(), cmd.getVmName(), e.getMessage());
+            return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    /**
+     * Grows the disk that holds the volume. Proxmox resizes the disk of a VM (running or stopped) and has no resize for a disk that no VM uses, so a volume
+     * that is not attached cannot be resized; a disk never shrinks, whatever CloudStack says.
+     */
+    Answer resize(ResizeVolumeCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = StringUtils.isBlank(cmd.getInstanceName()) ? null : client.findVmByName(cmd.getInstanceName());
+            if (location == null) {
+                return new ResizeVolumeAnswer(cmd, false, "Proxmox can only resize a disk that is attached to an instance: attach the volume first, then resize it");
+            }
+            Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
+            String drive = ProxmoxVmConfig.driveHolding(config, cmd.getPath());
+            if (drive == null) {
+                return new ResizeVolumeAnswer(cmd, false, "The volume " + cmd.getPath() + " is not on a drive of " + cmd.getInstanceName());
+            }
+            long current = ProxmoxVmConfig.diskSizeBytes(config.get(drive));
+            long wanted = (cmd.getNewSize() + GIB - 1) / GIB * GIB;
+            if (wanted < current) {
+                return new ResizeVolumeAnswer(cmd, false, "Proxmox cannot shrink a disk (" + current / GIB + " GiB now, " + wanted / GIB + " GiB asked)");
+            }
+            if (wanted > current) {
+                waitFor(client, client.resizeDisk(location.getNode(), location.getVmid(), drive, (wanted / GIB) + "G"));
+                LOGGER.info("Resized {} of {} from {} GiB to {} GiB", drive, cmd.getInstanceName(), current / GIB, wanted / GIB);
+            }
+            return new ResizeVolumeAnswer(cmd, true, "Resized " + drive + " to " + wanted / GIB + " GiB", wanted);
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not resize {}: {}", node, cmd.getPath(), e.getMessage());
+            return new ResizeVolumeAnswer(cmd, false, e.getMessage());
+        }
+    }
+
+    /** The size and the used space of each volume (by path) in the pool, from the disk image; a volume that has no image is left out. */
+    Answer volumeStats(GetVolumeStatsCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            String poolStorage = ProxmoxStorageNames.storageId(cmd.getPoolUuid());
+            HashMap<String, VolumeStatsEntry> stats = new HashMap<>();
+            for (String path : cmd.getVolumeUuids()) {
+                ProxmoxApiClient.ImageInfo info = client.getImageInfo(node, poolStorage + ":" + path);
+                if (info != null) {
+                    stats.put(path, new VolumeStatsEntry(path, info.getUsed(), info.getSize()));
+                }
+            }
+            return new GetVolumeStatsAnswer(cmd, "", stats);
+        } catch (ProxmoxApiException e) {
+            return new GetVolumeStatsAnswer(cmd, "Can't get volume stats: " + e.getMessage(), null);
+        }
+    }
+
     // ---- migration ----
 
     /**
@@ -832,6 +1075,10 @@ class ProxmoxVmHandler {
 
     private Answer deleteVolume(DeleteCommand cmd, VolumeObjectTO volume) {
         Long vmid = ProxmoxVmConfig.vmIdOfVolumePath(volume.getPath());
+        // by the volume's type and its path: the path of a data volume names a holder, which is not a VM, and must never be taken for one
+        if (volume.getVolumeType() == Volume.Type.DATADISK || (vmid != null && ProxmoxVmConfig.isReservedVmId(vmid))) {
+            return deleteDataVolume(cmd, volume);
+        }
         if (vmid == null) {
             return new Answer(cmd, true, "Volume " + volume.getPath() + " does not belong to a Proxmox VM, nothing to delete");
         }
@@ -847,6 +1094,21 @@ class ProxmoxVmHandler {
         waitFor(client, client.destroyVm(location.getNode(), vmid));
         LOGGER.info("Destroyed Proxmox VM {} with its disk", vmid);
         return new Answer(cmd, true, "Destroyed Proxmox VM " + vmid);
+    }
+
+    /**
+     * Deletes the disk image of a data volume. CloudStack deletes only volumes that are detached; Proxmox itself would delete an image that a VM still
+     * refers to, so nothing here relies on it. An image that is gone already is a success.
+     */
+    private Answer deleteDataVolume(DeleteCommand cmd, VolumeObjectTO volume) {
+        String volumeId = volumeId(volume);
+        ProxmoxApiClient client = clients.get();
+        if (client.getImageInfo(node, volumeId) == null) {
+            return new Answer(cmd, true, "Proxmox has no disk image " + volumeId + ", nothing to delete");
+        }
+        waitFor(client, client.deleteImage(node, volumeId));
+        LOGGER.info("Deleted Proxmox data volume {}", volumeId);
+        return new Answer(cmd, true, "Deleted " + volumeId);
     }
 
     /**

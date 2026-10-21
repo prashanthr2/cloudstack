@@ -782,12 +782,97 @@ public class ProxmoxApiClient implements Closeable {
         put("/nodes/" + node + "/qemu/" + vmid + "/config", params);
     }
 
-    /** Grows a disk to {@code size} (for example "20G"; Proxmox never shrinks a disk). */
-    public void resizeDisk(String node, long vmid, String disk, String size) {
+    /**
+     * Grows a disk to {@code size} (for example "20G"; Proxmox never shrinks a disk). Returns the task id: a refused change (a shrink) shows
+     * up as a failed task, not as an error of the call.
+     */
+    public String resizeDisk(String node, long vmid, String disk, String size) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("disk", disk);
         form.put("size", size);
-        put("/nodes/" + node + "/qemu/" + vmid + "/resize", form);
+        return taskId(put("/nodes/" + node + "/qemu/" + vmid + "/resize", form));
+    }
+
+    /** What Proxmox says about a disk image of a storage entry. */
+    public static class ImageInfo {
+        private final long size;
+        private final long used;
+        private final String format;
+        private final String path;
+
+        public ImageInfo(long size, long used, String format, String path) {
+            this.size = size;
+            this.used = used;
+            this.format = format;
+            this.path = path;
+        }
+
+        public long getSize() {
+            return size;
+        }
+
+        public long getUsed() {
+            return used;
+        }
+
+        public String getFormat() {
+            return format;
+        }
+
+        public String getPath() {
+            return path;
+        }
+    }
+
+    /** The attributes of a disk image ({@code volid} is "&lt;storage entry&gt;:&lt;path&gt;"), or null when the entry has no such image. */
+    public ImageInfo getImageInfo(String node, String volid) {
+        try {
+            JsonNode data = get("/nodes/" + node + "/storage/" + storageOf(volid) + "/content/" + encodeVolume(volid));
+            if (data == null || !data.isObject()) {
+                return null;
+            }
+            return new ImageInfo(data.path("size").asLong(0), data.path("used").asLong(0), data.path("format").asText(null), data.path("path").asText(null));
+        } catch (ProxmoxApiException e) {
+            // a volume that does not exist is answered with an error; a refusal (401, 403) is not "no image"
+            if (e.getStatusCode() == 500 || e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Creates a disk image of {@code sizeGib} GiB in a storage entry for the owner {@code vmid}, named {@code filename} ("vm-&lt;vmid&gt;-&lt;anything&gt;.qcow2").
+     * The owner needs no VM. Returns the volume id.
+     */
+    public String allocateImage(String node, String storage, long vmid, String filename, long sizeGib) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("vmid", Long.toString(vmid));
+        form.put("filename", filename);
+        form.put("size", sizeGib + "G");
+        form.put("format", "qcow2");
+        JsonNode data = post("/nodes/" + node + "/storage/" + storage + "/content", form);
+        if (data == null || !data.isTextual() || data.asText().isEmpty()) {
+            throw new ProxmoxApiException("Proxmox did not return the volume id of the new disk image");
+        }
+        return data.asText();
+    }
+
+    /** Deletes a disk image; returns the task id. Proxmox does not check whether a VM still refers to it. */
+    public String deleteImage(String node, String volid) {
+        return taskId(delete("/nodes/" + node + "/storage/" + storageOf(volid) + "/content/" + encodeVolume(volid)));
+    }
+
+    private static String storageOf(String volid) {
+        return StringUtils.substringBefore(volid, ":");
+    }
+
+    private static String encodeVolume(String volid) {
+        try {
+            return java.net.URLEncoder.encode(volid, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new ProxmoxApiException("UTF-8 is not available", e);
+        }
     }
 
     public String startVm(String node, long vmid) {

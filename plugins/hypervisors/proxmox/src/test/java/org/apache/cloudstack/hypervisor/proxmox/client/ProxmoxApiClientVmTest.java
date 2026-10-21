@@ -430,4 +430,58 @@ public class ProxmoxApiClientVmTest {
         assertEquals("none,media=cdrom", config.get("ide2"));
         assertNull(config.get("ide3"));
     }
+
+    // ---- data volumes (Phase 7) ----
+
+    private static final String VOLUME = "cs-7fd5:900000002/vm-900000002-abc.qcow2";
+    private static final String VOLUME_PATH = "cs-7fd5%3A900000002%2Fvm-900000002-abc.qcow2";
+
+    @Test
+    public void anImageIsAllocatedForAnOwnerWithAFileNameAndASizeAndTheVolumeIdIsReturned() {
+        answer("POST /api2/json/nodes/pve1/storage/cs-7fd5/content", "{\"data\":\"" + VOLUME + "\"}");
+
+        assertEquals(VOLUME, client.allocateImage("pve1", "cs-7fd5", 900000002L, "vm-900000002-abc.qcow2", 5));
+        String body = bodies.get(0);
+        assertTrue(body, body.contains("vmid=900000002") && body.contains("filename=vm-900000002-abc.qcow2") && body.contains("size=5G") && body.contains("format=qcow2"));
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void anAllocationThatAnswersWithoutAVolumeIdFails() {
+        answer("POST /api2/json/nodes/pve1/storage/cs-7fd5/content", "{\"data\":null}");
+
+        client.allocateImage("pve1", "cs-7fd5", 900000002L, "vm-900000002-abc.qcow2", 5);
+    }
+
+    @Test
+    public void theAttributesOfAnImageAreReadWithTheVolumeIdEncodedInThePath() {
+        answer("GET /api2/json/nodes/pve1/storage/cs-7fd5/content/" + VOLUME_PATH,
+                "{\"data\":{\"format\":\"qcow2\",\"used\":524288,\"size\":1073741824,\"path\":\"/mnt/x/images/900000002/vm-900000002-abc.qcow2\"}}");
+
+        ProxmoxApiClient.ImageInfo info = client.getImageInfo("pve1", VOLUME);
+
+        assertEquals(1073741824L, info.getSize());
+        assertEquals(524288L, info.getUsed());
+        assertEquals("qcow2", info.getFormat());
+    }
+
+    @Test
+    public void anImageThatDoesNotExistIsNullButARefusalIsAnError() {
+        // the fake answers 404 for what it does not know
+        assertNull(client.getImageInfo("pve1", VOLUME));
+    }
+
+    @Test
+    public void anImageIsDeletedWithItsEncodedVolumeIdAndTheTaskIsReturned() {
+        answer("DELETE /api2/json/nodes/pve1/storage/cs-7fd5/content/" + VOLUME_PATH, task("UPID:pve1:1:2:3:imgdel:900000002:u:"));
+
+        assertEquals("UPID:pve1:1:2:3:imgdel:900000002:u:", client.deleteImage("pve1", VOLUME));
+    }
+
+    @Test
+    public void theRunningConfigurationOfTheResizeAnswerIsATask() {
+        answer("PUT /api2/json/nodes/pve1/qemu/9204/resize", task("UPID:pve1:1:2:3:resize:9204:u:"));
+
+        assertEquals("UPID:pve1:1:2:3:resize:9204:u:", client.resizeDisk("pve1", 9204, "scsi1", "5G"));
+        assertEquals("disk=scsi1&size=5G", bodies.get(0));
+    }
 }

@@ -313,4 +313,112 @@ public class ProxmoxVmConfigTest {
         assertEquals("order=sata0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "sata0").get("boot"));
         assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>()).get("boot"));
     }
+
+    // ---- data volumes (Phase 7) ----
+
+    @Test
+    public void theHolderOfAnAccountsDataVolumesIsTheBaseAndTheAccountId() {
+        assertEquals(900000002L, ProxmoxVmConfig.holderVmId(2));
+        assertEquals(999999999L, ProxmoxVmConfig.holderVmId(99999999));
+        assertEquals("900000002/vm-900000002-abc.qcow2", ProxmoxVmConfig.dataVolumePath(2, "abc"));
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void accountZeroHasNoHolder() {
+        ProxmoxVmConfig.holderVmId(0);
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void anAccountIdBeyondTheReservedRangeHasNoHolder() {
+        ProxmoxVmConfig.holderVmId(100000000L);
+    }
+
+    @Test
+    public void theReservedRangeIsFromTheFirstHolderToTheLastVmId() {
+        assertFalse(ProxmoxVmConfig.isReservedVmId(100));
+        assertFalse(ProxmoxVmConfig.isReservedVmId(899999999L));
+        assertFalse(ProxmoxVmConfig.isReservedVmId(900000000L));
+        assertTrue(ProxmoxVmConfig.isReservedVmId(900000001L));
+        assertTrue(ProxmoxVmConfig.isReservedVmId(999999999L));
+        assertFalse(ProxmoxVmConfig.isReservedVmId(1000000000L));
+    }
+
+    @Test
+    public void aHolderVolumeIsRecognisedInADriveValueButAVmsOwnDiskIsNot() {
+        assertTrue(ProxmoxVmConfig.isHolderVolume("cs-x:900000002/vm-900000002-abc.qcow2,size=1G"));
+        assertFalse(ProxmoxVmConfig.isHolderVolume("cs-x:9204/vm-9204-disk-0.qcow2,size=8G"));
+        assertFalse(ProxmoxVmConfig.isHolderVolume("none,media=cdrom"));
+        assertFalse(ProxmoxVmConfig.isHolderVolume(null));
+    }
+
+    @Test
+    public void aDataDiskIsOnTheControllerOfTheRootDiskUnlessTheDetailSaysOtherwise() {
+        assertEquals("scsi1", ProxmoxVmConfig.dataDrive(1L, null));
+        assertEquals("sata2", ProxmoxVmConfig.dataDrive(2L, java.util.Collections.singletonMap("rootDiskController", "sata")));
+        assertEquals("virtio4", ProxmoxVmConfig.dataDrive(4L, java.util.Collections.singletonMap("rootDiskController", "virtio")));
+        Map<String, String> details = new java.util.HashMap<>();
+        details.put("rootDiskController", "sata");
+        details.put("dataDiskController", "scsi");
+        assertEquals("scsi3", ProxmoxVmConfig.dataDrive(3L, details));
+        details.put("dataDiskController", "osdefault");
+        assertEquals("sata3", ProxmoxVmConfig.dataDrive(3L, details));
+    }
+
+    @Test
+    public void theDriveNumbersOfEachControllerAreChecked() {
+        assertEquals("scsi30", ProxmoxVmConfig.dataDrive(30L, null));
+        assertEquals("virtio15", ProxmoxVmConfig.dataDrive(15L, java.util.Collections.singletonMap("dataDiskController", "virtio")));
+        assertEquals("sata5", ProxmoxVmConfig.dataDrive(5L, java.util.Collections.singletonMap("dataDiskController", "sata")));
+        for (Object[] bad : new Object[][] {{31L, "scsi"}, {16L, "virtio"}, {6L, "sata"}, {0L, "scsi"}, {null, "scsi"}}) {
+            try {
+                ProxmoxVmConfig.dataDrive((Long) bad[0], java.util.Collections.singletonMap("dataDiskController", (String) bad[1]));
+                org.junit.Assert.fail(bad[0] + " on " + bad[1]);
+            } catch (ProxmoxApiException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains((String) bad[1]));
+            }
+        }
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void ideIsNotADataDiskController() {
+        ProxmoxVmConfig.dataDrive(1L, java.util.Collections.singletonMap("dataDiskController", "ide"));
+    }
+
+    @Test
+    public void theOfferingsLimitsAndCacheModeBecomeDriveOptions() {
+        org.apache.cloudstack.storage.to.VolumeObjectTO volume = mock(org.apache.cloudstack.storage.to.VolumeObjectTO.class);
+        assertEquals("", ProxmoxVmConfig.driveOptions(volume));
+
+        when(volume.getCacheMode()).thenReturn(com.cloud.offering.DiskOffering.DiskCacheMode.WRITETHROUGH);
+        when(volume.getIopsReadRate()).thenReturn(500L);
+        when(volume.getIopsWriteRate()).thenReturn(250L);
+        when(volume.getBytesReadRate()).thenReturn(20L * 1024 * 1024);
+        when(volume.getBytesWriteRate()).thenReturn(1536L * 1024);
+
+        assertEquals(",cache=writethrough,iops_rd=500,iops_wr=250,mbps_rd=20,mbps_wr=1.5", ProxmoxVmConfig.driveOptions(volume));
+        when(volume.getCacheMode()).thenReturn(com.cloud.offering.DiskOffering.DiskCacheMode.NONE);
+        when(volume.getBytesWriteRate()).thenReturn(10L);
+        assertTrue(ProxmoxVmConfig.driveOptions(volume).endsWith(",mbps_wr=0.01"));
+    }
+
+    @Test
+    public void aDriveHasTheWantedOptionsWhenEachIsThere() {
+        assertTrue(ProxmoxVmConfig.driveHasOptions("cs-x:1/a.qcow2,iops_rd=200,size=8G", ",iops_rd=200"));
+        assertFalse(ProxmoxVmConfig.driveHasOptions("cs-x:1/a.qcow2,iops_rd=2000,size=8G", ",iops_rd=200"));
+        assertFalse(ProxmoxVmConfig.driveHasOptions("cs-x:1/a.qcow2,size=8G", ",iops_rd=200"));
+        assertTrue(ProxmoxVmConfig.driveHasOptions("cs-x:1/a.qcow2,size=8G", ""));
+    }
+
+    @Test
+    public void theDriveThatHoldsAVolumeIsFoundByItsPathAmongTheDiskDrivesOnly() {
+        Map<String, String> config = new java.util.HashMap<>();
+        config.put("ide2", "cs-x:iso/900000002/x.iso,media=cdrom");
+        config.put("scsi0", "cs-x:9204/vm-9204-disk-0.qcow2,size=8G");
+        config.put("virtio2", "cs-x:900000002/vm-900000002-abc.qcow2,size=1G");
+
+        assertEquals("virtio2", ProxmoxVmConfig.driveHolding(config, "900000002/vm-900000002-abc.qcow2"));
+        assertEquals("scsi0", ProxmoxVmConfig.driveHolding(config, "9204/vm-9204-disk-0.qcow2"));
+        assertNull(ProxmoxVmConfig.driveHolding(config, "9204/vm-9204-disk-1.qcow2"));
+        assertNull(ProxmoxVmConfig.driveHolding(config, null));
+    }
 }

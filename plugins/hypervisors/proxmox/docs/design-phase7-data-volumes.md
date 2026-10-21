@@ -1,6 +1,6 @@
 # Phase 7 design: data volumes (create, attach, detach, resize, delete)
 
-Status: **proposal; lab checks D1 to D6 and D8 to D12 done (section 10), D7 to be repeated; decisions 1 to 6 accepted (per-account holder).** Nothing described here is implemented. "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
+Status: **implemented (2026-10-21)**; lab checks D1 to D12 done (section 10); decisions 1 to 6 accepted (per-account holder). Unit tested; the lab runs of the finished feature are listed in test-log.md. "V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under
 `promox-src`, branch `stable-bookworm`, qemu-server and pve-storage). "U" means **unverified**: `pve-manager` (the storage content API) is not mirrored, or it has not been run.
 Each U has a lab check in section 8.
 
@@ -170,7 +170,7 @@ instance, detach, re-attach to another instance, resize while attached, delete, 
 | D4 | **Pass.** `PUT config delete=scsi2` on the running VM unplugged it (file no longer open), left **no `unusedN` entry**, and the file stayed in the folder |
 | D5 | **Pass.** The same image attached again to the same VM and then to another VM |
 | D6 | **Pass.** `DELETE .../qemu/<id>?purge=1` of a VM that had a holder-owned disk attached destroyed the VM; both images were still listed afterwards |
-| D7 | **Command error, to repeat:** `size=+1G` was sent unencoded (`+` became a space, "value does not match the regex pattern"), and the "shrink" test asked for the size the disk already had. Use `--data-urlencode` (the plugin encodes properly) |
+| D7 | **Pass** (second run; the first had an unencoded `+` in `size=+1G`). Live and offline growth work, with an absolute size (`2G`) or `+1G`, and the resize answers with a task; **a shrink request returns a task that fails** (the disk stays at its size), so the plugin must wait for the task and refuses a shrink itself |
 | D8 | **Pass, and softer than assumed.** An unreferenced image `vm-9502-orphan.qcow2` of vmid 9502 was **kept** when the API destroyed VM 9502 with `purge=1` (the VM's own disk was removed). So the API does not destroy unreferenced disks by default (the UI checkbox does) |
 | D9 | **Pass, with a limit.** `DELETE .../storage/<pool>/content/<volume ID>` (the volume ID URL-encoded) by the token returned an `imgdel` task and removed the image, **also while a stopped VM still referenced it** (no protection, a dangling reference is left). CloudStack only deletes detached volumes, so the plugin relies on that |
 | D10 | **Pass.** A SATA drive added to the running VM is **pending** (`qm pending` shows it, `--current` does not) and `PUT config revert=sata1` removes it; a VirtIO drive is applied live and `delete=virtio1` removes it |

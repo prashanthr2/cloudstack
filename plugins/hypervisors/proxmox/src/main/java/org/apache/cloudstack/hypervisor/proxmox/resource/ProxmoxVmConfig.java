@@ -16,16 +16,21 @@
 // under the License.
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.storage.to.VolumeObjectTO;
 import org.apache.commons.lang3.StringUtils;
 
 import com.cloud.agent.api.to.NicTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
+import com.cloud.offering.DiskOffering.DiskCacheMode;
 import com.cloud.template.VirtualMachineTemplate.BootloaderType;
 import com.cloud.vm.VmDetailConstants;
 
@@ -108,7 +113,12 @@ public final class ProxmoxVmConfig {
      * scsi0 on the virtio-scsi controller, virtio is a virtio block disk, sata is sata0. ide is refused, because the IDE drives are the CD-ROM drives.
      */
     static String rootDiskDrive(VirtualMachineTO vm) {
-        String requested = vm.getDetails() == null ? null : vm.getDetails().get(VmDetailConstants.ROOT_DISK_CONTROLLER);
+        return rootDiskDrive(vm.getDetails());
+    }
+
+    /** As above, from the details of a VM (an attach command carries them as "controller info"). */
+    static String rootDiskDrive(Map<String, String> details) {
+        String requested = details == null ? null : details.get(VmDetailConstants.ROOT_DISK_CONTROLLER);
         if (StringUtils.isBlank(requested)) {
             return ROOT_DISK;
         }
@@ -135,6 +145,128 @@ public final class ProxmoxVmConfig {
             String value = config.get(drive);
             if (value != null && volumePath != null && value.contains(volumePath)) {
                 return drive;
+            }
+        }
+        return null;
+    }
+
+    // ---- data volumes (Phase 7): disk images owned by a per-account holder vmid, see design-phase7-data-volumes.md ----
+
+    /** The holder of an account's data volumes is this plus the account id; 900000001 to 999999999 are reserved for CloudStack. */
+    static final long HOLDER_BASE = 900_000_000L;
+    static final long MAX_ACCOUNT_ID = 99_999_999L;
+    private static final Pattern HOLDER_VOLUME = Pattern.compile(":9\\d{8}/vm-9\\d{8}-");
+    private static final long MIB_BYTES = 1024L * 1024L;
+
+    /** True for a VM id in the range reserved for the holders of data volumes. */
+    public static boolean isReservedVmId(long vmid) {
+        return vmid > HOLDER_BASE && vmid <= 999_999_999L;
+    }
+
+    /** The vmid that owns the data volumes of an account: 900000000 + the account id. */
+    public static long holderVmId(long accountId) {
+        if (accountId < 1 || accountId > MAX_ACCOUNT_ID) {
+            throw new ProxmoxApiException("The account id " + accountId + " is outside 1 to " + MAX_ACCOUNT_ID + ", the accounts whose data volumes Proxmox can hold");
+        }
+        return HOLDER_BASE + accountId;
+    }
+
+    /** The path of a data volume in its storage entry: "&lt;holder&gt;/vm-&lt;holder&gt;-&lt;volume uuid&gt;.qcow2". */
+    public static String dataVolumePath(long accountId, String volumeUuid) {
+        long holder = holderVmId(accountId);
+        return holder + "/vm-" + holder + "-" + volumeUuid + ".qcow2";
+    }
+
+    /** True when a drive's value (or a volume id) names a data volume, that is a disk owned by a holder vmid. */
+    public static boolean isHolderVolume(String driveValue) {
+        return driveValue != null && HOLDER_VOLUME.matcher(driveValue).find();
+    }
+
+    /** The controller of a drive name: "scsi", "virtio" or "sata". */
+    static String controllerOf(String drive) {
+        return drive.replaceAll("\\d+$", "");
+    }
+
+    /**
+     * The drive of a data volume: its controller is the detail "dataDiskController" (scsi, virtio, sata), by default the one of the root disk so
+     * that a guest that needed sata for its root disk does not get disks it has no driver for; the number is CloudStack's device id.
+     */
+    public static String dataDrive(Long deviceId, Map<String, String> details) {
+        String requested = details == null ? null : details.get(VmDetailConstants.DATA_DISK_CONTROLLER);
+        String controller;
+        if (StringUtils.isBlank(requested) || "osdefault".equalsIgnoreCase(requested.trim())) {
+            controller = controllerOf(rootDiskDrive(details));
+        } else {
+            switch (requested.trim().toLowerCase(Locale.ROOT)) {
+                case "scsi":
+                case "virtio-scsi":
+                    controller = "scsi";
+                    break;
+                case "virtio":
+                    controller = "virtio";
+                    break;
+                case "sata":
+                    controller = "sata";
+                    break;
+                default:
+                    throw new ProxmoxApiException("The data disk controller " + requested + " is not supported for Proxmox: use scsi, virtio or sata");
+            }
+        }
+        int max = "scsi".equals(controller) ? 30 : "virtio".equals(controller) ? 15 : 5;
+        if (deviceId == null || deviceId < 1 || deviceId > max) {
+            throw new ProxmoxApiException(String.format("Device id %s cannot be used on the %s controller of a Proxmox VM, which has the drives %s1 to %s%d", deviceId,
+                    controller, controller, controller, max));
+        }
+        return controller + deviceId;
+    }
+
+    /**
+     * The options of a drive that come from the disk offering of the volume: cache mode, and the limits (iops as they are, bandwidth in
+     * megabytes per second) as ",iops_rd=100,mbps_wr=10"; empty when the volume has none.
+     */
+    public static String driveOptions(VolumeObjectTO volume) {
+        StringBuilder options = new StringBuilder();
+        DiskCacheMode cache = volume.getCacheMode();
+        if (cache == DiskCacheMode.WRITEBACK || cache == DiskCacheMode.WRITETHROUGH) {
+            options.append(",cache=").append(cache.toString().toLowerCase(Locale.ROOT));
+        }
+        appendLimit(options, "iops_rd", volume.getIopsReadRate(), false);
+        appendLimit(options, "iops_wr", volume.getIopsWriteRate(), false);
+        appendLimit(options, "mbps_rd", volume.getBytesReadRate(), true);
+        appendLimit(options, "mbps_wr", volume.getBytesWriteRate(), true);
+        return options.toString();
+    }
+
+    private static void appendLimit(StringBuilder options, String name, Long value, boolean bytesToMegabytes) {
+        if (value == null || value <= 0) {
+            return;
+        }
+        String text = bytesToMegabytes
+                ? BigDecimal.valueOf(value).divide(BigDecimal.valueOf(MIB_BYTES), 2, RoundingMode.HALF_UP).max(new BigDecimal("0.01")).stripTrailingZeros().toPlainString()
+                : Long.toString(value);
+        options.append(',').append(name).append('=').append(text);
+    }
+
+    /** True when every option of {@code wantedOptions} (",a=b,c=d") is in the drive value; the size, which Proxmox adds itself, is not compared. */
+    public static boolean driveHasOptions(String driveValue, String wantedOptions) {
+        String have = "," + StringUtils.substringAfter(StringUtils.defaultString(driveValue), ",") + ",";
+        for (String wanted : StringUtils.split(StringUtils.defaultString(wantedOptions), ',')) {
+            if (!have.contains("," + wanted + ",")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The drive of a VM configuration that holds the volume at {@code volumePath}, or null. Looks at disk drives only (not CD-ROMs). */
+    public static String driveHolding(Map<String, String> config, String volumePath) {
+        if (StringUtils.isBlank(volumePath)) {
+            return null;
+        }
+        for (Map.Entry<String, String> entry : config.entrySet()) {
+            String key = entry.getKey();
+            if (key.matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && entry.getValue().contains(":" + volumePath)) {
+                return key;
             }
         }
         return null;

@@ -345,6 +345,7 @@ public class QueryManagerImplTest {
 
         Assert.assertEquals(Arrays.asList("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3"), options.get("nicAdapter"));
         Assert.assertEquals(Arrays.asList("scsi", "virtio", "sata"), options.get("rootDiskController"));
+        Assert.assertEquals(Arrays.asList("scsi", "virtio", "sata"), options.get("dataDiskController"));
         Assert.assertFalse(options.containsKey("videoHardware"));
 
         Map<String, List<String>> none = new java.util.HashMap<>();

@@ -473,3 +473,25 @@ for ten seconds (Proxmox had moved its configuration there and not yet started i
 Stopped, and then Running again on the new host when the VM started. Fix: the plugin reports only running VMs, like KVM (behaviour.md, section 3; open issue 1 is closed). Plugin: 222 tests pass. To verify on the lab: repeat
 P5-6 and check that the log shows no `PowerOff` report and no Stopped state for the HA VM during the recovery.
 
+### Phase 7 implementation, unit tests (2026-10-21)
+
+New: `ProxmoxApiClient` (`allocateImage`, `getImageInfo`, `deleteImage`, `resizeDisk` now returns the task), `ProxmoxVmConfig` (holder ids and the reserved range, the data drive and its controller, the drive options from the disk
+offering, finding the drive that holds a volume), and in `ProxmoxVmHandler`: create (data volume), attach, detach, the data drives and stale-drive removal at start, the offering limits on the root drive, delete of a data
+volume, resize, volume statistics, and a guard against a VM id in the reserved range; `dataDiskController` is offered for Proxmox in the settings suggestions (`QueryManagerImpl`). Plugin: **265 tests pass** (was 222):
+`ProxmoxVmHandlerDataVolumeTest` (26), `ProxmoxVmConfigTest` (+10), `ProxmoxApiClientVmTest` (+6); core `QueryManagerImplTest` (37) passes.
+
+Lab runs to record (fill in the Result column as they are run; use an account other than admin for one of them):
+
+| # | Steps | Expected | Result |
+|---|---|---|---|
+| P7-1 | Create a data volume and attach it to a running instance (scsi controller) | The attach succeeds; Proxmox shows a `scsi1` drive `...:900000002/vm-900000002-<uuid>.qcow2`; the file is in `images/900000002/` | |
+| P7-2 | Format and mount it in the guest, write a file, detach the volume, attach it to another instance | The data is there on the second instance; no `unusedN` line in the first VM's configuration | |
+| P7-3 | Grow the attached volume (resize to a larger size) | The size grows in CloudStack and in Proxmox; the guest sees it after a rescan | |
+| P7-4 | Try to resize a detached volume, and to shrink an attached one | Both fail with a clear message | |
+| P7-5 | Stop and start the instance with the volume attached; then detach while stopped and start again | The volume is a drive after the start; after the detach and start it is gone from the configuration | |
+| P7-6 | Delete the instance (expunge) with a volume attached, then check the volume | The volume is `Ready` and detached in CloudStack, its file is still in `images/<holder>/` | |
+| P7-7 | Delete a detached volume | The file is gone from `images/<holder>/` | |
+| P7-8 | Set `dataDiskController` = `sata` on a stopped instance, start it, attach a volume while running | The attach fails with "stop and start" and no pending change is left (`qm pending`); after a restart the drive is `sata1` | |
+| P7-9 | Migrate an instance that has a data volume | It migrates with the volume attached | |
+| P7-10 | Use a disk offering with iops and bandwidth limits for the root disk and a data disk | Proxmox shows `iops_rd` / `mbps_wr` on the drives | |
+

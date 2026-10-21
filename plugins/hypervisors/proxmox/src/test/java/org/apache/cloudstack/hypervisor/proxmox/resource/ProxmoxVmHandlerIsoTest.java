@@ -343,8 +343,8 @@ public class ProxmoxVmHandlerIsoTest {
     }
 
     @Test
-    public void onlyRootVolumesWithASizeAreCreated() {
-        assertTrue(handler.createObject(blankRootVolume(GIB, Volume.Type.DATADISK)) instanceof UnsupportedAnswer);
+    public void onlyRootAndDataVolumesWithASizeAreCreated() {
+        assertTrue(handler.createObject(blankRootVolume(GIB, Volume.Type.UNKNOWN)) instanceof UnsupportedAnswer);
 
         Answer noSize = handler.createObject(blankRootVolume(null, Volume.Type.ROOT));
         assertFalse(noSize.getResult());
