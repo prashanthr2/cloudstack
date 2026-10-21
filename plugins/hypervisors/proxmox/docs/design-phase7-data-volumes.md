@@ -128,11 +128,26 @@ and delete it. requirements.md gets the confirmation.
 
 ## 7. Test plan once built
 
-Unit tests: the slot and controller mapping (ranges, `dataDiskController`, default from the root), the volume path and Proxmox ID, create (allocation parameters, size rounding, idempotence), attach (running with a
-hot-plugged drive, SATA reverted and refused, slot in use, stopped), detach (by path, not attached), start with data volumes (drives set, stale drive deleted), resize (grow, shrink refused, not attached refused),
-delete (data volume deletes the image and never a VM), volume stats, the unsupported cases with their messages, QoS options. Lab runs listed in the test log after the build: create and attach to a running and a stopped
-instance, detach, re-attach to another instance, resize while attached, delete, delete the instance and check the volume survives, start with a volume attached, migrate an instance with a volume, and the same with
-`dataDiskController=sata`.
+**Unit tests** (all written with the code; the numbers are in test-log.md):
+- Slot and controller mapping: the ranges of each controller, `dataDiskController`, the default taken from the root disk, `ide` refused.
+- Volume path and Proxmox ID, the holder id of an account, the reserved range.
+- Create: the allocation parameters, size rounded up to whole GiB, idempotence, an account outside the range, a VM id in the reserved range.
+- Attach: a running instance with a hot-plugged drive, SATA taken back and refused, a slot in use, a stopped instance, offering options on the drive.
+- Detach: found by path, not attached, a drive that cannot be unplugged.
+- Start with data volumes: drives set, stale drive deleted (in one list with a moved root disk), two disks on one drive refused, offering limits on the root drive.
+- Resize: grow, shrink refused, same size, not attached refused.
+- Delete: a data volume deletes its image and never a VM, an image that is gone.
+- Volume stats, the unsupported cases with their messages.
+
+**Lab runs** (listed in test-log.md after the build, P7-1 to P7-10):
+- Create and attach a volume to a running and to a stopped instance.
+- Detach it, and attach it to another instance.
+- Resize while attached.
+- Delete the volume.
+- Delete the instance and check the volume survives.
+- Start an instance with a volume attached.
+- Migrate an instance that has a volume.
+- Repeat with `dataDiskController` = `sata`.
 
 ## 8. Lab checks before building (on a Proxmox node, with the token, a throwaway pool entry or the real pool, and a throwaway VM)
 
