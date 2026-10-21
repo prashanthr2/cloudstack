@@ -30,9 +30,15 @@ Last updated 2026-10-20.
 | 11 | **CloudStack does not set Proxmox's HA maintenance mode** | No REST endpoint (lab L8); run `ha-manager crm-command node-maintenance enable <node>` on a node if Proxmox HA must also avoid it |
 | 12 | **TLS: only "verify against the Java truststore" or "do not verify"** | No certificate pinning |
 
+| 13 | **A detached data volume cannot be resized** | Proxmox has no resize for a disk that no VM uses; the volume must be attached first. A shrink is refused (CloudStack itself refuses it for QCOW2) |
+| 14 | **The vmids 900000001 to 999999999 are reserved for CloudStack** | They own the data volumes (`900000000 + account id`). A VM with such an id, destroyed with the "destroy unreferenced disks" option of the Proxmox UI, would remove that account's volumes. Documented; the plugin refuses to create a VM in that range |
+| 15 | **A SATA data disk cannot be attached to or detached from a running instance** | Proxmox cannot hot-plug it: attach or detach while the instance is stopped. SCSI and VirtIO work live |
+| 16 | **Proxmox deletes an image that a VM still refers to** | The plugin deletes a data volume's image only when CloudStack asks (it only does so for a detached volume); nothing in the plugin checks the VM configurations |
+| 17 | **Data volumes cannot be copied, snapshotted, uploaded, downloaded or moved to another pool yet** | Answered with "not supported for Proxmox yet" |
+| 18 | **`dataDiskController` and `rootDiskController` are read-only for regular users** | The global setting `user.vm.readonly.details` makes them admin-only by default; remove them from it if users should set them |
+
 ## Later work (not started)
 
-- Data volumes (`AttachCommand` for a volume, `CreateObjectCommand` for a data volume, volume resize and delete).
 - System VMs and virtual routers on Proxmox.
 - Snapshots (VM and volume), backup.
 - Removing storage entries that are no longer used (items 8).
