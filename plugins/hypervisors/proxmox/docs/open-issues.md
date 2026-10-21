@@ -1,13 +1,12 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-20.
+Last updated 2026-10-21.
 
 ## Decisions waiting for you
 
 | # | Issue | What is known | Proposal | Status |
 |---|---|---|---|---|
-| 1 | **Report only running VMs** | **Done (2026-10-20)**, found necessary by P5-6: a stopped VM reported as PowerOff made CloudStack release the resources of an HA VM during recovery. To verify by repeating P5-6 (no `PowerOff` report and no Stopped state for the HA VM during the recovery). Trade-off: an out-of-band guest shutdown is found after about two ping intervals |
 | 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. Not reproduced: the forced stop on 2026-10-20 took about 1 s. The option is refused for HA resources ("Not applicable for HA resources") | Send it, and retry without it when Proxmox answers with that HA message | **Parked, add only if a stop is seen to fail** (test: Stop, then Force stop a few seconds later, on a guest that ignores shutdown) |
 
 ## To verify on the lab
@@ -15,7 +14,7 @@ Last updated 2026-10-20.
 | # | Item | Notes |
 |---|---|---|
 | 3 | **CentOS 5 instance boots with `rootDiskController` = `sata`** | The P6-3 instance panicked at boot ("Volume group VolGroup00 not found"): the guest's ramdisk has no virtio-scsi driver, the ISO is not the cause. Set the detail on the stopped instance (or on the template) and start it. If it still panics, try `vm.iso.max.count` = 1 to rule out the four CD drives |
-| 4 | **Phase 5 runs still open** | a repeat of P5-6 to verify the "report only running VMs" fix during a node failure (item 1; P5-7 already shows the fix works for a Proxmox-initiated move). P5-1 to P5-7 pass. Steps and expected results are in test-log.md |
+| 4 | **Phase 5 runs still open** | a repeat of P5-6 to verify the "report only running VMs" fix during a node failure (P5-7 already shows the fix works for a Proxmox-initiated move; the trade-off of the fix is that an out-of-band guest shutdown is found after about two ping intervals). P5-1 to P5-7 pass. Steps and expected results are in test-log.md |
 | 5 | **HA stop and the shutdown timeout** | After a CloudStack stop `ha-manager` shows the resource `stopped` (confirmed in P5-5). Still not measured: whether the HA stop honours the 60 s shutdown timeout (the VM stopped after about 30 s in L4) |
 
 ## Known limits (not bugs; confirm they are acceptable)
@@ -42,4 +41,4 @@ Last updated 2026-10-20.
 - Snapshots (VM and volume), backup.
 - Removing storage entries that are no longer used (items 8).
 - A way for a hypervisor plugin to declare its own VM settings instead of the hard-coded list in core (upstream-notes.md, 16).
-- Everything in upstream-notes.md (items 1 to 16) is to be turned into separate, minimal pull requests; the core changes are kept as small as they are for that reason.
+- Everything in upstream-notes.md (items 1 to 18) is to be turned into separate, minimal pull requests; the core changes are kept as small as they are for that reason.
