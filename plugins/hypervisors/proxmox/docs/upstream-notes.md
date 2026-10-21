@@ -96,4 +96,6 @@ security problem: those are reported privately, not as public issues.
     sets `executeInSequence` on every `StorageSubSystemCommand` (false) and on every `CopyCommand` to a primary storage (true) without looking at the hypervisor, before it returns that the host
     did not change. A hypervisor that is not KVM therefore gets its copy commands serialised per host whatever `execute.in.sequence.hypervisor.commands` says (seen with Proxmox: three
     deployments at once, the third waited). Possible direction: act only on commands whose `hypervisorType` is KVM. The Proxmox plugin works around it in its own guru.
+18. **Volume resize is allowed per hypervisor by a hard-coded list** (`VolumeApiServiceImpl.SupportedHypervisorsForVolResize`, KVM, XenServer, VMware, Simulator, Any, None), checked in two places, so a new hypervisor
+    type fails "does not support volume resize" for every resize until it is added (Proxmox is added, one line). The same pattern as the live-migration lists (13); a capability on `HypervisorType` would replace them.
 

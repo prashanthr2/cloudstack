@@ -499,3 +499,6 @@ Lab finding (2026-10-21, first P7-1 attempt): attaching a data volume failed wit
 `AttachCommand` with a plain `Answer`, and `VolumeApiServiceImpl` casts the reply to `AttachAnswer` (a failure too). Fixed: the volume attach answers with `AttachAnswer` (the disk, or the message), the volume detach with
 `DettachAnswer`; the tests now assert the answer types. Plugin: 265 tests pass.
 
+Lab finding (2026-10-21, P7-3): resizing an attached data volume was refused by core with "Hypervisor Proxmox does not support volume resize" before any command reached the plugin: `VolumeApiServiceImpl` allows a resize only for
+the hypervisors in `SupportedHypervisorsForVolResize`. Proxmox added to that list (upstream-notes.md, 18); the other KVM-specific checks near the resize, attach and detach paths do not affect Proxmox (read in the code). `VolumeApiServiceImplTest` (159) passes.
+

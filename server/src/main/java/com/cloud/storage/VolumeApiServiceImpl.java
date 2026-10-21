@@ -395,7 +395,7 @@ public class VolumeApiServiceImpl extends ManagerBase implements VolumeApiServic
     protected Gson _gson;
 
     private static final List<HypervisorType> SupportedHypervisorsForVolResize = Arrays.asList(HypervisorType.KVM, HypervisorType.XenServer,
-            HypervisorType.VMware, HypervisorType.Simulator, HypervisorType.Any, HypervisorType.None);
+            HypervisorType.VMware, HypervisorType.Proxmox, HypervisorType.Simulator, HypervisorType.Any, HypervisorType.None);
     private List<StoragePoolAllocator> _storagePoolAllocators;
 
     private List<HypervisorType> supportingDefaultHV;
@@ -1247,7 +1247,7 @@ public class VolumeApiServiceImpl extends ManagerBase implements VolumeApiServic
             newDiskOffering = _diskOfferingDao.findById(cmd.getNewDiskOfferingId());
         }
 
-        /* Only works for KVM/XenServer/VMware (or "Any") for now, and volumes with 'None' since they're just allocated in DB */
+        /* Only works for KVM/XenServer/VMware/Proxmox (or "Any") for now, and volumes with 'None' since they're just allocated in DB */
 
         HypervisorType hypervisorType = _volsDao.getHypervisorType(volume.getId());
         if (!SupportedHypervisorsForVolResize.contains(hypervisorType)) {
@@ -2474,7 +2474,7 @@ public class VolumeApiServiceImpl extends ManagerBase implements VolumeApiServic
             throw new CloudRuntimeException("There is/are unbacked up snapshot(s) on this volume, resize volume is not permitted, please try again later.");
         }
 
-        /* Only works for KVM/XenServer/VMware (or "Any") for now, and volumes with 'None' since they're just allocated in DB */
+        /* Only works for KVM/XenServer/VMware/Proxmox (or "Any") for now, and volumes with 'None' since they're just allocated in DB */
         HypervisorType hypervisorType = _volsDao.getHypervisorType(volume.getId());
 
         if (!SupportedHypervisorsForVolResize.contains(hypervisorType)) {
