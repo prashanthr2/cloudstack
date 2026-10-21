@@ -514,3 +514,7 @@ Lab finding (2026-10-21, P7-10): the disk offering had read and write iops 50, r
 keeps three decimals and turns that into no limit). Now the burst values map to `mbps_rd_max`, `mbps_wr_max`, `iops_rd_max`, `iops_wr_max` with `*_max_length` (seconds), only when the base limit is set and the burst is not below it (Proxmox
 refuses a burst without its base), and bandwidth keeps six decimals. Plugin: 267 tests pass. To verify: start an instance whose offering has bursts and check the drive in `qm config`.
 
+Lab finding (2026-10-21, open issue 2): with a graceful shutdown started in Proxmox (`qm shutdown <vmid> --timeout 120`) on a guest that ignores it, a force stop from CloudStack failed with
+`Proxmox task qmstop failed: can't lock file '/var/lock/qemu-server/lock-<vmid>.conf' - got timeout`. CloudStack serialises the jobs of one VM, so this only happens for a shutdown started outside CloudStack. Fixed in
+`ProxmoxApiClient.stopVm` (`overrule-shutdown=1`, repeated without the option on an HTTP 400 for HA VMs; `ProxmoxApiClientVmTest` +3, plugin 270 tests pass). To verify: repeat the same test, the force stop should succeed within a few seconds.
+

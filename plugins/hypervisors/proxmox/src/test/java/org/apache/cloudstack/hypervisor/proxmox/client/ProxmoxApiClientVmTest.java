@@ -44,6 +44,8 @@ import org.junit.Test;
 /** The VM, task and template-storage calls, against a fake Proxmox that answers by "METHOD path". */
 public class ProxmoxApiClientVmTest {
     private static final String UPID = "UPID:pve1:00010B1A:00246999:6ACCFCCB:qmcreate:9202:pveaudit@pam!cloudstack:";
+    /** An answer "@400" is an HTTP error with that status. */
+    private static final String ERROR_PREFIX = "@";
 
     private final Map<String, List<String>> answers = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
@@ -68,7 +70,11 @@ public class ProxmoxApiClientVmTest {
             if (queue == null) {
                 return response(404, "");
             }
-            return response(200, queue.size() > 1 ? queue.remove(0) : queue.get(0));
+            String body = queue.size() > 1 ? queue.remove(0) : queue.get(0);
+            if (body.startsWith(ERROR_PREFIX)) {
+                return response(Integer.parseInt(body.substring(ERROR_PREFIX.length())), "");
+            }
+            return response(200, body);
         });
         client = new ProxmoxApiClient(Collections.singletonList("https://pve1:8006"), "pveaudit@pam!cloudstack", "secret", http) {
             @Override
@@ -483,5 +489,36 @@ public class ProxmoxApiClientVmTest {
 
         assertEquals("UPID:pve1:1:2:3:resize:9204:u:", client.resizeDisk("pve1", 9204, "scsi1", "5G"));
         assertEquals("disk=scsi1&size=5G", bodies.get(0));
+    }
+
+    @Test
+    public void aStopAbortsAShutdownThatIsStillRunning() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/status/stop", task("UPID:pve1:1:2:3:qmstop:9204:u:"));
+
+        assertEquals("UPID:pve1:1:2:3:qmstop:9204:u:", client.stopVm("pve1", 9204));
+        assertEquals("overrule-shutdown=1", bodies.get(0));
+    }
+
+    @Test
+    public void aStopIsRepeatedWithoutTheOptionWhenProxmoxRefusesItAsForAnHaResource() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/status/stop", "@400", task("UPID:pve1:1:2:3:hastop:9204:u:"));
+
+        assertEquals("UPID:pve1:1:2:3:hastop:9204:u:", client.stopVm("pve1", 9204));
+        assertEquals(2, bodies.size());
+        assertEquals("overrule-shutdown=1", bodies.get(0));
+        assertEquals("", bodies.get(1));
+    }
+
+    @Test
+    public void aStopThatFailsForAnotherReasonIsNotRepeated() {
+        answer("POST /api2/json/nodes/pve1/qemu/9204/status/stop", "@403");
+
+        try {
+            client.stopVm("pve1", 9204);
+            org.junit.Assert.fail("a refusal must be reported");
+        } catch (ProxmoxApiException e) {
+            assertEquals(403, e.getStatusCode());
+        }
+        assertEquals(1, bodies.size());
     }
 }

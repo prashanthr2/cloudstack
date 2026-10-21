@@ -5,14 +5,13 @@ Last updated 2026-10-21.
 
 ## Decisions waiting for you
 
-| # | Issue | What is known | Proposal | Status |
-|---|---|---|---|---|
-| 2 | **Forced stop while a graceful shutdown is still running** | Proxmox has `overrule-shutdown` to abort the running shutdown task; the plugin does not send it. CloudStack itself serialises the jobs of one VM (a forced stop waits for a graceful stop job that is still running), so the plugin only meets this when a shutdown was started **outside CloudStack** (the Proxmox UI, `qm shutdown`, HA). The option is refused for HA resources ("Not applicable for HA resources") | If a forced stop is seen to fail on the shutdown's lock: send it, and retry without it when Proxmox answers with that HA message | **Being tested (2026-10-21)**: a shutdown with a long timeout started in Proxmox on a guest that ignores it, then a force stop from CloudStack |
+None at the moment.
 
 ## To verify on the lab
 
 | # | Item | Notes |
 |---|---|---|
+| 2 | **Forced stop during a shutdown started in Proxmox** | Reproduced on 2026-10-21 (`qm shutdown --timeout 120` on a guest that ignores it, then a force stop from CloudStack: `can't lock file ... got timeout`). Fixed: a stop now sends `overrule-shutdown=1`, and repeats without it on an HTTP 400 (the option is refused for HA VMs). To verify: repeat the same test |
 | 4 | **Phase 5 runs still open** | a repeat of P5-6 to verify the "report only running VMs" fix during a node failure (P5-7 already shows the fix works for a Proxmox-initiated move; the trade-off of the fix is that an out-of-band guest shutdown is found after about two ping intervals). P5-1 to P5-7 pass. Steps and expected results are in test-log.md |
 | 5 | **HA stop and the shutdown timeout** | After a CloudStack stop `ha-manager` shows the resource `stopped` (confirmed in P5-5). Still not measured: whether the HA stop honours the 60 s shutdown timeout (the VM stopped after about 30 s in L4) |
 

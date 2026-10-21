@@ -322,6 +322,7 @@ Design and the reasons: design-phase5-migration-ha.md. What happens:
   Proxmox does the work later (lab L4: up to about 75 s for a stop). The plugin polls the VM's state (every 2 s, up to `proxmox.task.timeout`, for a move
   `proxmox.migration.timeout`) and fails with a clear message if it never gets there. Starting a VM that is on another node first moves it to the deployment
   node and waits until it is there.
+- **A forced stop aborts a shutdown that is still running.** The stop is sent with `overrule-shutdown`, because a graceful shutdown that was started outside CloudStack (the Proxmox UI, `qm shutdown`, HA) holds the VM's lock and a plain stop fails with "can't lock file ... got timeout" (lab 2026-10-21). Proxmox refuses the option for a VM under HA, so on an HTTP 400 the stop is repeated without it.
 - **A stop always acts on the node the VM really is on**, even right after Proxmox HA moved it (CloudStack learns of the new host within one `ping.interval`).
   One exception: after a *failed* migration CloudStack sends a plain stop to the destination, while the VM is still running on the source. The destination
   remembers (in memory) that it was prepared for that VM; a stop or reboot that arrives there for a VM running on another node is answered with success and

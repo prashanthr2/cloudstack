@@ -881,7 +881,20 @@ public class ProxmoxApiClient implements Closeable {
 
     /** Hard stop, like pulling the power. */
     public String stopVm(String node, long vmid) {
-        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/stop", null));
+        String path = "/nodes/" + node + "/qemu/" + vmid + "/status/stop";
+        // A graceful shutdown that is still running (started in Proxmox, not by CloudStack, which serialises the jobs of a VM) holds the VM's lock, and a
+        // stop then fails with "can't lock file ... got timeout" (lab 2026-10-21); "overrule-shutdown" aborts that shutdown first.
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("overrule-shutdown", "1");
+        try {
+            return taskId(post(path, form));
+        } catch (ProxmoxApiException e) {
+            if (e.getStatusCode() != 400) {
+                throw e;
+            }
+            // Proxmox refuses the option for a VM under HA ("Not applicable for HA resources"; the stop is then only a request to the HA manager)
+            return taskId(post(path, null));
+        }
     }
 
     /** Asks the guest to shut down; after {@code timeoutSeconds} the VM is stopped by force. */
