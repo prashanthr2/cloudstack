@@ -397,8 +397,38 @@ public class ProxmoxVmConfigTest {
 
         assertEquals(",cache=writethrough,iops_rd=500,iops_wr=250,mbps_rd=20,mbps_wr=1.5", ProxmoxVmConfig.driveOptions(volume));
         when(volume.getCacheMode()).thenReturn(com.cloud.offering.DiskOffering.DiskCacheMode.NONE);
-        when(volume.getBytesWriteRate()).thenReturn(10L);
-        assertTrue(ProxmoxVmConfig.driveOptions(volume).endsWith(",mbps_wr=0.01"));
+        // a small limit is kept to six decimals (100 bytes per second is 0.000095 MB/s), not rounded up to a hundredth
+        when(volume.getBytesWriteRate()).thenReturn(100L);
+        assertTrue(ProxmoxVmConfig.driveOptions(volume), ProxmoxVmConfig.driveOptions(volume).endsWith(",mbps_wr=0.000095"));
+    }
+
+    @Test
+    public void theBurstValuesOfTheOfferingAreDriveOptionsWhenTheyAreNotBelowTheirLimit() {
+        org.apache.cloudstack.storage.to.VolumeObjectTO volume = mock(org.apache.cloudstack.storage.to.VolumeObjectTO.class);
+        when(volume.getIopsReadRate()).thenReturn(50L);
+        when(volume.getIopsReadRateMax()).thenReturn(100L);
+        when(volume.getIopsReadRateMaxLength()).thenReturn(10L);
+        when(volume.getBytesReadRate()).thenReturn(10L * 1024 * 1024);
+        when(volume.getBytesReadRateMax()).thenReturn(20L * 1024 * 1024);
+        when(volume.getBytesReadRateMaxLength()).thenReturn(30L);
+        // the write limits are below their burst: the burst is left out
+        when(volume.getIopsWriteRate()).thenReturn(80L);
+        when(volume.getIopsWriteRateMax()).thenReturn(70L);
+        when(volume.getBytesWriteRate()).thenReturn(5L * 1024 * 1024);
+        when(volume.getBytesWriteRateMax()).thenReturn(5L * 1024 * 1024);
+
+        assertEquals(",iops_rd=50,iops_rd_max=100,iops_rd_max_length=10,iops_wr=80,mbps_rd=10,mbps_rd_max=20,mbps_rd_max_length=30,mbps_wr=5,mbps_wr_max=5",
+                ProxmoxVmConfig.driveOptions(volume));
+    }
+
+    @Test
+    public void aBurstWithoutItsBaseLimitIsLeftOutBecauseProxmoxRefusesIt() {
+        org.apache.cloudstack.storage.to.VolumeObjectTO volume = mock(org.apache.cloudstack.storage.to.VolumeObjectTO.class);
+        when(volume.getIopsReadRateMax()).thenReturn(100L);
+        when(volume.getBytesWriteRateMax()).thenReturn(5L * 1024 * 1024);
+        when(volume.getBytesWriteRateMaxLength()).thenReturn(10L);
+
+        assertEquals("", ProxmoxVmConfig.driveOptions(volume));
     }
 
     @Test

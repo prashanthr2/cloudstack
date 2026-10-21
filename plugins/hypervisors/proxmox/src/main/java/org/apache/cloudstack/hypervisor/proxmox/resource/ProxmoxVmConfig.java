@@ -221,8 +221,9 @@ public final class ProxmoxVmConfig {
     }
 
     /**
-     * The options of a drive that come from the disk offering of the volume: cache mode, and the limits (iops as they are, bandwidth in
-     * megabytes per second) as ",iops_rd=100,mbps_wr=10"; empty when the volume has none.
+     * The options of a drive that come from the disk offering of the volume: cache mode, the limits (iops as they are, bandwidth in
+     * megabytes per second) and the bursts (the "max" values, with their length in seconds) as ",iops_rd=100,mbps_wr=10,mbps_wr_max=15,mbps_wr_max_length=10";
+     * empty when the volume has none. A burst is only passed with its base limit (Proxmox refuses it otherwise) and when it is not below it.
      */
     public static String driveOptions(VolumeObjectTO volume) {
         StringBuilder options = new StringBuilder();
@@ -230,21 +231,33 @@ public final class ProxmoxVmConfig {
         if (cache == DiskCacheMode.WRITEBACK || cache == DiskCacheMode.WRITETHROUGH) {
             options.append(",cache=").append(cache.toString().toLowerCase(Locale.ROOT));
         }
-        appendLimit(options, "iops_rd", volume.getIopsReadRate(), false);
-        appendLimit(options, "iops_wr", volume.getIopsWriteRate(), false);
-        appendLimit(options, "mbps_rd", volume.getBytesReadRate(), true);
-        appendLimit(options, "mbps_wr", volume.getBytesWriteRate(), true);
+        appendLimit(options, "iops_rd", volume.getIopsReadRate(), volume.getIopsReadRateMax(), volume.getIopsReadRateMaxLength(), false);
+        appendLimit(options, "iops_wr", volume.getIopsWriteRate(), volume.getIopsWriteRateMax(), volume.getIopsWriteRateMaxLength(), false);
+        appendLimit(options, "mbps_rd", volume.getBytesReadRate(), volume.getBytesReadRateMax(), volume.getBytesReadRateMaxLength(), true);
+        appendLimit(options, "mbps_wr", volume.getBytesWriteRate(), volume.getBytesWriteRateMax(), volume.getBytesWriteRateMaxLength(), true);
         return options.toString();
     }
 
-    private static void appendLimit(StringBuilder options, String name, Long value, boolean bytesToMegabytes) {
-        if (value == null || value <= 0) {
+    private static void appendLimit(StringBuilder options, String name, Long rate, Long burst, Long burstSeconds, boolean bytesToMegabytes) {
+        if (rate == null || rate <= 0) {
             return;
         }
-        String text = bytesToMegabytes
-                ? BigDecimal.valueOf(value).divide(BigDecimal.valueOf(MIB_BYTES), 2, RoundingMode.HALF_UP).max(new BigDecimal("0.01")).stripTrailingZeros().toPlainString()
-                : Long.toString(value);
-        options.append(',').append(name).append('=').append(text);
+        options.append(',').append(name).append('=').append(limitValue(rate, bytesToMegabytes));
+        if (burst != null && burst >= rate) {
+            // the unit of the base limit decides the name of the burst: "mbps_rd" has "mbps_rd_max", "iops_rd" has "iops_rd_max"
+            options.append(',').append(name).append("_max=").append(limitValue(burst, bytesToMegabytes));
+            if (burstSeconds != null && burstSeconds > 0) {
+                options.append(',').append(name).append("_max_length=").append(burstSeconds);
+            }
+        }
+    }
+
+    /** An iops value as it is, a bandwidth in bytes per second as megabytes per second with six decimals (Proxmox's own byte options keep three, which turns a small limit into none). */
+    private static String limitValue(long value, boolean bytesToMegabytes) {
+        if (!bytesToMegabytes) {
+            return Long.toString(value);
+        }
+        return BigDecimal.valueOf(value).divide(BigDecimal.valueOf(MIB_BYTES), 6, RoundingMode.HALF_UP).max(new BigDecimal("0.000001")).stripTrailingZeros().toPlainString();
     }
 
     /** True when every option of {@code wantedOptions} (",a=b,c=d") is in the drive value; the size, which Proxmox adds itself, is not compared. */
