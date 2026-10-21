@@ -489,8 +489,8 @@ Lab runs to record (fill in the Result column as they are run; use an account ot
 | P7-3 | Grow the attached volume (resize to a larger size) | The size grows in CloudStack and in Proxmox; the guest sees it after a rescan | **Pass** (2026-10-21, after the resize allow-list fix): a volume attached to a running instance grew from 20 GiB to 50 GiB; Proxmox shows `scsi1 ... size=50G`, the guest sees the new size and the filesystem grew online (`growpart`, `resize2fs`) with the data intact |
 | P7-4 | Try to resize a detached volume, and to shrink an attached one | Both fail with a clear message | **Pass** (2026-10-21): the resize of a detached volume is refused; a shrink is refused by CloudStack itself for QCOW2 ("Unable to shrink volumes of type QCOW2", the same rule as for KVM), so the plugin's own shrink refusal is never reached through the UI |
 | P7-5 | Stop and start the instance with the volume attached; then detach while stopped and start again | The volume is a drive after the start; after the detach and start it is gone from the configuration | **Pass** (2026-10-21): after a stop and start the data volume is a `scsi1` drive again; after a detach while stopped and the next start the drive is gone, with no `unusedN` entry |
-| P7-6 | Delete the instance (expunge) with a volume attached, then check the volume | The volume is `Ready` and detached in CloudStack, its file is still in `images/<holder>/` | |
-| P7-7 | Delete a detached volume | The file is gone from `images/<holder>/` | |
+| P7-6 | Delete the instance (expunge) with a volume attached, then check the volume | The volume is `Ready` and detached in CloudStack, its file is still in `images/<holder>/` | **Pass** (2026-10-21): after the instance was expunged, its VM and root disk were gone and the data volume stayed `Ready` and detached, with its image in the holder folder |
+| P7-7 | Delete a detached volume | The file is gone from `images/<holder>/` | **Pass** (2026-10-21): the image of a deleted detached volume is gone from the holder folder |
 | P7-8 | Set `dataDiskController` = `sata` on a stopped instance, start it, attach a volume while running | The attach fails with "stop and start" and no pending change is left (`qm pending`); after a restart the drive is `sata1` | |
 | P7-9 | Migrate an instance that has a data volume | It migrates with the volume attached | |
 | P7-10 | Use a disk offering with iops and bandwidth limits for the root disk and a data disk | Proxmox shows `iops_rd` / `mbps_wr` on the drives | |
@@ -501,4 +501,8 @@ Lab finding (2026-10-21, first P7-1 attempt): attaching a data volume failed wit
 
 Lab finding (2026-10-21, P7-3): resizing an attached data volume was refused by core with "Hypervisor Proxmox does not support volume resize" before any command reached the plugin: `VolumeApiServiceImpl` allows a resize only for
 the hypervisors in `SupportedHypervisorsForVolResize`. Proxmox added to that list (upstream-notes.md, 18); the other KVM-specific checks near the resize, attach and detach paths do not affect Proxmox (read in the code). `VolumeApiServiceImplTest` (159) passes.
+
+Lab note (2026-10-21, P7-8): as a regular user (account 4) adding the instance setting `dataDiskController` failed with the UI's generic "Unable to add or edit setting". Cause (read in the code, not the plugin): the global setting
+`user.vm.readonly.details` (default `dataDiskController, rootDiskController, ...`) makes those settings read-only for non-admin callers (`UserVmManagerImpl.updateVirtualMachine`), so they must be set by an admin or the
+setting must be changed. CloudStack itself writes both controller details as `osdefault` at deploy, which the plugin reads as the root disk's controller family.
 
