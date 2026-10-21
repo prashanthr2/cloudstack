@@ -77,7 +77,7 @@ The holder is derived from the account, not a setting: the path of every volume 
   path, the size and the format QCOW2. Idempotent: if the image already exists (a repeated command), answer with the existing one. Root volumes keep the blank-VM path of Phase 6.
 - **`AttachCommand` (DATADISK):** find the instance (cluster-wide by name); the drive is `<controller><diskSeq>` (4.3); the configuration must not already use it for another volume; set
   `<drive>=<pool entry>:<path>` (plus `cache=` from the volume's cache mode, and the iops and bandwidth limits in 4.5). For a **running** instance read the running configuration
-  (`?current=1`) afterwards: if the drive is not there (SATA, or a controller that cannot hot-plug) **revert the pending change** (`PUT config revert=<drive>`) and fail with "stop and start the instance"; the
+  (`?current=1`) afterwards: if the drive is not there (SATA, or a controller that cannot hot-plug) **revert the pending change** (`PUT config revert=<drive>`) and fail with "stop the instance, attach the volume while it is stopped and start it" (a restart alone does not help: the attach is refused again while it runs); the
   volume stays attached in CloudStack only if the command succeeds, so the instance and CloudStack agree.
 - **`DettachCommand` (DATADISK):** find the drive that holds the volume (by path) in the instance's configuration and `PUT config delete=<drive>` (a running instance unplugs it live). A volume that is not
   attached is a success. No `unusedN` entry is left (3).
@@ -171,7 +171,7 @@ and delete it. requirements.md gets the confirmation.
 1. **A per-account holder vmid, `900000000 + account id`**, owning that account's data volumes (4.1), with **900000001 to 999999999 reserved for CloudStack** and documented as such. (Chosen over one holder for everything and over one per instance.)
 2. **A detached volume cannot be resized** (it must be attached first), because Proxmox offers no resize for a disk that no VM uses.
 3. **Data disks use the same controller family as the root disk by default, `dataDiskController` overrides it** (4.3).
-4. **A SATA (non-hot-pluggable) attach to a running instance fails with "stop and start" and leaves nothing pending** (4.2).
+4. **A SATA (non-hot-pluggable) attach to a running instance fails with a message to attach it while the instance is stopped, and leaves nothing pending** (4.2).
 5. **Disk offering iops and bandwidth limits become drive options, for data and root disks** (4.5), or later.
 6. **Everything listed under "out of scope" answers "not supported for Proxmox yet"** with the reason, for this phase.
 

@@ -386,7 +386,7 @@ Design and the lab results behind it: design-phase7-data-volumes.md.
 - **Attach** (`AttachCommand`, DATADISK): the drive is `<controller><device id>`. The controller is the instance detail `dataDiskController` (`scsi`, `virtio`, `sata`), by default the family of the root disk
   (so a guest that needed `sata` for its root disk gets `sata` data disks); device ids run 1 to 30 on `scsi`, 1 to 15 on `virtio`, 1 to 5 on `sata`. The drive gets the disk offering's cache mode and
   iops and bandwidth limits (`iops_rd`, `iops_wr`, `mbps_rd`, `mbps_wr`). SCSI and VirtIO drives are hot-plugged into a running instance; **a SATA drive cannot be**: Proxmox would keep it pending, so the plugin takes the
-  change back and fails with "stop and start the instance". A drive that holds another disk fails; the same volume on the drive is a success.
+  change back and fails with a message that says to **stop the instance, attach the volume while it is stopped and start it again** (restarting alone does not help: the attach is refused again while it runs). A drive that holds another disk fails; the same volume on the drive is a success.
 - **Detach** (`DettachCommand`): removes the drive that holds the volume (live on SCSI and VirtIO; a SATA drive cannot be unplugged from a running instance, the answer says to stop it first). The image stays where it is.
 - **At start** every data volume of the start command becomes a drive, and a drive that holds a volume that is no longer in the command (detached since the last start) is deleted (in one `delete` list with a moved root disk).
   The disk offering limits and cache mode are also applied to the **root disk** when it does not have them yet.

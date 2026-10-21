@@ -848,8 +848,9 @@ class ProxmoxVmHandler {
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, value));
             if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) == null) {
                 client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
-                return new AttachAnswer(String.format("Proxmox cannot add the drive %s to the running VM %s (it needs a restart: the %s controller is not hot-pluggable): "
-                        + "stop and start the instance, or use the scsi or virtio controller", drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
+                return new AttachAnswer(String.format("Proxmox cannot add the drive %s to the running VM %s (the %s controller is not hot-pluggable): stop the instance, "
+                        + "attach the volume while it is stopped and start it again (the drive is made when it starts), or use the scsi or virtio controller",
+                        drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
             }
             LOGGER.info("Attached {} to {} as {}", volume.getPath(), cmd.getVmName(), drive);
             return new AttachAnswer(disk);

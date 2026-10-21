@@ -211,7 +211,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
         assertTrue(answer instanceof AttachAnswer);
         assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("stop and start"));
+        assertTrue(answer.getDetails(), answer.getDetails().contains("attach the volume while it is stopped"));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("sata1", VOLUME_ID));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("revert", "sata1"));
     }

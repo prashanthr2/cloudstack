@@ -506,3 +506,6 @@ Lab note (2026-10-21, P7-8): as a regular user (account 4) adding the instance s
 `user.vm.readonly.details` (default `dataDiskController, rootDiskController, ...`) makes those settings read-only for non-admin callers (`UserVmManagerImpl.updateVirtualMachine`), so they must be set by an admin or the
 setting must be changed. CloudStack itself writes both controller details as `osdefault` at deploy, which the plugin reads as the root disk's controller family.
 
+Lab finding (2026-10-21, P7-8): attaching a volume to a running instance with `dataDiskController` = `sata` was refused as designed (nothing left pending), but the message said "stop and start the instance", which does not help: the attach is refused
+again when the instance is running. The message now says to stop the instance, attach the volume while it is stopped and start it again (the drive is made at the start). Plugin: 265 tests pass.
+
