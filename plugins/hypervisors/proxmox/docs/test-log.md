@@ -480,18 +480,59 @@ offering, finding the drive that holds a volume), and in `ProxmoxVmHandler`: cre
 volume, resize, volume statistics, and a guard against a VM id in the reserved range; `dataDiskController` is offered for Proxmox in the settings suggestions (`QueryManagerImpl`). Plugin: **265 tests pass** (was 222):
 `ProxmoxVmHandlerDataVolumeTest` (26), `ProxmoxVmConfigTest` (+10), `ProxmoxApiClientVmTest` (+6); core `QueryManagerImplTest` (37) passes.
 
-Lab runs to record (fill in the Result column as they are run; use an account other than admin for one of them):
+Lab runs to record. Use a non-admin account for at least one of them (the holder id depends on the account id). Fill in each **Result** line as the run is done.
 
-| # | Steps | Expected | Result |
-|---|---|---|---|
-| P7-1 | Create a data volume and attach it to a running instance (scsi controller) | The attach succeeds; Proxmox shows a `scsi1` drive `...:900000002/vm-900000002-<uuid>.qcow2`; the file is in `images/900000002/` | |
-| P7-2 | Format and mount it in the guest, write a file, detach the volume, attach it to another instance | The data is there on the second instance; no `unusedN` line in the first VM's configuration | |
-| P7-3 | Grow the attached volume (resize to a larger size) | The size grows in CloudStack and in Proxmox; the guest sees it after a rescan | |
-| P7-4 | Try to resize a detached volume, and to shrink an attached one | Both fail with a clear message | |
-| P7-5 | Stop and start the instance with the volume attached; then detach while stopped and start again | The volume is a drive after the start; after the detach and start it is gone from the configuration | |
-| P7-6 | Delete the instance (expunge) with a volume attached, then check the volume | The volume is `Ready` and detached in CloudStack, its file is still in `images/<holder>/` | |
-| P7-7 | Delete a detached volume | The file is gone from `images/<holder>/` | |
-| P7-8 | Set `dataDiskController` = `sata` on a stopped instance, start it, attach a volume while running | The attach fails with "stop and start" and no pending change is left (`qm pending`); after a restart the drive is `sata1` | |
-| P7-9 | Migrate an instance that has a data volume | It migrates with the volume attached | |
-| P7-10 | Use a disk offering with iops and bandwidth limits for the root disk and a data disk | Proxmox shows `iops_rd` / `mbps_wr` on the drives | |
+**P7-1 Create a data volume and attach it to a running instance**
+1. Create a data volume (scsi controller, the default) and attach it to a running instance.
+- Expected: the attach succeeds. Proxmox shows a `scsi1` drive `<pool>:900000002/vm-900000002-<uuid>.qcow2`, and the file is in `images/900000002/` on the primary storage.
+- Result:
 
+**P7-2 The data follows the volume**
+1. In the guest, format and mount the disk and write a file.
+2. Detach the volume, then attach it to another instance and mount it there.
+- Expected: the file is on the second instance, and the first VM's configuration has no `unusedN` line.
+- Result:
+
+**P7-3 Grow an attached volume**
+1. Resize the attached volume to a larger size.
+- Expected: the size grows in CloudStack and in Proxmox, and the guest sees it after a rescan.
+- Result:
+
+**P7-4 Refused resizes**
+1. Try to resize a volume that is detached.
+2. Try to shrink an attached volume.
+- Expected: both fail with a clear message ("attach the volume first" and "cannot shrink").
+- Result:
+
+**P7-5 Stop, start and detach while stopped**
+1. Stop and start the instance with the volume attached.
+2. Stop it, detach the volume, and start it again.
+- Expected: the volume is a drive after the first start, and gone from the configuration after the second.
+- Result:
+
+**P7-6 Deleting an instance keeps its volumes**
+1. Delete (expunge) an instance that has a data volume attached.
+2. Look at the volume.
+- Expected: the volume is `Ready` and detached in CloudStack, and its file is still in `images/<holder>/`.
+- Result:
+
+**P7-7 Delete a detached volume**
+1. Delete a volume that is detached.
+- Expected: the file is gone from `images/<holder>/`.
+- Result:
+
+**P7-8 SATA cannot be hot-plugged**
+1. On a stopped instance set the detail `dataDiskController` to `sata` and start it.
+2. While it runs, attach a volume.
+- Expected: the attach fails with "stop and start", and nothing is left pending (`qm pending` shows no change). After a restart of the instance the drive is `sata1`.
+- Result:
+
+**P7-9 Migration with a data volume**
+1. Migrate an instance that has a data volume attached.
+- Expected: it migrates and the volume stays attached.
+- Result:
+
+**P7-10 Disk offering limits**
+1. Use a disk offering with iops and bandwidth limits for the root disk and for a data disk.
+- Expected: Proxmox shows `iops_rd` and `mbps_wr` (as set) on the drives.
+- Result:
