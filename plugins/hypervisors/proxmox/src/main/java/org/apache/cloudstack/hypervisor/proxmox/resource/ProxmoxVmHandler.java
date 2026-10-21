@@ -35,12 +35,14 @@ import java.util.function.Supplier;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.storage.command.AttachAnswer;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CopyCmdAnswer;
 import org.apache.cloudstack.storage.command.CopyCommand;
 import org.apache.cloudstack.storage.command.CreateObjectAnswer;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
 import org.apache.cloudstack.storage.command.DeleteCommand;
+import org.apache.cloudstack.storage.command.DettachAnswer;
 import org.apache.cloudstack.storage.command.DettachCommand;
 import org.apache.cloudstack.storage.to.PrimaryDataStoreTO;
 import org.apache.cloudstack.storage.to.TemplateObjectTO;
@@ -832,28 +834,28 @@ class ProxmoxVmHandler {
             ProxmoxApiClient client = clients.get();
             ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
             if (location == null) {
-                return new Answer(cmd, false, "Proxmox has no VM " + cmd.getVmName());
+                return new AttachAnswer("Proxmox has no VM " + cmd.getVmName());
             }
             String drive = ProxmoxVmConfig.dataDrive(disk.getDiskSeq(), cmd.getControllerInfo());
             String existing = client.getVmConfig(location.getNode(), location.getVmid()).get(drive);
             if (existing != null) {
                 if (existing.contains(":" + volume.getPath())) {
-                    return new Answer(cmd, true, "The volume is already on " + drive);
+                    return new AttachAnswer(disk);
                 }
-                return new Answer(cmd, false, "The drive " + drive + " of " + cmd.getVmName() + " already holds another disk");
+                return new AttachAnswer("The drive " + drive + " of " + cmd.getVmName() + " already holds another disk");
             }
             String value = volumeId(volume) + ProxmoxVmConfig.driveOptions(volume);
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, value));
             if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) == null) {
                 client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
-                return new Answer(cmd, false, String.format("Proxmox cannot add the drive %s to the running VM %s (it needs a restart: the %s controller is not hot-pluggable): "
+                return new AttachAnswer(String.format("Proxmox cannot add the drive %s to the running VM %s (it needs a restart: the %s controller is not hot-pluggable): "
                         + "stop and start the instance, or use the scsi or virtio controller", drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
             }
             LOGGER.info("Attached {} to {} as {}", volume.getPath(), cmd.getVmName(), drive);
-            return new Answer(cmd, true, "Attached " + volume.getPath() + " as " + drive);
+            return new AttachAnswer(disk);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not attach {} to {}: {}", node, volume.getPath(), cmd.getVmName(), e.getMessage());
-            return new Answer(cmd, false, e.getMessage());
+            return new AttachAnswer(e.getMessage());
         }
     }
 
@@ -863,23 +865,23 @@ class ProxmoxVmHandler {
             ProxmoxApiClient client = clients.get();
             ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
             if (location == null) {
-                return new Answer(cmd, true, "Proxmox has no VM " + cmd.getVmName() + ", nothing to detach");
+                return new DettachAnswer(disk);
             }
             String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()), volume.getPath());
             if (drive == null) {
-                return new Answer(cmd, true, "The volume is not on a drive of " + cmd.getVmName() + ", nothing to detach");
+                return new DettachAnswer(disk);
             }
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", drive));
             if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) != null) {
                 client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
-                return new Answer(cmd, false, String.format("Proxmox cannot remove the drive %s from the running VM %s (the %s controller is not hot-pluggable): stop the instance first",
+                return new DettachAnswer(String.format("Proxmox cannot remove the drive %s from the running VM %s (the %s controller is not hot-pluggable): stop the instance first",
                         drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
             }
             LOGGER.info("Detached {} from {} ({})", volume.getPath(), cmd.getVmName(), drive);
-            return new Answer(cmd, true, "Detached " + volume.getPath() + " from " + drive);
+            return new DettachAnswer(disk);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not detach {} from {}: {}", node, volume.getPath(), cmd.getVmName(), e.getMessage());
-            return new Answer(cmd, false, e.getMessage());
+            return new DettachAnswer(e.getMessage());
         }
     }
 

@@ -33,10 +33,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
+import org.apache.cloudstack.storage.command.AttachAnswer;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CreateObjectAnswer;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
 import org.apache.cloudstack.storage.command.DeleteCommand;
+import org.apache.cloudstack.storage.command.DettachAnswer;
 import org.apache.cloudstack.storage.command.DettachCommand;
 import org.apache.cloudstack.storage.to.PrimaryDataStoreTO;
 import org.apache.cloudstack.storage.to.VolumeObjectTO;
@@ -166,9 +168,13 @@ public class ProxmoxVmHandlerDataVolumeTest {
         Map<String, String> before = config("scsi0", "x");
         when(client.getVmConfig(NODE, 9204L)).thenReturn(before);
 
-        Answer answer = handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, Collections.emptyMap()));
+        DiskTO disk = dataDisk(volume(Volume.Type.DATADISK, GIB), 1);
+        Answer answer = handler.attach(new AttachCommand(disk, VM, Collections.emptyMap()));
 
+        // core casts the answer to an AttachAnswer, for a failure too, and reads the disk from it
+        assertTrue(answer instanceof AttachAnswer);
         assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals(disk, ((AttachAnswer) answer).getDisk());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("scsi1", VOLUME_ID));
         verify(client, never()).updateVmConfig(eq(NODE), eq(9204L), eq(Collections.singletonMap("revert", "scsi1")));
     }
@@ -203,6 +209,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
         Answer answer = handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, details));
 
+        assertTrue(answer instanceof AttachAnswer);
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("stop and start"));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("sata1", VOLUME_ID));
@@ -223,6 +230,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
     public void aDriveInUseByAnotherDiskFailsAndTheSameVolumeIsAlreadyDone() {
         theVmIs("stopped", config("scsi1", POOL + ":900000002/vm-900000002-other.qcow2"));
         Answer inUse = handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, Collections.emptyMap()));
+        assertTrue(inUse instanceof AttachAnswer);
         assertFalse(inUse.getResult());
         assertTrue(inUse.getDetails(), inUse.getDetails().contains("already holds another disk"));
 
@@ -239,7 +247,9 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertTrue(tooHigh.getDetails(), tooHigh.getDetails().contains("sata"));
 
         when(client.findVmByName(VM)).thenReturn(null);
-        assertFalse(handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, Collections.emptyMap())).getResult());
+        Answer noVm = handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, Collections.emptyMap()));
+        assertTrue(noVm instanceof AttachAnswer);
+        assertFalse(noVm.getResult());
     }
 
     // ---- detach ----
@@ -251,6 +261,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
         Answer answer = handler.detach(new DettachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 2), VM));
 
+        assertTrue(answer instanceof DettachAnswer);
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi2"));
     }
@@ -259,8 +270,10 @@ public class ProxmoxVmHandlerDataVolumeTest {
     public void detachingAVolumeThatIsNotOnTheVmIsASuccessWithoutAChange() {
         theVmIs("running", config("scsi0", "x"));
 
-        assertTrue(handler.detach(new DettachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 2), VM)).getResult());
+        Answer answer = handler.detach(new DettachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 2), VM));
 
+        assertTrue(answer instanceof DettachAnswer);
+        assertTrue(answer.getResult());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
     }
 
@@ -270,6 +283,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
         Answer answer = handler.detach(new DettachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM));
 
+        assertTrue(answer instanceof DettachAnswer);
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("stop the instance"));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("revert", "sata1"));

@@ -495,3 +495,7 @@ Lab runs to record (fill in the Result column as they are run; use an account ot
 | P7-9 | Migrate an instance that has a data volume | It migrates with the volume attached | |
 | P7-10 | Use a disk offering with iops and bandwidth limits for the root disk and a data disk | Proxmox shows `iops_rd` / `mbps_wr` on the drives | |
 
+Lab finding (2026-10-21, first P7-1 attempt): attaching a data volume failed with `class com.cloud.agent.api.Answer cannot be cast to class org.apache.cloudstack.storage.command.AttachAnswer`: the plugin answered the volume
+`AttachCommand` with a plain `Answer`, and `VolumeApiServiceImpl` casts the reply to `AttachAnswer` (a failure too). Fixed: the volume attach answers with `AttachAnswer` (the disk, or the message), the volume detach with
+`DettachAnswer`; the tests now assert the answer types. Plugin: 265 tests pass.
+

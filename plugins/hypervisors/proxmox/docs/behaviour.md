@@ -394,6 +394,8 @@ Design and the lab results behind it: design-phase7-data-volumes.md.
   such operation: attach it first), and a **disk never shrinks**, whatever `shrinkok` says.
 - **Delete** (`DeleteCommand`): a data volume (by its type, or a path in the reserved range) deletes its disk image and never a VM; an image that is gone is a success. CloudStack only deletes detached volumes; Proxmox itself
   would delete an image that a VM still refers to, so nothing relies on it.
+- **Answer types:** core casts the reply of a volume attach to an `AttachAnswer` (a failure too, which carries the message) and expects a `CreateObjectAnswer`, `ResizeVolumeAnswer` and `GetVolumeStatsAnswer` for
+  the other commands; a plain answer fails the attach with a `ClassCastException` (lab 2026-10-21). Attaching an ISO is different: core accepts a plain answer there.
 - **Statistics** (`GetVolumeStatsCommand`): size and used space of each image.
 - **Not supported yet** (answered with a reason): copying a volume to or from the secondary store (upload, download, volume snapshots, create from snapshot or from a data disk template), moving a volume to another
   primary storage, `CheckVolumeCommand`.
