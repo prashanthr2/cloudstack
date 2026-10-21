@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-21.
+Last updated 2026-10-21 (items 19 to 21 added).
 
 ## Decisions waiting for you
 
@@ -13,6 +13,9 @@ None at the moment.
 |---|---|---|
 | 4 | **Phase 5 runs still open** | a repeat of P5-6 to verify the "report only running VMs" fix during a node failure (P5-7 already shows the fix works for a Proxmox-initiated move; the trade-off of the fix is that an out-of-band guest shutdown is found after about two ping intervals). P5-1 to P5-7 pass. Steps and expected results are in test-log.md |
 | 5 | **HA stop and the shutdown timeout** | After a CloudStack stop `ha-manager` shows the resource `stopped` (confirmed in P5-5). Still not measured: whether the HA stop honours the 60 s shutdown timeout (the VM stopped after about 30 s in L4) |
+| 19 | **Control bridge at host add (N1 to N5)** | Implemented and unit tested (behaviour.md section 16, test-log.md), not run on the lab: it needs a Proxmox node that is not added yet (nodes already added are skipped). N1 bridge exists, no change; N2 missing and no `Sys.Modify`, the add fails with the grant-or-by-hand message; N3 pending network changes, refused (and check that `GET /nodes/<node>/network` carries `changes` next to `data`: not seen yet); N4 missing and `Sys.Modify` granted, created and applied; N5 the setting names something that is not a bridge. Also still to see on the lab: the same lab T1 side effect, Proxmox rewrites `/etc/network/interfaces` |
+| 20 | **System VM start through the guest agent (8a)** | Implemented and unit tested (behaviour.md section 17), not run on the lab. Needs: the KVM system VM template registered for Proxmox (`registerTemplate`, `templatetype=SYSTEM`) and a zone where the SSVM and CPVM get created on a Proxmox node. To see: the VM boots on the Proxmox node, takes its boot arguments from the guest agent, the readiness check passes, `CheckSshCommand` is answered, the SSVM connects to the management server and the CPVM serves a console |
+| 21 | **Patch files for system VMs (8a): implemented, to see on the lab** | Payload CD from one `dir` entry (`csp-...`), design 4.2 step 5 and 4.8, behaviour.md section 17; unit tested (371). To see: the padded read is exactly `agent.zip` (P3 stopped at the unpadded size), `/dev/sr0` is the reserved drive in the template, a second node gets its own directory, and an SSVM and a CPVM come up and connect. Item 20 covers the same run |
 
 ## Known limits (not bugs; confirm they are acceptable)
 

@@ -52,13 +52,19 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(6, config.getConfigKeys().length);
+        assertEquals(8, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.TaskTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.MigrationTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.HaManage));
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ControlBridge));
+        assertEquals("cloud0", ProxmoxConfig.ControlBridge.value());
+        assertTrue(ProxmoxConfig.ControlBridge.isDynamic());
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.PatchPath));
+        assertEquals("/var/lib/cloudstack-patch", ProxmoxConfig.PatchPath.value());
+        assertTrue(ProxmoxConfig.PatchPath.isDynamic());
         assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
         assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());

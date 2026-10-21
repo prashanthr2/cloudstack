@@ -30,6 +30,7 @@ import javax.naming.ConfigurationException;
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxControlBridge;
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxResource;
 
 import com.cloud.agent.api.StartupCommand;
@@ -145,6 +146,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 logger.info("Skipping Proxmox node {}: it is already added", nodeInfo.getName());
                 continue;
             }
+            ensureControlBridge(endpoint, username, password, nodeInfo.getName());
             Map<String, Object> params = new HashMap<>();
             params.put("username", username);
             params.put("password", password);
@@ -182,6 +184,31 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                     + ": every online node of the Proxmox cluster is already added");
         }
         return resources;
+    }
+
+    /**
+     * Looks for the control bridge on the node and creates it when it is missing; when that is not possible the host is not added
+     * and the message says what to do. Any node answers for the whole cluster, so one client serves every node.
+     */
+    private void ensureControlBridge(String endpoint, String tokenId, String tokenSecret, String node) throws DiscoveryException {
+        String bridge = ProxmoxConfig.ControlBridge.value();
+        try (ProxmoxApiClient client = createClient(endpoint, tokenId, tokenSecret)) {
+            ProxmoxControlBridge.Outcome outcome = ProxmoxControlBridge.ensure(client, node, bridge, tokenId, ProxmoxConfig.TaskTimeout.value());
+            switch (outcome) {
+                case CREATED:
+                    logger.info("Created the control bridge {} ({}) on Proxmox node {}", bridge, ProxmoxControlBridge.expectedCidr(), node);
+                    break;
+                case EXISTS_WITH_OTHER_ADDRESS:
+                    logger.warn("The control bridge {} on Proxmox node {} does not have the address {}: system VMs can start, but the "
+                            + "troubleshooting login from the node will not work until it has", bridge, node, ProxmoxControlBridge.expectedCidr());
+                    break;
+                default:
+                    logger.info("The control bridge {} exists on Proxmox node {}", bridge, node);
+            }
+        } catch (ProxmoxApiException e) {
+            logger.error("Proxmox node {} cannot be added: {}", node, e.getMessage());
+            throw new DiscoveryException(e.getMessage(), e);
+        }
     }
 
     /**

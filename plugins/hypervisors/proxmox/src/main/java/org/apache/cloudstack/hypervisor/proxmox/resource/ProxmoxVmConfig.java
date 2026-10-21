@@ -30,8 +30,10 @@ import org.apache.commons.lang3.StringUtils;
 
 import com.cloud.agent.api.to.NicTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
+import com.cloud.network.Networks.TrafficType;
 import com.cloud.offering.DiskOffering.DiskCacheMode;
 import com.cloud.template.VirtualMachineTemplate.BootloaderType;
+import com.cloud.vm.VirtualMachine;
 import com.cloud.vm.VmDetailConstants;
 
 /**
@@ -77,6 +79,15 @@ public final class ProxmoxVmConfig {
 
     /** As above, with the drive the root disk is on ({@link #rootDiskDrive}), which the boot order names. */
     public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms, String rootDrive) {
+        return startOptions(vm, hostCpuCapacityMhz, cdroms, rootDrive, null);
+    }
+
+    /**
+     * As above, for a system VM or router also with the guest agent switched on (its boot arguments and its commands go through it) and with the
+     * control NIC on {@code controlBridge}, the node's host-only bridge (core gives that NIC no bridge name; on KVM it is {@code cloud0}).
+     */
+    public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms, String rootDrive,
+            String controlBridge) {
         Map<String, String> options = new LinkedHashMap<>();
         if (StringUtils.isNotBlank(vm.getName())) {
             options.put("name", vm.getName());
@@ -96,10 +107,18 @@ public final class ProxmoxVmConfig {
         boolean bootFromCd = vm.getBootloader() == BootloaderType.CD && cdroms.containsKey(firstDrive);
         options.put("boot", "order=" + (bootFromCd ? firstDrive + ";" : "") + rootDrive);
         options.putAll(cdroms);
+        if (isSystemVm(vm)) {
+            options.put("agent", "1");
+        }
+        if (needsAgentPatch(vm) && !options.containsKey(PATCH_CDROM)) {
+            // the drive that carries agent.zip into the VM: a drive cannot be added to a running VM, but its medium can be changed
+            options.put(PATCH_CDROM, EMPTY_CDROM);
+        }
         if (vm.getNics() != null) {
             String model = nicModel(vm);
             for (NicTO nic : vm.getNics()) {
-                options.put("net" + nic.getDeviceId(), netOption(nic, model));
+                String bridge = controlBridge != null && nic.getType() == TrafficType.Control ? controlBridge : nic.getName();
+                options.put("net" + nic.getDeviceId(), netOption(nic, model, bridge));
             }
         }
         return options;
@@ -356,11 +375,16 @@ public final class ProxmoxVmConfig {
 
     /** As above with the adapter model in place of virtio: {@code <model>=<mac>,bridge=...}. */
     static String netOption(NicTO nic, String model) {
-        if (StringUtils.isBlank(nic.getName())) {
+        return netOption(nic, model, nic.getName());
+    }
+
+    /** As above on the given bridge (the control NIC's is not the traffic label). */
+    static String netOption(NicTO nic, String model, String bridge) {
+        if (StringUtils.isBlank(bridge)) {
             throw new ProxmoxApiException(String.format("NIC %d (MAC %s) has no bridge: set the KVM traffic label of the physical network to "
                     + "the Proxmox bridge", nic.getDeviceId(), nic.getMac()));
         }
-        StringBuilder option = new StringBuilder(model).append('=').append(nic.getMac()).append(",bridge=").append(nic.getName());
+        StringBuilder option = new StringBuilder(model).append('=').append(nic.getMac()).append(",bridge=").append(bridge);
         String tag = vlanTag(nic.getBroadcastUri());
         if (tag != null) {
             option.append(",tag=").append(tag);
@@ -371,6 +395,19 @@ public final class ProxmoxVmConfig {
             option.append(",rate=").append(Math.max(1, rateMbps / 8));
         }
         return option.append(",firewall=0").toString();
+    }
+
+    /** The CD drive that is reserved in the secondary storage VM and the console proxy VM for the file with the agent. */
+    public static final String PATCH_CDROM = CDROM_DRIVES[0];
+
+    /** The VMs whose agent (a Java program) is not in the template: the secondary storage VM and the console proxy VM. */
+    public static boolean needsAgentPatch(VirtualMachineTO vm) {
+        return vm.getType() == VirtualMachine.Type.SecondaryStorageVm || vm.getType() == VirtualMachine.Type.ConsoleProxy;
+    }
+
+    /** A system VM, a router or any other VM that CloudStack runs itself: everything but a user's instance. */
+    public static boolean isSystemVm(VirtualMachineTO vm) {
+        return vm.getType() != null && vm.getType() != VirtualMachine.Type.User;
     }
 
     /** The VLAN id of a network's broadcast URI ("vlan://100"), or null for an untagged network or any other kind of isolation. */

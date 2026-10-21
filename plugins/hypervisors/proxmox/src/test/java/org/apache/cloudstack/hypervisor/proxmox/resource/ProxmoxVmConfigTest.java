@@ -451,4 +451,96 @@ public class ProxmoxVmConfigTest {
         assertNull(ProxmoxVmConfig.driveHolding(config, "9204/vm-9204-disk-1.qcow2"));
         assertNull(ProxmoxVmConfig.driveHolding(config, null));
     }
+
+    private static NicTO controlNic(int deviceId) {
+        NicTO nic = nic(deviceId, "0e:00:a9:fe:03:07", null, null, null);
+        when(nic.getType()).thenReturn(com.cloud.network.Networks.TrafficType.Control);
+        return nic;
+    }
+
+    @Test
+    public void aSystemVmHasTheGuestAgentOnAndItsControlNicOnTheControlBridge() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", "vlan://100", null), controlNic(1));
+        when(vm.getType()).thenReturn(com.cloud.vm.VirtualMachine.Type.DomainRouter);
+
+        Map<String, String> options = ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0");
+
+        assertEquals("1", options.get("agent"));
+        assertEquals("virtio=02:00:00:aa:bb:01,bridge=vmbr1,tag=100,firewall=0", options.get("net0"));
+        assertEquals("virtio=0e:00:a9:fe:03:07,bridge=cloud0,firewall=0", options.get("net1"));
+    }
+
+    @Test
+    public void everyKindOfSystemVmGetsTheAgent() {
+        for (com.cloud.vm.VirtualMachine.Type type : new com.cloud.vm.VirtualMachine.Type[] {com.cloud.vm.VirtualMachine.Type.SecondaryStorageVm,
+            com.cloud.vm.VirtualMachine.Type.ConsoleProxy, com.cloud.vm.VirtualMachine.Type.DomainRouter,
+            com.cloud.vm.VirtualMachine.Type.InternalLoadBalancerVm}) {
+            VirtualMachineTO vm = vm("l26", controlNic(0));
+            when(vm.getType()).thenReturn(type);
+            assertEquals(type.toString(), "1", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0").get("agent"));
+        }
+    }
+
+    @Test
+    public void aUserVmHasNoAgentOptionAndItsNicsKeepTheirTrafficLabelBridge() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+        when(vm.getType()).thenReturn(com.cloud.vm.VirtualMachine.Type.User);
+
+        Map<String, String> options = ProxmoxVmConfig.startOptions(vm, 0);
+
+        assertTrue(!options.containsKey("agent"));
+        assertEquals("virtio=02:00:00:aa:bb:01,bridge=vmbr1,firewall=0", options.get("net0"));
+    }
+
+    @Test
+    public void theControlBridgeIsOnlyForTheControlNic() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+        when(vm.getType()).thenReturn(com.cloud.vm.VirtualMachine.Type.DomainRouter);
+
+        assertEquals("virtio=02:00:00:aa:bb:01,bridge=vmbr1,firewall=0",
+                ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0").get("net0"));
+    }
+
+    @Test
+    public void anyOtherKindOfNicStillNeedsATrafficLabel() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", null, null, null));
+        when(vm.getType()).thenReturn(com.cloud.vm.VirtualMachine.Type.DomainRouter);
+        try {
+            ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0");
+            org.junit.Assert.fail("a NIC without a bridge must be refused");
+        } catch (ProxmoxApiException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("traffic label"));
+        }
+    }
+
+    @Test
+    public void theSecondaryStorageVmAndTheConsoleProxyVmReserveAnEmptyCdDriveForTheAgent() {
+        for (com.cloud.vm.VirtualMachine.Type type : new com.cloud.vm.VirtualMachine.Type[] {com.cloud.vm.VirtualMachine.Type.SecondaryStorageVm,
+            com.cloud.vm.VirtualMachine.Type.ConsoleProxy}) {
+            VirtualMachineTO vm = vm("l26", controlNic(0));
+            when(vm.getType()).thenReturn(type);
+            assertEquals(type.toString(), "none,media=cdrom",
+                    ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0").get("ide2"));
+        }
+    }
+
+    @Test
+    public void routersAndUserVmsGetNoReservedCdDrive() {
+        for (com.cloud.vm.VirtualMachine.Type type : new com.cloud.vm.VirtualMachine.Type[] {com.cloud.vm.VirtualMachine.Type.DomainRouter,
+            com.cloud.vm.VirtualMachine.Type.InternalLoadBalancerVm, com.cloud.vm.VirtualMachine.Type.User}) {
+            VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+            when(vm.getType()).thenReturn(type);
+            assertTrue(type.toString(), !ProxmoxVmConfig.startOptions(vm, 0).containsKey("ide2"));
+        }
+    }
+
+    @Test
+    public void aCdDriveThatTheStartCommandAsksForIsNotReplacedByTheReservedOne() {
+        VirtualMachineTO vm = vm("l26", controlNic(0));
+        when(vm.getType()).thenReturn(com.cloud.vm.VirtualMachine.Type.SecondaryStorageVm);
+        Map<String, String> cdroms = new java.util.LinkedHashMap<>();
+        cdroms.put("ide2", "csi-1:iso/x.iso,media=cdrom");
+
+        assertEquals("csi-1:iso/x.iso,media=cdrom", ProxmoxVmConfig.startOptions(vm, 0, cdroms, "scsi0", "cloud0").get("ide2"));
+    }
 }

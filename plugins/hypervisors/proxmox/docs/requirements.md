@@ -222,6 +222,76 @@ curl -ks -w "\nHTTP %{http_code}\n" -X POST -H "Authorization: PVEAPIToken=<user
 With the setting on and the permissions missing, starting a VM whose offering has HA enabled **fails** with a message that names the permissions, rather than starting a
 VM that its owner believes is protected.
 
+### The link-local control bridge for system VMs and routers (Phase 8; design only, `Sys.Modify` confirmed needed on the lab 2026-10-21)
+
+**What it is and why.** Every system VM (secondary storage VM, console proxy) and virtual router has a *control* NIC with a link-local address (`169.254.x.y`). In
+CloudStack that NIC must sit on a host-only bridge, `cloud0` on a KVM host. CloudStack's control of the VM does **not** use it on Proxmox (that goes through the
+guest agent and the API), but the NIC still has to be attached to a bridge of the node, and the node should have the link-local gateway address on that bridge so that
+an administrator can log in to the node and reach the system VM's shell (`ssh -p 3922`) for troubleshooting. The bridge has no ports: nothing leaves the node.
+**It must exist on every node of the cluster**, because Proxmox HA or a migration can start the VM on any of them; a system VM or router cannot start on a node without it
+(the start fails with a message that names the bridge). The name is the setting `proxmox.control.bridge` (default `cloud0`).
+
+**What CloudStack does at host add.** It looks for the bridge on the node. If it is there (made by hand, for example) it is left alone. If it is missing, CloudStack tries to create and apply it; if the token is not allowed to, **adding the host fails** with a message that says to grant `Sys.Modify` (below) or to create the bridge by hand on every node and add the host again. So the order for a cluster without the privilege is: create `cloud0` on each node, then add the hosts.
+
+**Why `Sys.Modify` is needed, and for nothing else.** Creating a bridge changes the node's network configuration, and the Proxmox API (`POST /nodes/<node>/network`,
+then `PUT /nodes/<node>/network` to apply it) requires `Sys.Modify` on `/nodes/<node>`. Lab 2026-10-21: with `PVEVMAdmin`, `PVEDatastoreAdmin` and `PVESDNUser` both
+calls (and the delete) answer `HTTP 403 Permission check failed (/nodes/<node>, Sys.Modify)`. **This is the only reason CloudStack would ask for it, and it is optional**:
+
+- **Not needed for isolated, shared or VPC networks, public networks or any other traffic.** Those NICs use the bridges that already exist and are named by the zone's traffic
+  labels, and the VLAN is only the `tag=` of the NIC (lab S6: a NIC with a tag was added to a running VM with the standard roles). For a bridge that is not VLAN-aware,
+  Proxmox itself creates the VLAN sub-bridge when the NIC is plugged (`PVE::Network::tap_plug`, run by the node, not with the token's rights). The administrator creates the
+  zone's bridges once, as for any VM (open issue 10); CloudStack never creates or changes them.
+- **Not needed once the bridge exists.** The plugin only creates the control bridge when it is missing, never changes an existing one, and refuses to apply the network
+  configuration when other changes are pending.
+
+**What the API does to `/etc/network/interfaces`** (lab 2026-10-21, with the grant below): creating a bridge through the API makes Proxmox write the **whole file again** from its own parsed
+configuration. The settings of every interface were kept and the node stayed reachable, but **comments and the original layout are lost** (the header comment and the comments on
+the management and trunk bridges were dropped, interfaces were reordered and the indentation changed). An administrator who keeps notes in that file should know this before
+granting the privilege, or create the bridge by hand (below), which only appends the new lines.
+
+**What `Sys.Modify` also allows** (be aware before granting it): in Proxmox it means "edit node settings", not only the network: it also covers node DNS, time, hosts
+file and services on that node, and some VM monitor commands. Give it in a role of its own, on the node paths only and without propagation:
+
+```bash
+pveum role add CloudStackNet --privs "Sys.Modify"
+pveum acl modify /nodes/<node> --users <user> --tokens '<user>!<token>' --roles CloudStackNet --propagate 0
+```
+
+(once per node; a node added later needs the same line). As for the other roles, the grant is needed on the **user and on the token**.
+
+**If you do not grant it: create the bridge by hand on every node** (once, and again for every node that joins the cluster). In the web interface: node > System > Network >
+Create > Linux Bridge, name `cloud0` (the value of `proxmox.control.bridge`), IPv4/CIDR `169.254.0.1/16`, no gateway, no bridge ports, autostart on > Create >
+Apply Configuration. The same on the command line, on each node:
+
+```bash
+cat >> /etc/network/interfaces <<'EOF'
+
+auto cloud0
+iface cloud0 inet static
+        address 169.254.0.1/16
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
+EOF
+ifreload -a
+ip -br addr show cloud0
+```
+
+Check that `interfaces.new` does not exist first (`ls /etc/network/interfaces.new`: pending changes made in the web interface would be applied by `ifreload -a` too). Keep the same
+name and address on every node. The address `169.254.0.1/16` is the link-local gateway CloudStack uses for the control network; it is only needed for the troubleshooting login, the
+bridge alone is enough for a system VM to start.
+
+### The patch file of system VMs (Phase 8a; lab P1 to P3)
+
+A new secondary storage VM or console proxy VM needs the Java agent (`agent.zip`, about 110 MiB) from the management server, and the template does not have it. CloudStack delivers it through one storage entry:
+
+- **Entry:** `csp-<uuid>` (a `dir` storage that is not shared), path from the global setting **`proxmox.patch.path`** (default `/var/lib/cloudstack-patch`), content `iso`. CloudStack creates it when the first SSVM or CPVM is started, and Proxmox creates the directory and its
+  `template/iso` folder on each node when the entry is activated there: nothing is made by hand. It uploads `agent.zip` once per node and version as `cs-patch-<16 characters>.iso` (a file whose name ends in `.iso`; the bytes are not an ISO image) and removes the files of older versions.
+- **Privileges:** creating the entry and uploading need `Datastore.Allocate` and `Datastore.AllocateTemplate` on `/storage`, which the role `PVEDatastoreAdmin` that the token already has for primary storage includes (lab P1 and P2, no extra privilege). `Sys.Modify` is not needed.
+- **Room:** 110 MiB on the node's disk under that path, once per version of the management server.
+- **The management server** needs `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` in `/usr/share/cloudstack-common/vms/` (the package `cloudstack-common` installs them). If they are missing, the start of the system VM fails with a message that names the directory.
+- The entry appears in the Proxmox web interface as one fixed entry named `csp-...`; it is not removed when the last SSVM goes away.
+
 ### How the secret is stored
 
 The token id and secret are saved with each host under the host detail keys `username` and `password`. The `password` key

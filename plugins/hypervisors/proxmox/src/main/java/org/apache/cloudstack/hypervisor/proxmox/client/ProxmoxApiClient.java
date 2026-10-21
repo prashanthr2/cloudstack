@@ -17,9 +17,14 @@
 package org.apache.cloudstack.hypervisor.proxmox.client;
 
 import java.io.Closeable;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,6 +46,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.entity.AbstractHttpEntity;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.conn.ssl.TrustAllStrategy;
@@ -156,6 +162,15 @@ public class ProxmoxApiClient implements Closeable {
         return execute(api -> new HttpDelete(api + path));
     }
 
+    /** A POST whose form may repeat a name (the "command" list of the guest agent). */
+    private JsonNode postPairs(String path, List<NameValuePair> pairs) {
+        return execute(api -> {
+            HttpPost request = new HttpPost(api + path);
+            request.setEntity(new UrlEncodedFormEntity(pairs, StandardCharsets.UTF_8));
+            return request;
+        });
+    }
+
     private static UrlEncodedFormEntity toFormEntity(Map<String, String> form) {
         List<NameValuePair> pairs = new ArrayList<>();
         if (form != null) {
@@ -169,6 +184,10 @@ public class ProxmoxApiClient implements Closeable {
      * itself fails. An HTTP error answer (401, 500 ...) means the address was reachable and is returned as such.
      */
     private JsonNode execute(Function<String, HttpRequestBase> requestFactory) {
+        return parseData(executeBody(requestFactory));
+    }
+
+    private String executeBody(Function<String, HttpRequestBase> requestFactory) {
         IOException lastFailure = null;
         String lastTarget = null;
         int count = baseUrls.size();
@@ -187,7 +206,7 @@ public class ProxmoxApiClient implements Closeable {
                     throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s", lastTarget, status,
                             response.getStatusLine().getReasonPhrase()), status, null);
                 }
-                return parseData(body);
+                return body;
             } catch (IOException e) {
                 lastFailure = e;
             }
@@ -204,6 +223,19 @@ public class ProxmoxApiClient implements Closeable {
             JsonNode root = MAPPER.readTree(body);
             JsonNode data = root.get("data");
             return data == null ? MAPPER.nullNode() : data;
+        } catch (IOException e) {
+            throw new ProxmoxApiException("Unable to parse the Proxmox API response", e);
+        }
+    }
+
+    /** The whole answer of a GET, for the few calls that carry something next to "data". */
+    private JsonNode getRoot(String path) {
+        String body = executeBody(api -> new HttpGet(api + path));
+        if (StringUtils.isBlank(body)) {
+            return MAPPER.nullNode();
+        }
+        try {
+            return MAPPER.readTree(body);
         } catch (IOException e) {
             throw new ProxmoxApiException("Unable to parse the Proxmox API response", e);
         }
@@ -588,6 +620,133 @@ public class ProxmoxApiClient implements Closeable {
      * Creates the entry that exposes one ISO folder of the secondary store's mount as {@code <id>:iso/<file>}: read-only like the mount, so Proxmox must
      * not create folders in it, and shared because the same file is seen by every node (a VM with the ISO can then move between nodes).
      */
+    /**
+     * Adds a plain directory entry for ISO files that live on each node's own disk: not shared, and Proxmox itself makes the directory and its
+     * sub-folders ({@code template/iso}) on a node when it activates the entry there (lab P1), so nothing has to be created by hand.
+     */
+    public void createPatchStorage(String id, String path) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "dir");
+        form.put("path", path);
+        form.put("content", "iso");
+        form.put("shared", "0");
+        post("/storage", form);
+    }
+
+    /** A file of a storage entry as listed by the content API. */
+    public static class ContentItem {
+        private final String volid;
+        private final long size;
+
+        public ContentItem(String volid, long size) {
+            this.volid = volid;
+            this.size = size;
+        }
+
+        public String getVolid() {
+            return volid;
+        }
+
+        public long getSize() {
+            return size;
+        }
+    }
+
+    /** The files of one content type ("iso") that a storage entry has on a node. */
+    public List<ContentItem> listContent(String node, String storage, String content) {
+        List<ContentItem> items = new ArrayList<>();
+        JsonNode data = get("/nodes/" + node + "/storage/" + storage + "/content?content=" + content);
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                items.add(new ContentItem(entry.path("volid").asText(), entry.path("size").asLong(0)));
+            }
+        }
+        return items;
+    }
+
+    /**
+     * A multipart/form-data body for the storage upload API: the field "content" and one file, followed by zero bytes up to a multiple of
+     * {@code blockBytes} (a CD shows only whole 2048-byte sectors, lab P3). It is written from the file, never held in memory, and can be
+     * written again when the request has to be sent to another address.
+     */
+    static class UploadEntity extends AbstractHttpEntity {
+        private final byte[] head;
+        private final byte[] tail;
+        private final Path file;
+        private final long fileSize;
+        private final long paddedSize;
+
+        UploadEntity(String content, String filename, Path file, int blockBytes) throws IOException {
+            String boundary = "----cloudstack" + java.util.UUID.randomUUID().toString().replace("-", "");
+            this.head = ("--" + boundary + "\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n" + content + "\r\n--" + boundary
+                    + "\r\nContent-Disposition: form-data; name=\"filename\"; filename=\"" + filename + "\"\r\n"
+                    + "Content-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8);
+            this.tail = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
+            this.file = file;
+            this.fileSize = Files.size(file);
+            this.paddedSize = blockBytes <= 1 ? fileSize : (fileSize + blockBytes - 1) / blockBytes * blockBytes;
+            setContentType("multipart/form-data; boundary=" + boundary);
+        }
+
+        long paddedSize() {
+            return paddedSize;
+        }
+
+        @Override
+        public boolean isRepeatable() {
+            return true;
+        }
+
+        @Override
+        public long getContentLength() {
+            return head.length + paddedSize + tail.length;
+        }
+
+        /** Only for small bodies (tests); a request is sent with {@link #writeTo}. */
+        @Override
+        public InputStream getContent() throws IOException {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            writeTo(out);
+            return new java.io.ByteArrayInputStream(out.toByteArray());
+        }
+
+        @Override
+        public void writeTo(OutputStream out) throws IOException {
+            out.write(head);
+            Files.copy(file, out);
+            byte[] zeros = new byte[4096];
+            for (long left = paddedSize - fileSize; left > 0; left -= zeros.length) {
+                out.write(zeros, 0, (int) Math.min(zeros.length, left));
+            }
+            out.write(tail);
+            out.flush();
+        }
+
+        @Override
+        public boolean isStreaming() {
+            return false;
+        }
+    }
+
+    /**
+     * Uploads a file as ISO content of a storage entry on a node, padded with zeros to a multiple of {@code blockBytes}; returns the task id
+     * (the node copies the upload to its place in a task).
+     */
+    public String uploadIso(String node, String storage, String filename, Path file, int blockBytes) {
+        UploadEntity entity;
+        try {
+            entity = new UploadEntity("iso", filename, file, blockBytes);
+        } catch (IOException e) {
+            throw new ProxmoxApiException("Unable to read " + file + " for the upload: " + e.getMessage(), e);
+        }
+        return taskId(execute(api -> {
+            HttpPost request = new HttpPost(api + "/nodes/" + node + "/storage/" + storage + "/upload");
+            request.setEntity(entity);
+            return request;
+        }));
+    }
+
     public void createIsoDirStorage(String id, String mountPath, String folder) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("storage", id);
@@ -1013,6 +1172,177 @@ public class ProxmoxApiClient implements Closeable {
             }
         }
         return bridges;
+    }
+
+    /** A network interface of a node as listed by the network API; {@code cidr} is null when it has no address. */
+    public static class NetworkInterface {
+        private final String name;
+        private final String type;
+        private final String cidr;
+
+        public NetworkInterface(String name, String type, String cidr) {
+            this.name = name;
+            this.type = type;
+            this.cidr = cidr;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public String getCidr() {
+            return cidr;
+        }
+
+        public boolean isBridge() {
+            return "bridge".equals(type) || "OVSBridge".equals(type);
+        }
+    }
+
+    /** The network configuration of a node and whether it has changes that are saved but not applied yet. */
+    public static class NetworkConfig {
+        private final List<NetworkInterface> interfaces;
+        private final boolean pendingChanges;
+
+        public NetworkConfig(List<NetworkInterface> interfaces, boolean pendingChanges) {
+            this.interfaces = interfaces;
+            this.pendingChanges = pendingChanges;
+        }
+
+        public List<NetworkInterface> getInterfaces() {
+            return interfaces;
+        }
+
+        public boolean hasPendingChanges() {
+            return pendingChanges;
+        }
+
+        public NetworkInterface find(String name) {
+            return interfaces.stream().filter(i -> i.getName().equals(name)).findFirst().orElse(null);
+        }
+    }
+
+    /** The interfaces of a node, with the "changes" Proxmox reports next to them when /etc/network/interfaces.new exists. */
+    public NetworkConfig getNetworkConfig(String node) {
+        JsonNode root = getRoot("/nodes/" + node + "/network");
+        List<NetworkInterface> interfaces = new ArrayList<>();
+        JsonNode data = root.path("data");
+        if (data.isArray()) {
+            for (JsonNode entry : data) {
+                interfaces.add(new NetworkInterface(entry.path("iface").asText(), entry.path("type").asText(), entry.path("cidr").asText(null)));
+            }
+        }
+        return new NetworkConfig(interfaces, !root.path("changes").asText("").isEmpty());
+    }
+
+    /** Saves a Linux bridge without ports in the node's pending network configuration; {@link #applyNetworkConfig} makes it live. */
+    public void createBridge(String node, String name, String cidr) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("iface", name);
+        form.put("type", "bridge");
+        form.put("cidr", cidr);
+        form.put("autostart", "1");
+        post("/nodes/" + node + "/network", form);
+    }
+
+    /** Applies the node's pending network configuration (Proxmox reloads it as a task) and waits for the task. */
+    public void applyNetworkConfig(String node, int timeoutSeconds) {
+        JsonNode upid = put("/nodes/" + node + "/network", null);
+        if (upid != null && upid.isTextual()) {
+            waitForTask(upid.asText(), timeoutSeconds);
+        }
+    }
+
+    /** Throws away the node's pending network changes. */
+    public void revertNetworkConfig(String node) {
+        delete("/nodes/" + node + "/network");
+    }
+
+    // ---- the QEMU guest agent of a VM, through the API ----
+
+    private static String agentPath(String node, long vmid, String call) {
+        return "/nodes/" + node + "/qemu/" + vmid + "/agent/" + call;
+    }
+
+    /**
+     * Whether the guest agent of the VM answers. Proxmox answers HTTP 500 ("QEMU guest agent is not running") while the guest is still
+     * starting, which is "not yet", not an error; anything else (a refused privilege, a connection failure) is thrown.
+     */
+    public boolean agentPing(String node, long vmid) {
+        try {
+            post(agentPath(node, vmid, "ping"), null);
+            return true;
+        } catch (ProxmoxApiException e) {
+            if (e.getStatusCode() == 500) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /** Writes a text file in the guest (Proxmox sends it encoded; the guest agent takes at most 60 KiB). */
+    public void agentFileWrite(String node, long vmid, String file, String content) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("file", file);
+        form.put("content", content);
+        post(agentPath(node, vmid, "file-write"), form);
+    }
+
+    /** Starts a command in the guest; {@code inputData} (at most 64 KiB) is its standard input. Returns the pid for {@link #agentExecStatus}. */
+    public long agentExec(String node, long vmid, List<String> command, String inputData) {
+        List<NameValuePair> pairs = new ArrayList<>();
+        for (String part : command) {
+            pairs.add(new BasicNameValuePair("command", part));
+        }
+        if (inputData != null) {
+            pairs.add(new BasicNameValuePair("input-data", inputData));
+        }
+        JsonNode data = postPairs(agentPath(node, vmid, "exec"), pairs);
+        if (data == null || !data.has("pid")) {
+            throw new ProxmoxApiException("Proxmox did not return a process id for the command in VM " + vmid);
+        }
+        return data.path("pid").asLong();
+    }
+
+    /** What a command started in the guest has done so far. */
+    public static class AgentExecStatus {
+        private final boolean exited;
+        private final int exitCode;
+        private final String out;
+        private final String err;
+
+        public AgentExecStatus(boolean exited, int exitCode, String out, String err) {
+            this.exited = exited;
+            this.exitCode = exitCode;
+            this.out = out;
+            this.err = err;
+        }
+
+        public boolean isExited() {
+            return exited;
+        }
+
+        public int getExitCode() {
+            return exitCode;
+        }
+
+        public String getOut() {
+            return out;
+        }
+
+        public String getErr() {
+            return err;
+        }
+    }
+
+    public AgentExecStatus agentExecStatus(String node, long vmid, long pid) {
+        JsonNode data = get(agentPath(node, vmid, "exec-status") + "?pid=" + pid);
+        return new AgentExecStatus(data.path("exited").asInt(0) == 1, data.path("exitcode").asInt(-1), data.path("out-data").asText(""),
+                data.path("err-data").asText(""));
     }
 
     /** A VM that Proxmox HA looks after. */

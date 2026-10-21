@@ -520,3 +520,62 @@ Lab finding (2026-10-21, open issue 2): with a graceful shutdown started in Prox
 
 Lab result (2026-10-21): the repeat of the forced-stop test passes: with a graceful shutdown started in Proxmox on a guest that ignores it, a force stop from CloudStack now succeeds (`overrule-shutdown`). Open issue 2 is closed.
 
+## Phase 8 pre-build lab checks (2026-10-21)
+
+Node `ref-trl-12501-k-mr8-prashanth-reddy-pve1`, token `pveaudit@pam!cloudstack` (role `PVEVMAdmin`), throwaway VM 9600 from the KVM system VM template (4.88 GiB, `template/tmpl/1/3/...qcow2`) with `agent=1`, `net0` on a test bridge `cstest0` (169.254.250.1/24), `net1` and `net2` on `vmbr0`. Commands were run on the node; the VM and the guest agent exec calls went through the REST API with the token.
+
+| # | Check | Result |
+|---|---|---|
+| T1 | `POST /nodes/<n>/network` (bridge, address) and `PUT` (apply) with the token | **Refused**, HTTP 403 `Permission check failed (/nodes/<n>, Sys.Modify)` for both; `DELETE` too. Nothing changed on the node. The token cannot create the control bridge; the bridge was made by hand with `ifupdown2` (`ifreload -a`, no other interface touched) |
+| S1 | `agent/ping` and `agent/file-write` by the token | Pass. The ping answered 200 at the 4th try (about 8 s after `qm start`), the written file was read back in the guest |
+| S2 | `agent/exec` and `agent/exec-status` | Pass. Exit code 3 and stderr returned; a 5 s command took 6.4 s including the 1 s polling; **1.4 MB of output came back whole, not truncated** |
+| S3 | 20 chunks of 48,000 bytes as base64 on stdin into `base64 -d >> /tmp/big` | Pass. `sha256sum` equal, **17 s for 960 kB (about 56 kB/s, about 0.85 s per call with a 1 s poll)**. A 10 MB patch file would take about 3 minutes at this rate |
+| S4 | KVM system VM template booted with `agent=1` | Pass. `virt-what` says `kvm`, `qemu-guest-agent` active, the boot arguments written by the API at about 8 s were accepted: `cloud.log` says "Received a new non-empty cmdline file from qemu-guest-agent", `cmd_line.json` was made, `eth0` got the address from `eth0ip` and sshd listened on `169.254.250.10:3922` |
+| S5 | NIC order | Pass. `eth0`, `eth1`, `eth2` carry the MACs of `net0`, `net1`, `net2` in that order |
+| S6 | `PUT config net3=...,tag=100` and `delete=net3` on the running VM, by the token | Pass. HTTP 200 both; `eth3` appeared with the MAC of the configuration and went away on delete |
+| T2 | From the node: `ping` and `ssh -p 3922` to the VM on `cstest0` | The VM answers ping (0.4 to 2 ms) and sshd answers on 3922. The key login was refused (`Permission denied (publickey)`): the test boot arguments had no `authorized_key=`, and the system VM only trusts the key it is given there (the management server's `ssh.publickey`), not the repository's `id_rsa.cloud`. The key login is to be shown with the real boot arguments in the 8a lab runs |
+| S8, S9 | not run | S9: only `patch-sysvms.sh` (6,104 bytes) exists in this checkout; `agent.zip` and `cloud-scripts.tgz` need an installed management server |
+
+Cleanup: VM 9600 destroyed. The bridge `cstest0` stays until it is removed by hand (the token cannot delete it): delete its stanza from `/etc/network/interfaces` and run `ifreload -a`. Unexplained: one SSH session of the tester dropped once after the first `ifreload -a` ("Can't assign requested address"); the node had not restarted and did not repeat it.
+
+Lab result (2026-10-21, T1 second run): after `pveum role add CloudStackNet --privs "Sys.Modify"` and `pveum acl modify /nodes/<node> --users pveaudit@pam --tokens 'pveaudit@pam!cloudstack' --roles CloudStackNet --propagate 0`
+(both entries listed by `pveum acl list`, one for the user and one for the token), the token did all of it with no other privilege, all HTTP 200: `DELETE /nodes/<n>/network/cstest0` (removes the hand-made stanza), `POST` of `cloud0`
+(bridge, `cidr=169.254.0.1/16`, autostart, no ports) and one `PUT` that applied both changes as a task (`srvreload:networking`). Afterwards `cloud0` is up at 169.254.0.1/16, `cstest0` is gone, no `interfaces.new`
+is left, and no SSH session dropped. **Side effect:** `diff /etc/network/interfaces /etc/network/interfaces.new` showed that Proxmox rewrote the whole file: the header comment and the comments on `vmbr0` and `vmbr1` were removed,
+the stanzas were reordered and re-indented; the settings of every interface were kept. `cloud0` stays on the lab node (the Phase 8 build needs it).
+
+### Control bridge at host add: implementation, unit tests (2026-10-21)
+
+New: `ProxmoxControlBridge` (look for the bridge; create and apply it when missing; the messages), `ProxmoxApiClient` (`getNetworkConfig` with the pending `changes`, `createBridge`, `applyNetworkConfig`, `revertNetworkConfig`),
+the setting `proxmox.control.bridge`, and the call in `ProxmoxServerDiscoverer.find` for every node that is added. Plugin: **300 tests pass** (`ProxmoxControlBridgeTest` 15, `ProxmoxServerDiscovererTest` +4, `ProxmoxApiClientVmTest` +4,
+`ProxmoxConfigTest` updated). Not verified against a real node: that Proxmox puts `changes` next to `data` in the answer of `GET /nodes/<node>/network` when `interfaces.new` exists (the web interface does this, but the
+pending-changes refusal depends on it): lab check N3 below.
+
+### Phase 8a, first pieces: system VM start and the router deployer, unit tests (2026-10-21)
+
+New: `ProxmoxApiClient` (`agentPing`, `agentFileWrite`, `agentExec` with a repeated `command` form value, `agentExecStatus`), `ProxmoxRouterDeployer` (core's `VirtualRouterDeployer` through the guest agent), `ProxmoxSystemVms`
+(agent wait, boot arguments, readiness, `isSystemVMSetup`), `ProxmoxVmConfig` (`agent=1` and the control NIC on the control bridge for every VM that is not a user instance), `ProxmoxVmHandler.start` (control bridge check before, system VM set-up
+after), and in `ProxmoxResource` the `VirtualRoutingResource`, `NetworkElementCommand` and `CheckSshCommand` handling. Plugin: **339 tests pass** (`ProxmoxRouterDeployerTest` 14, `ProxmoxSystemVmsTest` 9, `ProxmoxVmHandlerSystemVmTest` 5,
+`ProxmoxVmConfigTest` +5, `ProxmoxApiClientVmTest` +7). Core is unchanged so far (it already treats Proxmox like KVM for traffic labels). Not run on a lab. Assumptions to check there: `ss` and `/opt/cloud/bin/patched.sh` exist in the template, a router's
+sshd listens on 3922 when it is configured (the readiness check), and what the SSVM and CPVM do without the patch files.
+
+### Phase 8 patch CD: lab checks P1 to P3 (2026-10-21)
+
+Same node and token as the earlier Phase 8 checks (`PVEVMAdmin`, `PVEDatastoreAdmin` and `PVESDNUser`; no `Sys.Modify` needed).
+
+| # | Check | Result |
+|---|---|---|
+| P1 | `POST /storage` (`type=dir`, `path=/var/lib/cloudstack-patch`, `content=iso`, `shared=0`) with the token | Pass. HTTP 200; the node made `/var/lib/cloudstack-patch` and `template/iso` as soon as the entry was active (`pvesm status`). No SSH, no manual directory. Not tried: a second node |
+| P2 | Upload a 115,550,932 byte file named `*.iso` to `/nodes/<n>/storage/<entry>/upload` (`content=iso`) | Pass. HTTP 200 (a task, `imgcopy`) in 1.7 s; listed as `csp-lab:iso/cs-patch-test.iso`, `format iso`, the right size; SHA-256 of the stored file equal to the source. Proxmox accepts raw bytes under an `.iso` name |
+| P3 | Put that file into the empty CD drive `ide3` of a running VM (created with `ide3=none,media=cdrom`) with `PUT config`, read it in the guest | **Medium change: pass.** HTTP 200, nothing pending (`qm pending` shows it as current), and the eject (`ide3=none,media=cdrom`) works the same. **Reading: the first six 16 MiB segments are identical to the source, stable on a second read; the whole-file hash differed because the guest sees whole 2048-byte sectors only** (`blockdev --getsize64` 115,550,208, the file is 115,550,932, so the last 724 bytes are cut). Fix: pad the payload to a multiple of 2048 bytes. The padded read is to be confirmed in the end-to-end test |
+
+Cleanup done (VM, uploaded file, entry; the directory was removed by hand because Proxmox leaves it behind).
+
+### Phase 8a, patch delivery: implementation, unit tests (2026-10-21)
+
+New: `ProxmoxPatchFiles` (finds `agent.zip`, `cloud-scripts.tgz`, `patch-sysvms.sh`; SHA-512 kept until the file changes), `ProxmoxApiClient` (`createPatchStorage`, `listContent`, `uploadIso` with a multipart body streamed from the file and padded with zeros to whole
+sectors), `ProxmoxStorageNames` (`csp-` entry, `cs-patch-<sha>.iso`), the setting `proxmox.patch.path`, `ProxmoxVmConfig` (an empty CD drive reserved for SSVM and CPVM), `ProxmoxRouterDeployer.writeBytes` (pieces to `<file>.part`, then `mv`), and in `ProxmoxSystemVms`
+`beforeStart` (entry, upload, removal of old files) and the delivery after the boot arguments (state check, payload CD and checked copy of `agent.zip`, then the scripts last). Plugin: **371 tests pass** (`ProxmoxSystemVmsTest` rewritten, 27; `ProxmoxPatchFilesTest` 4;
+`ProxmoxRouterDeployerTest` +1; `ProxmoxVmConfigTest` +3; `ProxmoxVmHandlerSystemVmTest` +2; `ProxmoxApiClientVmTest` +5; `ProxmoxStorageNamesTest` +2; `ProxmoxConfigTest`). Not run on a lab. To check there: that the padded read gives the exact `agent.zip`
+(lab P3 stopped at the unpadded size), that `/dev/sr0` is the reserved drive in the template, a second node getting its own directory, and that an SSVM and a CPVM really come up and connect.
+

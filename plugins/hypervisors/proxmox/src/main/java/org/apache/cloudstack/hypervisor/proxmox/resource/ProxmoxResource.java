@@ -74,7 +74,11 @@ import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
+import com.cloud.agent.api.check.CheckSshAnswer;
+import com.cloud.agent.api.check.CheckSshCommand;
+import com.cloud.agent.api.routing.NetworkElementCommand;
 import com.cloud.agent.api.to.StorageFilerTO;
+import com.cloud.agent.resource.virtualnetwork.VirtualRoutingResource;
 import com.cloud.host.Host;
 import com.cloud.hypervisor.Hypervisor;
 import com.cloud.network.Networks;
@@ -113,6 +117,8 @@ public class ProxmoxResource implements ServerResource {
     protected String tokenSecret;
     protected volatile ProxmoxApiClient client;
     private ProxmoxVmHandler vmHandler;
+    private ProxmoxRouterDeployer routerDeployer;
+    private VirtualRoutingResource routingResource;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
     private int runLevel;
@@ -153,6 +159,12 @@ public class ProxmoxResource implements ServerResource {
         client = createClient(tokenId, tokenSecret);
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
                 ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
+        routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
+        routingResource = new VirtualRoutingResource(routerDeployer);
+        routingResource.configure(name, params);
+        vmHandler.setControlBridge(ProxmoxConfig.ControlBridge::value);
+        vmHandler.setSystemVms(new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.PatchPath::value,
+                ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis));
         return true;
     }
 
@@ -291,11 +303,32 @@ public class ProxmoxResource implements ServerResource {
                 return vmHandler.stop((StopCommand) cmd);
             } else if (cmd instanceof RebootCommand) {
                 return vmHandler.reboot((RebootCommand) cmd);
+            } else if (cmd instanceof NetworkElementCommand) {
+                return routingResource.executeRequest((NetworkElementCommand) cmd);
+            } else if (cmd instanceof CheckSshCommand) {
+                return execute((CheckSshCommand) cmd);
             }
             return Answer.createUnsupportedCommandAnswer(cmd);
         } catch (ProxmoxApiException e) {
             logger.error("Proxmox API error while executing {}: {}", cmd.getClass().getSimpleName(), e.getMessage());
             return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    /**
+     * Sent after a system VM or router has started: on KVM it opens a connection to the VM's SSH port. The management server cannot reach the VM's
+     * control address, so the guest agent is asked instead; it answers once the VM is up.
+     */
+    private Answer execute(CheckSshCommand cmd) {
+        routerDeployer.register(cmd.getIp(), cmd.getName());
+        try {
+            ProxmoxApiClient.VmLocation vm = routerDeployer.locate(client, cmd.getIp());
+            if (client.agentPing(vm.getNode(), vm.getVmid())) {
+                return new CheckSshAnswer(cmd);
+            }
+            return new CheckSshAnswer(cmd, "The guest agent of " + cmd.getName() + " does not answer");
+        } catch (ProxmoxApiException e) {
+            return new CheckSshAnswer(cmd, e.getMessage());
         }
     }
 

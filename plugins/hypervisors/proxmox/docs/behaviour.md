@@ -401,6 +401,67 @@ Design and the lab results behind it: design-phase7-data-volumes.md.
 - **Not supported yet** (answered with a reason): copying a volume to or from the secondary store (upload, download, volume snapshots, create from snapshot or from a data disk template), moving a volume to another
   primary storage, `CheckVolumeCommand`.
 
+## 16. The control bridge at host add (Phase 8a, first piece; implemented, unit tested, not yet run on the lab)
+
+When "add host" finds a node that is not added yet, the plugin looks at the node's network configuration (`GET /nodes/<node>/network`, read only) for the interface named by the setting `proxmox.control.bridge`
+(default `cloud0`). What happens next:
+
+- **It exists and is a bridge (Linux or Open vSwitch):** nothing is changed and no privilege beyond reading is used, whoever made it. If its address is not the link-local gateway with the prefix of the
+  link-local network (`169.254.0.1/16`, from `NetUtils`), the host is still added and a warning says that system VMs start but the troubleshooting login from the node will not work.
+- **It exists but is not a bridge:** the host is not added: "Proxmox node <node> has an interface named '<name>' that is not a bridge. Choose another name in the setting proxmox.control.bridge, or remove or rename that interface."
+- **It is missing and the node has pending network changes** (Proxmox reports `changes` next to the interface list, `/etc/network/interfaces.new`): the host is not added, and nothing is applied, so that somebody else's
+  half-made change is never put live: "... has pending network changes ..., apply or discard them in the Proxmox web interface, or create the bridge by hand ..., and add the host again."
+- **It is missing:** the plugin saves a Linux bridge without ports and with that address (`POST /nodes/<node>/network`: `iface`, `type=bridge`, `cidr`, `autostart=1`), then applies the configuration (`PUT`, a
+  `srvreload` task that is waited for, `proxmox.task.timeout`). Both need `Sys.Modify` on `/nodes/<node>`. A refusal (HTTP 403) fails the add with the message that names the node and the bridge, and gives the
+  `pveum role add CloudStackNet --privs Sys.Modify` and `pveum acl modify /nodes/<node> --users <user> --tokens '<token id>' --roles CloudStackNet --propagate 0` commands (the user and the token both need it), or says to
+  create the bridge by hand on every node (requirements.md, "The link-local control bridge") and add the host again. Another Proxmox error fails the add with Proxmox's text and the same manual way.
+  If the apply fails, the saved change is discarded again (`DELETE /nodes/<node>/network`), and the message says whether that worked.
+- **A token that cannot even read the network configuration** (no `Sys.Audit`) fails the add and the message says so.
+- **The name is not usable** (a Linux interface name: a letter, then up to 14 letters, digits or underscores): refused before any call, naming the setting.
+- Only nodes that are added are looked at (nodes already added are skipped as before), and one failing node fails the whole add, naming that node; bridges already created on earlier nodes stay and are found
+  on the next try. The plugin never changes the node's network again after the host is added.
+- **Proxmox rewrites the whole `/etc/network/interfaces`** when it applies a change made through the API (comments and layout are lost, the settings are kept; lab 2026-10-21). Creating the bridge by hand
+  only appends lines.
+
+Not done yet (it comes with the system VM start, 8a): a check at a later connect with a warning, and the refusal to start a system VM or router on a node that has lost the bridge.
+
+## 17. System VMs and routers: start, and the commands through the guest agent (Phase 8a, implemented; unit tested, not yet run on the lab)
+
+**Start** (`StartCommand` of a VM whose type is not a user instance: secondary storage VM, console proxy, router, internal load balancer VM ...):
+
+- The VM is created and started as any VM, with **`agent=1`** added to its options, and its *control* NIC (the NIC core marks as type Control, which has no traffic label) on the node's control bridge (`proxmox.control.bridge`, section 16);
+  the other NICs use their traffic labels as for user VMs. The control NIC is found by its type, not its number (it is `eth0` on an SSVM, CPVM or VPC router and `eth1` on a router of an isolated network).
+- Before anything is changed the node must have that bridge: otherwise the start fails with "Proxmox node <node> has no control bridge '<name>' ... Create it as described in the Proxmox plugin requirements".
+- After Proxmox reports the VM running, the plugin (class `ProxmoxSystemVms`) does what the KVM host does over SSH, through the guest agent API:
+  1. polls `agent/ping` (every 2 s, up to 300 s) until the agent answers. The system VM's own init waits only 60 s for its boot arguments once its agent runs, so the write follows the first answer at once;
+  2. writes the VM's boot arguments (`StartCommand`'s `bootArgs`) to `/var/cache/cloud/cmdline` with `agent/file-write` (up to 10 tries, 3 s apart);
+  3. waits (up to 300 s) until the VM has set its network up, by running `ss -ltn | grep -q ':3922 '` in it (sshd listens on the control address when `cloud-early-config` is done; KVM waits for the same thing by opening a connection to port 3922);
+  4. runs core's `isSystemVMSetup` (for an SSVM or CPVM: the script `patched.sh`, retried for up to 10 minutes).
+  A failure at any step fails the start with its reason (the guest agent that never answers names `qemu-guest-agent` and the agent option).
+- **Patch files** (what the KVM host copies over SSH at every start). The template has the scripts but **not the Java agent** (`/usr/local/cloud` is empty in it; read in `tools/appliance/systemvmtemplate`), `cloud-early-config` waits only 2 minutes
+  for `cloud-scripts.tgz`, and on a router it removes the agent directory at every boot, so the files are needed again each time. Sizes on an installed management server: `agent.zip` 115,550,932 bytes, `cloud-scripts.tgz` 149,002, `patch-sysvms.sh` 5,135.
+  They are read from `vms/` on the class path or `/usr/share/cloudstack-common/vms/` on the management server (`ProxmoxPatchFiles`), and delivered as follows:
+  - **Before the start of an SSVM or CPVM** (`ProxmoxSystemVms.beforeStart`): one storage entry of type `dir`, named `csp-<uuid of the path>`, path from the setting `proxmox.patch.path` (default `/var/lib/cloudstack-patch`), content `iso`, not shared, is created when it is
+    missing (Proxmox makes the directory and its `template/iso` folder on each node when it activates the entry, lab P1); `agent.zip` is uploaded to it with the storage upload API as `cs-patch-<first 16 characters of its SHA-512>.iso`, **padded with zeros to a
+    multiple of 2048 bytes** (a CD shows only whole sectors, lab P3), unless the node already has a file of that name and size. Files `cs-patch-*` of other versions are removed; other files in the entry are never touched. A node without room, a token that may not
+    upload, or a missing `agent.zip` fails the start with a message that names the node, the privileges (`PVEDatastoreAdmin` on `/storage`) and the path.
+  - **The VM is created with an empty CD drive (`ide2`) reserved** (SSVM and CPVM only), because a drive cannot be added to a running VM while its medium can be changed live.
+  - **After the boot arguments are written** (the VM only waits 60 s for them, so they come first), the plugin runs in the VM a check of its `cloud-scripts-signature` and of whether `/usr/local/cloud/systemvm` has files. An SSVM or CPVM that has the agent and a signature
+    equal to the SHA-512 of the management server's `cloud-scripts.tgz` (a restart) gets nothing. Otherwise: the payload file is put into the CD drive, the guest waits for the whole padded size to show in `/sys/block/sr0/size`, copies exactly the real number of bytes
+    with `head -c <size> /dev/sr0` to `/var/cache/cloud/agent.zip.part`, and the plugin compares its SHA-512 with the expected one (a mismatch fails the start: "the copy of agent.zip ... is damaged") before it is moved into place; the CD is emptied again in every case.
+  - **A router, and every VM that needs patching, then gets `cloud-scripts.tgz` and `patch-sysvms.sh`** through the API (base64 pieces appended to `<file>.part` and moved into place when complete), `cloud-scripts.tgz` last, because that is the file `cloud-early-config` waits for and
+    `agent.zip` has to be in place by then.
+  - The copy of 110 MiB takes seconds (upload 1.7 s, guest read 3 s in the lab), not the 12 to 34 minutes of copying through the API in pieces.
+
+**Router and system VM commands** (`NetworkElementCommand`s, and core's `VirtualRoutingResource` behind them) are run by `ProxmoxRouterDeployer`, which core calls instead of SSH:
+
+- `executeInVR` runs `/opt/cloud/bin/<script> <args>` in the VM with `agent/exec` (`/bin/sh -c`), polls `agent/exec-status` every 0.3 s until it exits (or the caller's timeout: 10 minutes by default), and answers success when the exit code is 0, with the output (the error output when it printed nothing and failed).
+- `createFileInVR` writes the file with `agent/file-write` when it is at most 48,000 bytes, and above that appends it piece by piece (`base64 -d >>` with 48,000 bytes of the file per call, as one call carries at most 64 KiB of input).
+- The address core passes (the control address, link-local) is **never connected to**. It is only a key: it maps to the VM's name, learned when the VM is started, from the name every network command carries, and from `CheckSshCommand`; the VM is then found by name in the cluster for every call, so it works on whichever
+  node the VM is on after a migration or an HA restart. An address with no VM known fails the call with a message naming the address; a VM Proxmox no longer has fails it naming the VM.
+- `CheckSshCommand` (sent after a start) is answered with a guest agent ping, not a connection to port 3922.
+- `prepareCommand` only records the address and the VM name for now; the NIC hot-plug that IP association, guest network setup and source NAT need on a running router is 8b and 8c, so those commands are not usable yet.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

@@ -55,6 +55,18 @@ public class ProxmoxConfig implements Configurable {
                     + "again when the offering no longer has HA). Needs the privileges Sys.Audit and Sys.Console on / for the API token, see "
                     + "the Proxmox plugin documentation. When off, the HA flag has no effect on Proxmox and HA resources are managed in Proxmox", true);
 
+    public static final ConfigKey<String> ControlBridge = new ConfigKey<>("Advanced", String.class,
+            "proxmox.control.bridge", "cloud0",
+            "Name of the host-only Linux bridge, without ports and with the link-local address 169.254.0.1/16, that the control NIC of system VMs and "
+                    + "virtual routers is attached to. It must exist on every node: when a host is added CloudStack creates it if it is missing (the API "
+                    + "token then needs the privilege Sys.Modify on the node), or fails the add and says how to create it by hand", true);
+
+    public static final ConfigKey<String> PatchPath = new ConfigKey<>("Advanced", String.class,
+            "proxmox.patch.path", "/var/lib/cloudstack-patch",
+            "Directory on every Proxmox node where CloudStack keeps the file that carries the system VM agent (agent.zip) into a new secondary "
+                    + "storage VM or console proxy VM, as one Proxmox storage entry. Proxmox creates the directory; the API token needs the "
+                    + "privileges to create a storage entry and to upload to it (PVEDatastoreAdmin on /storage)", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -62,6 +74,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath};
     }
 }

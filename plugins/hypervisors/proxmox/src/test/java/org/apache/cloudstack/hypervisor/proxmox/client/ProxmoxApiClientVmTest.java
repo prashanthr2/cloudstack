@@ -521,4 +521,167 @@ public class ProxmoxApiClientVmTest {
         }
         assertEquals(1, bodies.size());
     }
+
+    @Test
+    public void theNetworkConfigurationListsTheInterfacesAndPendingChanges() {
+        answer("GET /api2/json/nodes/pve1/network", "{\"data\":[{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"cidr\":\"10.0.35.25/20\"},"
+                + "{\"iface\":\"eth1\",\"type\":\"eth\"}],\"changes\":\"--- /etc/network/interfaces\\n+++ interfaces.new\"}");
+
+        ProxmoxApiClient.NetworkConfig config = client.getNetworkConfig("pve1");
+
+        assertEquals(2, config.getInterfaces().size());
+        assertTrue(config.hasPendingChanges());
+        assertTrue(config.find("vmbr0").isBridge());
+        assertEquals("10.0.35.25/20", config.find("vmbr0").getCidr());
+        assertTrue(!config.find("eth1").isBridge());
+        assertNull(config.find("eth1").getCidr());
+        assertNull(config.find("cloud0"));
+    }
+
+    @Test
+    public void noChangesKeyMeansNothingIsPending() {
+        answer("GET /api2/json/nodes/pve1/network", "{\"data\":[{\"iface\":\"vmbr0\",\"type\":\"bridge\"}]}");
+
+        assertTrue(!client.getNetworkConfig("pve1").hasPendingChanges());
+    }
+
+    @Test
+    public void aBridgeIsSavedWithoutPortsThenAppliedAsATaskThatIsWaitedFor() {
+        answer("POST /api2/json/nodes/pve1/network", "{\"data\":null}");
+        answer("PUT /api2/json/nodes/pve1/network", task("UPID:pve1:00010B1A:00246999:6ACCFCCB:srvreload:networking:pveaudit@pam!cloudstack:"));
+        answer("GET /api2/json/nodes/pve1/tasks/UPID:pve1:00010B1A:00246999:6ACCFCCB:srvreload:networking:pveaudit@pam!cloudstack:/status",
+                "{\"data\":{\"status\":\"stopped\",\"exitstatus\":\"OK\"}}");
+
+        client.createBridge("pve1", "cloud0", "169.254.0.1/16");
+        client.applyNetworkConfig("pve1", 30);
+
+        assertEquals("iface=cloud0&type=bridge&cidr=169.254.0.1%2F16&autostart=1", bodies.get(0));
+        assertTrue(requests.get(1).startsWith("PUT /api2/json/nodes/pve1/network"));
+    }
+
+    @Test
+    public void revertingDeletesThePendingChanges() {
+        answer("DELETE /api2/json/nodes/pve1/network", "{\"data\":null}");
+
+        client.revertNetworkConfig("pve1");
+
+        assertEquals("DELETE /api2/json/nodes/pve1/network", requests.get(0));
+    }
+
+    @Test
+    public void theGuestAgentAnswersOrIsNotRunningYet() {
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/ping", "{\"data\":{}}");
+        assertTrue(client.agentPing("pve1", 9300));
+
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/ping", "@500");
+        assertTrue(!client.agentPing("pve1", 9300));
+    }
+
+    @Test
+    public void aRefusedGuestAgentCallIsAnErrorNotJustNotYet() {
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/ping", "@403");
+        try {
+            client.agentPing("pve1", 9300);
+            fail("a refused privilege must be reported");
+        } catch (ProxmoxApiException e) {
+            assertEquals(403, e.getStatusCode());
+        }
+    }
+
+    @Test
+    public void aFileIsWrittenInTheGuestWithItsPathAndContentEncodedInTheForm() {
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/file-write", "{\"data\":null}");
+
+        client.agentFileWrite("pve1", 9300, "/var/cache/cloud/cmdline", "type=router name=r-1-VM");
+
+        assertEquals("file=%2Fvar%2Fcache%2Fcloud%2Fcmdline&content=type%3Drouter+name%3Dr-1-VM", bodies.get(0));
+    }
+
+    @Test
+    public void aCommandIsStartedWithEveryPartOfItAsARepeatedFormValueAndItsInput() {
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/exec", "{\"data\":{\"pid\":4711}}");
+
+        long pid = client.agentExec("pve1", 9300, java.util.Arrays.asList("/bin/sh", "-c", "echo hi"), "aGk=");
+
+        assertEquals(4711L, pid);
+        assertEquals("command=%2Fbin%2Fsh&command=-c&command=echo+hi&input-data=aGk%3D", bodies.get(0));
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void aCommandThatGetsNoProcessIdIsAnError() {
+        answer("POST /api2/json/nodes/pve1/qemu/9300/agent/exec", "{\"data\":null}");
+
+        client.agentExec("pve1", 9300, java.util.Arrays.asList("/bin/true"), null);
+    }
+
+    @Test
+    public void theStatusOfACommandHasItsExitCodeAndOutput() {
+        answer("GET /api2/json/nodes/pve1/qemu/9300/agent/exec-status?pid=4711",
+                "{\"data\":{\"exited\":1,\"exitcode\":3,\"out-data\":\"hi\\n\",\"err-data\":\"err\\n\"}}");
+
+        ProxmoxApiClient.AgentExecStatus status = client.agentExecStatus("pve1", 9300, 4711);
+
+        assertTrue(status.isExited());
+        assertEquals(3, status.getExitCode());
+        assertEquals("hi\n", status.getOut());
+        assertEquals("err\n", status.getErr());
+    }
+
+    @Test
+    public void aCommandThatIsStillRunningHasNotExited() {
+        answer("GET /api2/json/nodes/pve1/qemu/9300/agent/exec-status?pid=4711", "{\"data\":{\"exited\":0}}");
+
+        ProxmoxApiClient.AgentExecStatus status = client.agentExecStatus("pve1", 9300, 4711);
+
+        assertTrue(!status.isExited());
+        assertEquals("", status.getOut());
+    }
+
+    @Test
+    public void thePatchEntryIsADirectoryThatIsNotSharedForIsoFiles() {
+        answer("POST /api2/json/storage", "{\"data\":{\"storage\":\"csp-1\",\"type\":\"dir\"}}");
+
+        client.createPatchStorage("csp-1", "/var/lib/cloudstack-patch");
+
+        assertEquals("storage=csp-1&type=dir&path=%2Fvar%2Flib%2Fcloudstack-patch&content=iso&shared=0", bodies.get(0));
+    }
+
+    @Test
+    public void theFilesOfAStorageEntryAreListedWithTheirSize() {
+        answer("GET /api2/json/nodes/pve1/storage/csp-1/content?content=iso",
+                "{\"data\":[{\"volid\":\"csp-1:iso/a.iso\",\"size\":2048,\"format\":\"iso\"},{\"volid\":\"csp-1:iso/b.iso\",\"size\":4096}]}");
+
+        List<ProxmoxApiClient.ContentItem> items = client.listContent("pve1", "csp-1", "iso");
+
+        assertEquals(2, items.size());
+        assertEquals("csp-1:iso/a.iso", items.get(0).getVolid());
+        assertEquals(4096L, items.get(1).getSize());
+    }
+
+    @Test
+    public void anIsoIsUploadedAsMultipartWithTheFileFollowedByZerosUpToWholeSectors() throws Exception {
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("payload", ".bin");
+        try {
+            java.nio.file.Files.write(file, new byte[] {1, 2, 3, 4, 5});
+            answer("POST /api2/json/nodes/pve1/storage/csp-1/upload", task("UPID:pve1:00010B1A:00246999:6ACCFCCB:imgcopy::pveaudit@pam!cloudstack:"));
+
+            String upid = client.uploadIso("pve1", "csp-1", "cs-patch-abc.iso", file, 2048);
+
+            assertTrue(upid.startsWith("UPID:pve1"));
+            String body = bodies.get(0);
+            assertTrue(body, body.contains("name=\"content\"\r\n\r\niso\r\n"));
+            assertTrue(body, body.contains("name=\"filename\"; filename=\"cs-patch-abc.iso\""));
+            // the file part is exactly the padded size: 5 bytes then zeros up to 2048
+            int start = body.indexOf("Content-Type: application/octet-stream\r\n\r\n") + "Content-Type: application/octet-stream\r\n\r\n".length();
+            int end = body.indexOf("\r\n--", start);
+            assertEquals(2048, end - start);
+        } finally {
+            java.nio.file.Files.deleteIfExists(file);
+        }
+    }
+
+    @Test(expected = ProxmoxApiException.class)
+    public void anUploadOfAFileThatCannotBeReadFailsWithAMessage() {
+        client.uploadIso("pve1", "csp-1", "x.iso", java.nio.file.Paths.get("/nonexistent/agent.zip"), 2048);
+    }
 }

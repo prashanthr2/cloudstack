@@ -123,6 +123,8 @@ class ProxmoxVmHandler {
      * node is the clean-up of a failed migration, see {@link #leftAloneAsMigrationCleanup}.
      */
     private final Map<String, Long> migrationMarks = new ConcurrentHashMap<>();
+    private volatile ProxmoxSystemVms systemVms;
+    private volatile Supplier<String> controlBridge = () -> "cloud0";
 
     ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
             LongConsumer pauser, IntSupplier taskTimeoutSeconds) {
@@ -144,6 +146,27 @@ class ProxmoxVmHandler {
 
     void setClock(LongSupplier clock) {
         this.clock = clock;
+    }
+
+    /** What happens after a system VM has started (the guest agent, the boot arguments, waiting for the VM). Without it system VMs are started but not set up. */
+    void setSystemVms(ProxmoxSystemVms systemVms) {
+        this.systemVms = systemVms;
+    }
+
+    /** The name of the node's host-only bridge for the control NIC of system VMs (the setting {@code proxmox.control.bridge}). */
+    void setControlBridge(Supplier<String> controlBridge) {
+        this.controlBridge = controlBridge;
+    }
+
+    /** A system VM cannot start on a node that lacks the control bridge: the message says what to do about it. */
+    private void checkControlBridge(ProxmoxApiClient client, String bridge) {
+        for (ProxmoxApiClient.NodeBridge existing : client.listBridges(node)) {
+            if (existing.getName().equals(bridge)) {
+                return;
+            }
+        }
+        throw new ProxmoxApiException(String.format("Proxmox node %s has no control bridge '%s', which the control NIC of a system VM or router needs. "
+                + "Create it as described in the Proxmox plugin requirements (\"The link-local control bridge\"), on every node.", node, bridge));
     }
 
     private void waitFor(ProxmoxApiClient client, String upid) {
@@ -448,7 +471,19 @@ class ProxmoxVmHandler {
             }
             Map<String, String> cdroms = cdromDrives(client, vm);
             String rootDrive = ProxmoxVmConfig.rootDiskDrive(vm);
-            Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive);
+            String control = null;
+            if (ProxmoxVmConfig.isSystemVm(vm)) {
+                control = controlBridge.get();
+                checkControlBridge(client, control);
+            }
+            if (systemVms != null) {
+                String problem = systemVms.beforeStart(client, vm, node);
+                if (problem != null) {
+                    LOGGER.error("Proxmox node {} cannot start {}: {}", node, vm.getName(), problem);
+                    return new StartAnswer(cmd, problem);
+                }
+            }
+            Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive, control);
             Map<String, String> current = client.getVmConfig(node, vmid);
             moveRootDisk(options, current, rootVolumePath(vm), rootDrive, vm.getName());
             applyRootDriveOptions(options, current, vm, rootDrive);
@@ -472,6 +507,13 @@ class ProxmoxVmHandler {
             waitFor(client, client.startVm(node, vmid));
             waitForVm(client, vmid, node, "start on node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()) && l.isRunning());
             applyHaFlag(client, vm, vmid);
+            if (ProxmoxVmConfig.isSystemVm(vm) && systemVms != null) {
+                String problem = systemVms.afterStart(client, vm, node, vmid);
+                if (problem != null) {
+                    LOGGER.error("Proxmox node {} started {} but it is not usable: {}", node, vm.getName(), problem);
+                    return new StartAnswer(cmd, problem);
+                }
+            }
             return new StartAnswer(cmd);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not start {}: {}", node, vm.getName(), e.getMessage());

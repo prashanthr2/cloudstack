@@ -5,10 +5,14 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
+import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxResource;
 import org.junit.Before;
 import org.junit.Test;
@@ -60,12 +65,19 @@ public class ProxmoxServerDiscovererTest {
         ReflectionTestUtils.setField(discoverer, "_clusterDao", clusterDao);
         ReflectionTestUtils.setField(discoverer, "_hostDao", hostDao);
 
+        // every node already has the control bridge, unless a test says otherwise
+        when(client.getNetworkConfig(anyString())).thenReturn(networkWith("cloud0", "bridge", "169.254.0.1/16", false));
         when(client.getVersion()).thenReturn("8.4.21");
         when(client.getClusterName()).thenReturn("lab");
         when(client.getClusterNodes(anyString())).thenReturn(Arrays.asList(
                 new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.196", true),
                 new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.197", true),
                 new ProxmoxApiClient.NodeInfo("pve3", "10.0.32.198", false)));
+    }
+
+    private static ProxmoxApiClient.NetworkConfig networkWith(String name, String type, String cidr, boolean pending) {
+        return new ProxmoxApiClient.NetworkConfig(Arrays.asList(new ProxmoxApiClient.NetworkInterface("vmbr0", "bridge", "10.0.35.25/20"),
+                new ProxmoxApiClient.NetworkInterface(name, type, cidr)), pending);
     }
 
     private Map<? extends ServerResource, Map<String, String>> find() throws DiscoveryException {
@@ -170,5 +182,50 @@ public class ProxmoxServerDiscovererTest {
         List<ProxmoxApiClient.NodeInfo> allOffline = Arrays.asList(new ProxmoxApiClient.NodeInfo("pve1", "10.0.32.196", false));
         when(client.getClusterNodes(anyString())).thenReturn(allOffline);
         find();
+    }
+
+    @Test
+    public void anExistingControlBridgeIsLeftAlone() throws Exception {
+        find();
+
+        verify(client, never()).createBridge(anyString(), anyString(), anyString());
+        verify(client, never()).applyNetworkConfig(anyString(), anyInt());
+    }
+
+    @Test
+    public void aMissingControlBridgeIsCreatedAndAppliedOnEveryNewNode() throws Exception {
+        when(client.getNetworkConfig(anyString())).thenReturn(networkWith("vmbr1", "bridge", null, false));
+
+        Map<? extends ServerResource, Map<String, String>> found = find();
+
+        assertEquals(2, found.size());
+        verify(client).createBridge("pve1", "cloud0", "169.254.0.1/16");
+        verify(client).createBridge("pve2", "cloud0", "169.254.0.1/16");
+        verify(client, times(2)).applyNetworkConfig(anyString(), anyInt());
+    }
+
+    @Test
+    public void theControlBridgeIsOnlyLookedForOnNodesThatAreAdded() throws Exception {
+        when(hostDao.findByGuid(discoverer.getResourceGuid("lab", "pve1"))).thenReturn(mock(HostVO.class));
+        when(client.getNetworkConfig(anyString())).thenReturn(networkWith("vmbr1", "bridge", null, false));
+
+        find();
+
+        verify(client, never()).getNetworkConfig("pve1");
+        verify(client).createBridge(eq("pve2"), anyString(), anyString());
+    }
+
+    @Test
+    public void aTokenThatMayNotCreateTheBridgeFailsTheAddWithWhatToDo() throws Exception {
+        when(client.getNetworkConfig(anyString())).thenReturn(networkWith("vmbr1", "bridge", null, false));
+        doThrow(new ProxmoxApiException("denied", 403, null)).when(client).createBridge(anyString(), anyString(), anyString());
+        try {
+            find();
+            fail("expected the add to fail");
+        } catch (DiscoveryException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("Sys.Modify") && e.getMessage().contains("pve1")
+                    && e.getMessage().contains("cloud0") && e.getMessage().contains("by hand"));
+        }
+        verify(client, never()).applyNetworkConfig(anyString(), anyInt());
     }
 }
