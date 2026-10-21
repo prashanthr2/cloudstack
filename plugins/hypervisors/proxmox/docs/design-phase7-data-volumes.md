@@ -17,7 +17,7 @@ primary storage, `CheckVolumeCommand` / repair, and encrypted volumes.
 
 - **Create:** `createVolume` only makes the database row (state `Allocated`, no pool, no path). The disk is created on a primary storage **at the first attach**:
   `VolumeApiServiceImpl.attachVolumeToVM` -> `volService.createVolumeAsync` -> `CloudStackPrimaryDataStoreDriverImpl.createAsync` sends **`CreateObjectCommand`**
-  (`VolumeObjectTO`: uuid, size, pool, volume type DATADISK) to a host of the pool; the answer is a `CreateObjectAnswer` with a `VolumeObjectTO` carrying the **path**.
+  (`VolumeObjectTO`: uuid, size, pool, account id, volume type DATADISK) to a host of the pool; the answer is a `CreateObjectAnswer` with a `VolumeObjectTO` carrying the **path**.
   The instance may not even exist yet in the command (`vmName` is not reliable here), so the disk cannot belong to an instance.
 - **Attach to a running instance:** `AttachCommand(DiskTO, vmName, controllerInfo)` to the instance's host. `DiskTO` has the slot (`diskSeq`, the "device id", from 1 up, 3 is
   reserved for the CD-ROM, at most `hypervisor_capabilities.max_data_volumes_limit` = 30 for Proxmox, which Phase 3 already inserted), the type `DATADISK` and the `VolumeObjectTO`
@@ -48,22 +48,31 @@ primary storage, `CheckVolumeCommand` / repair, and encrypted volumes.
 
 ## 4. Design
 
-### 4.1 A data volume is an image owned by a fixed "holder" vmid
+### 4.1 A data volume is an image owned by a per-account "holder" vmid
 
-All CloudStack data volumes of a Proxmox cluster are disk images **owned by one vmid that is never a VM**, the holder, a constant `999999900` (the highest ids Proxmox accepts are
-999999999; `cluster/nextid` never gets near that). The image is named after the CloudStack volume: **`vm-999999900-<volume uuid>.qcow2`**, so the volume path stored in CloudStack is
-`999999900/vm-999999900-<volume uuid>.qcow2`, and the volume ID in Proxmox is `cs-<pool uuid>:999999900/vm-999999900-<volume uuid>.qcow2`.
+The data volumes of a CloudStack account are disk images **owned by one vmid that is never a VM, the account's holder: `900000000 + <account id>`** (account 2, the admin, is `900000002`).
+The image is named after the CloudStack volume: **`vm-<holder>-<volume uuid>.qcow2`**, so the volume path stored in CloudStack is `<holder>/vm-<holder>-<volume uuid>.qcow2` and the volume ID in Proxmox is
+`cs-<pool uuid>:900000002/vm-900000002-<volume uuid>.qcow2`. On the primary storage the files are grouped by account, one folder per account (`images/900000002/`, `images/900000003/`, ...), and the uuid in the
+file name maps each file back to its CloudStack volume. The account id comes from the `VolumeObjectTO` of the create command.
 
-Why this and not "the disk belongs to the VM it is attached to": the volume exists before any instance does and survives it; moving ownership between a holder and the VM at every attach and detach
+**Reserved vmids.** Proxmox accepts vmids from 100 to 999999999. **The range 900000001 to 999999999 is reserved for CloudStack** (the holders; account ids up to 99999999 fit, a larger one makes the create fail with a message).
+Proxmox itself hands out the lowest free id from 100 (`cluster/nextid`), so ordinary VMs never get there; the plugin also refuses to create a VM if Proxmox ever returns an id in the reserved range, and the documentation
+(requirements.md, behaviour.md) tells administrators never to create a VM or to set the cluster's `next-id` range there.
+
+Why a holder and not "the disk belongs to the VM it is attached to": the volume exists before any instance does and survives it; moving ownership between a holder and the VM at every attach and detach
 (`qm disk move --target-vmid`) means copying disk state around and leaves `unusedN` entries behind; a disk owned by an ordinary vmid is destroyed with the VM or by `destroy-unreferenced-disks` of
-another VM that gets the same number. With the holder, an attach is one configuration change, a detach is one, the file is never touched, and **deleting or expunging an instance never removes its data volumes**
+another VM that gets the same number. With the holder, an attach is one configuration change, a detach is one, the file is never touched or moved, and **deleting or expunging an instance never removes its data volumes**
 (the lab already showed the plugin's `purge=1` for a root volume destroys only what the VM owns).
 
-The holder is a constant, not a setting: the path of every volume contains it, so it cannot change later. It must never be used for a VM (documented, in requirements.md and behaviour.md).
+Why per account and not one holder for everything or one per instance: one folder for all volumes grows without bound; an instance is the wrong unit because a volume is detached from one instance and attached to another
+(the file cannot follow it, so the folder name would mislead), exists before its first instance, and its folder would outlive the instance. An account owns a volume for as long as it exists. If an administrator
+assigns a volume to another account the file stays in the old account's folder and keeps working.
+
+The holder is derived from the account, not a setting: the path of every volume contains it, so it cannot change later.
 
 ### 4.2 Commands
 
-- **`CreateObjectCommand`, volume type DATADISK:** allocate the image in the pool entry with the name above and the size rounded up to whole GiB (`format=qcow2`, thin), and answer with the
+- **`CreateObjectCommand`, volume type DATADISK:** allocate the image for the account's holder in the pool entry with the name above and the size rounded up to whole GiB (`format=qcow2`, thin), and answer with the
   path, the size and the format QCOW2. Idempotent: if the image already exists (a repeated command), answer with the existing one. Root volumes keep the blank-VM path of Phase 6.
 - **`AttachCommand` (DATADISK):** find the instance (cluster-wide by name); the drive is `<controller><diskSeq>` (4.3); the configuration must not already use it for another volume; set
   `<drive>=<pool entry>:<path>` (plus `cache=` from the volume's cache mode, and the iops and bandwidth limits in 4.5). For a **running** instance read the running configuration
@@ -108,9 +117,9 @@ and delete it. requirements.md gets the confirmation.
 
 ## 6. Risks and limits
 
-- **The holder vmid must never be used for a VM.** If someone creates a VM with that id, destroying it removes every CloudStack data volume (the "unreferenced disks of its own vmid" rule). It is a very high id
-  that Proxmox never hands out; documented prominently.
-- **One folder holds all volumes** (`images/999999900/`), which can get large; a directory listing of it is the only place that cost shows.
+- **The reserved vmids (900000001 to 999999999) must never be used for a VM.** If someone creates a VM with an account's holder id, destroying it removes every data volume of that account (the "unreferenced disks of its
+  own vmid" rule). They are very high ids that Proxmox never hands out; documented prominently, and the plugin refuses to create a VM in that range.
+- **A folder holds all the data volumes of one account**; a very large account makes a large folder, which only shows in a directory listing.
 - **A detached volume cannot be resized** (Proxmox limit); resize works while it is attached, to a running or stopped instance.
 - **SATA and non-hot-pluggable controllers need a restart of the instance to attach**; the command says so and leaves no pending change.
 - **Data volumes are not copied, snapshotted or moved between pools** in this phase.
@@ -128,7 +137,7 @@ instance, detach, re-attach to another instance, resize while attached, delete, 
 
 | # | Check | What it settles |
 |---|---|---|
-| D1 | Allocate an image with the token: `POST /nodes/<n>/storage/<pool>/content` with `vmid=999999900`, `filename=vm-999999900-<uuid>.qcow2`, `size=1G`, `format=qcow2`; list it with `GET .../content?vmid=999999900` | the holder vmid and the file name are accepted; the size format; the volume ID returned |
+| D1 | Allocate an image with the token: `POST /nodes/<n>/storage/<pool>/content` with `vmid=900000002`, `filename=vm-900000002-<uuid>.qcow2`, `size=1G`, `format=qcow2`; list it with `GET .../content?vmid=900000002` | a holder vmid with no VM and the file name are accepted; the size format; the volume ID returned |
 | D2 | On a stopped throwaway VM: `PUT config scsi1=<volid>` for that image | a VM can use a disk owned by another vmid with the token (privileges) |
 | D3 | Start the VM; then `PUT config scsi2=<volid2>` (a second image) on the running VM and check it is applied (`?current=1`, and the guest or `ls -l /proc/<pid>/fd`) | hot-plug of a SCSI disk |
 | D4 | `PUT config delete=scsi2` on the running VM | the disk is unplugged live, the file stays, and **no `unusedN` entry** appears (`qm config`) |
@@ -143,7 +152,7 @@ instance, detach, re-attach to another instance, resize while attached, delete, 
 
 ## 9. Decisions for the reviewer
 
-1. **The holder vmid `999999900`, as a constant**, owning every data volume (4.1). Alternative: one owner per CloudStack account or volume (more folders, same risk, more code).
+1. **A per-account holder vmid, `900000000 + account id`**, owning that account's data volumes (4.1), with **900000001 to 999999999 reserved for CloudStack** and documented as such. (Chosen over one holder for everything and over one per instance.)
 2. **A detached volume cannot be resized** (it must be attached first), because Proxmox offers no resize for a disk that no VM uses.
 3. **Data disks use the same controller family as the root disk by default, `dataDiskController` overrides it** (4.3).
 4. **A SATA (non-hot-pluggable) attach to a running instance fails with "stop and start" and leaves nothing pending** (4.2).
