@@ -48,8 +48,12 @@ public class ProxmoxSystemVms {
     static final long WRITE_RETRY_MILLIS = 3000;
     static final int READY_WAIT_SECONDS = 300;
     static final long READY_POLL_MILLIS = 5000;
-    /** sshd listens on the control address once the VM has set its network up: what KVM waits for by opening a connection to port 3922. */
-    static final String READY_CHECK = "ss -ltn | grep -q ':3922 '";
+    /**
+     * cloud-early-config has finished: its unit is a oneshot with RemainAfterExit, so it is "activating" while it runs and "active" when it is done.
+     * That is when the VM has written its authorized_keys from the boot arguments (the file is replaced, not appended to, so a key added earlier is
+     * lost) and set up its network. Waiting for port 3922 to open is not enough: the template's sshd listens on it from the start (lab 2026-10-22).
+     */
+    static final String READY_CHECK = "[ \"$(systemctl is-active cloud-early-config)\" = active ] && ss -ltn | grep -q ':3922 '";
 
     /** The directory the system VM reads its patch files from. */
     static final String CACHE_DIR = "/var/cache/cloud/";
@@ -108,6 +112,7 @@ public class ProxmoxSystemVms {
         if (!ProxmoxVmConfig.needsAgentPatch(vm)) {
             return null;
         }
+        long begin = clock.getAsLong();
         try {
             ProxmoxPatchFiles files = patchFiles.get();
             String storage = ensurePatchStorage(client, node);
@@ -120,6 +125,8 @@ public class ProxmoxSystemVms {
                         taskTimeoutSeconds.getAsInt());
                 removeOlderPayloads(client, node, storage, fileName);
             }
+            LOGGER.info("The agent file for {} is on Proxmox node {} after {} s{}", vm.getName(), node, seconds(begin, clock.getAsLong()),
+                    existing == null || existing.getSize() != padded ? " (uploaded)" : " (already there)");
             return null;
         } catch (ProxmoxApiException e) {
             return String.format("Unable to prepare the system VM patch file on Proxmox node %s: %s. The token needs the privileges of "
@@ -247,27 +254,37 @@ public class ProxmoxSystemVms {
         }
         deployer.register(controlIp, vm.getName());
 
+        long begin = clock.getAsLong();
         try {
             if (!waitForAgent(client, node, vmid)) {
                 return String.format("The guest agent of %s did not answer within %d seconds: the system VM template needs qemu-guest-agent, "
                         + "and the VM needs the agent option (set by CloudStack)", vm.getName(), AGENT_WAIT_SECONDS);
             }
+            long agent = clock.getAsLong();
             String problem = writeBootArguments(client, node, vmid, vm);
             if (problem != null) {
                 return problem;
             }
+            long arguments = clock.getAsLong();
             problem = deliverPatchFiles(client, vm, node, vmid, controlIp);
             if (problem != null) {
                 return problem;
             }
+            long patched = clock.getAsLong();
             if (!waitUntilConfigured(controlIp)) {
                 return String.format("The system VM %s did not finish configuring itself within %d seconds after it received its boot "
                         + "arguments; see /var/log/cloud.log in the VM", vm.getName(), READY_WAIT_SECONDS);
             }
+            long configured = clock.getAsLong();
             installLoginKeys(vm, controlIp);
+            long keys = clock.getAsLong();
             if (!routing.isSystemVMSetup(vm.getName(), controlIp)) {
                 return "The system VM " + vm.getName() + " did not complete its setup";
             }
+            long end = clock.getAsLong();
+            LOGGER.info("{} is ready {} s after Proxmox started it: guest agent after {} s, boot arguments {} s, patch files {} s, configured {} s, "
+                    + "login keys {} s, setup check {} s", vm.getName(), seconds(begin, end), seconds(begin, agent), seconds(agent, arguments),
+                    seconds(arguments, patched), seconds(patched, configured), seconds(configured, keys), seconds(keys, end));
             return null;
         } catch (ProxmoxApiException e) {
             return e.getMessage();
@@ -302,6 +319,10 @@ public class ProxmoxSystemVms {
             }
         }
         return String.format("Unable to give the boot arguments to %s through its guest agent: %s", vm.getName(), last == null ? "" : last.getMessage());
+    }
+
+    private static long seconds(long from, long to) {
+        return (to - from) / 1000;
     }
 
     /** A public key line: its type, the base64 key and a comment; nothing that could end the quotes of a shell command. */

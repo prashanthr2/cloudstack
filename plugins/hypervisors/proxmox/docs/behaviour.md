@@ -435,7 +435,7 @@ Not done yet (it comes with the system VM start, 8a): a check at a later connect
 - After Proxmox reports the VM running, the plugin (class `ProxmoxSystemVms`) does what the KVM host does over SSH, through the guest agent API:
   1. polls `agent/ping` (every 2 s, up to 300 s) until the agent answers. The system VM's own init waits only 60 s for its boot arguments once its agent runs, so the write follows the first answer at once;
   2. writes the VM's boot arguments (`StartCommand`'s `bootArgs`) to `/var/cache/cloud/cmdline` with `agent/file-write` (up to 10 tries, 3 s apart);
-  3. waits (up to 300 s) until the VM has set its network up, by running `ss -ltn | grep -q ':3922 '` in it (sshd listens on the control address when `cloud-early-config` is done; KVM waits for the same thing by opening a connection to port 3922);
+  3. waits (up to 300 s) until `cloud-early-config` of the VM has finished, by running `[ "$(systemctl is-active cloud-early-config)" = active ] && ss -ltn | grep -q ':3922 '` in it (its unit is a oneshot that stays "active" when it is done, and it is what writes `authorized_keys` and sets the network up). Port 3922 alone is not a sign: the template's sshd listens on it from the start (lab 2026-10-22, see the test log);
   4. runs core's `isSystemVMSetup` (for an SSVM or CPVM: the script `patched.sh`, retried for up to 10 minutes).
   A failure at any step fails the start with its reason (the guest agent that never answers names `qemu-guest-agent` and the agent option).
 - **Patch files** (what the KVM host copies over SSH at every start). The template has the scripts but **not the Java agent** (`/usr/local/cloud` is empty in it; read in `tools/appliance/systemvmtemplate`), `cloud-early-config` waits only 2 minutes
@@ -452,7 +452,7 @@ Not done yet (it comes with the system VM start, 8a): a check at a later connect
   - **A router, and every VM that needs patching, then gets `cloud-scripts.tgz` and `patch-sysvms.sh`** through the API (base64 pieces appended to `<file>.part` and moved into place when complete), `cloud-scripts.tgz` last, because that is the file `cloud-early-config` waits for and
     `agent.zip` has to be in place by then.
   - The copy of 110 MiB takes seconds (upload 1.7 s, guest read 3 s in the lab), not the 12 to 34 minutes of copying through the API in pieces.
-- **Login keys for troubleshooting** (setting `proxmox.systemvm.ssh.key`, empty by default; requirements.md, "Logging in to a system VM from a node"): after the VM has finished configuring itself (sshd is listening, so cloud-early-config has already written `authorized_keys` from the boot arguments)
+- **Login keys for troubleshooting** (setting `proxmox.systemvm.ssh.key`, empty by default; requirements.md, "Logging in to a system VM from a node"): after the VM has finished configuring itself (`cloud-early-config` has finished, so it has already written `authorized_keys` from the boot arguments)
   and before the setup check, the plugin adds the public key(s) of the setting to the VM's `/root/.ssh/authorized_keys` through the guest agent (the directory and file are created with modes 700 and 600; a key already in the file is not added again). Entries are separated by `|` or a line break;
   an entry that is not a public key line is skipped with a warning, and a failure to add the keys is logged: neither fails the start. The keys are added at every start by CloudStack, since the VM rewrites the file at its own boot.
 

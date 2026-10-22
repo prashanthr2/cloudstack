@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-21 (items 19 to 22 added).
+Last updated 2026-10-21 (items 19 to 23 added).
 
 ## Decisions waiting for you
 
@@ -17,6 +17,7 @@ None at the moment.
 | 20 | **System VM start through the guest agent (8a)** | Implemented and unit tested (behaviour.md section 17), not run on the lab. Needs: the KVM system VM template registered for Proxmox (`registerTemplate`, `templatetype=SYSTEM`) and a zone where the SSVM and CPVM get created on a Proxmox node. To see: the VM boots on the Proxmox node, takes its boot arguments from the guest agent, the readiness check passes, `CheckSshCommand` is answered, the SSVM connects to the management server and the CPVM serves a console |
 | 21 | **Patch files for system VMs (8a): implemented, to see on the lab** | Payload CD from one `dir` entry (`csp-...`), design 4.2 step 5 and 4.8, behaviour.md section 17; unit tested (371). To see: the padded read is exactly `agent.zip` (P3 stopped at the unpadded size), `/dev/sr0` is the reserved drive in the template, a second node gets its own directory, and an SSVM and a CPVM come up and connect. Item 20 covers the same run |
 | 22 | **Troubleshooting login from a node: implemented, to see on the lab** | Decided: the Proxmox administrator creates one key pair (`ssh-keygen -t ed25519 -f /etc/pve/priv/cloudstack_systemvm` on any node) and puts the public key in the global setting `proxmox.systemvm.ssh.key`; the plugin appends it to every system VM's `authorized_keys` through the guest agent after the VM is configured (behaviour.md section 17, requirements.md "Logging in to a system VM from a node"). To see: that `/etc/pve/priv` accepts the new file (otherwise create it in `/root/.ssh` and copy it to each node), that `ssh -i ... -p 3922 root@<control address>` works from the node, and that a bad value in the setting is ignored with a warning |
+| 23 | **A slow system VM registers its agent under the wrong name (SSVM: agent not Up in CloudStack)** | Found on the lab 2026-10-22: the SSVM's Java agent asks `hostname` with a 500 ms timeout at startup (`Agent.retrieveHostname`); on the Proxmox VM (single vCPU, JVM starting, nested lab, default CPU type `kvm64`) it timed out, the agent fell back to `InetAddress.getLocalHost()` and registered as `s-49-VM/10.0.55.81` instead of `s-49-VM`. Core finds the SSVM by the host name (`findByInstanceName`), so it logs "Secondary storage VM [s-49-VM/10.0.55.81] does not exist" three times, skips the store set-up commands, and the SSVM's agent state in the API (matched by name) is not Up although the agent is connected and answering pings. Workaround: `qm guest exec <vmid> -- systemctl restart cloud` once the VM is idle (the agent then registers as `s-49-VM`). Options under discussion: a faster guest CPU type for system VMs (`cpu=host`), more CPU weight at start, and a plugin check that restarts the `cloud` service when the agent's log shows the timeout |
 
 ## Known limits (not bugs; confirm they are acceptable)
 
