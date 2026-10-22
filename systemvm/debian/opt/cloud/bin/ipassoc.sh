@@ -328,7 +328,7 @@ enable_rpsrfs() {
         enable=$(cat /etc/rpsrfsenable)
         if [ $enable -eq 1 ]
         then
-          proc=$(cat /proc/cpuinfo | grep "processor" | wc -l)
+          proc=$(cat /proc/cpuinfo | grep "^processor" | wc -l)
           if [ $proc -le 1 ]
           then
               return $status;

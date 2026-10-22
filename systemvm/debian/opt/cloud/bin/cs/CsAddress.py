@@ -1036,7 +1036,8 @@ class CsRpsrfs:
     def cpus(self):
         count = 0
         for line in open('/proc/cpuinfo'):
-            if "processor" not in line:
+            # one "processor : N" line per CPU; the word is also in the model name of some CPUs ("Common KVM processor")
+            if not line.startswith("processor"):
                 continue
             count += 1
         if count < 2:
