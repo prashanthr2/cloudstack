@@ -1,6 +1,6 @@
 # Phase 8 design: system VMs (SSVM, console proxy) and virtual routers
 
-Status: **proposal, third version.** Implemented so far, unit tested and not yet run on the lab: the control bridge check and creation at host add (4.7, behaviour.md section 16), and the start of system VMs and routers with the commands through the guest agent (4.2 steps 1 to 4, 4.3 except the NIC hot-plug; behaviour.md section 17). The patching with the payload CD (4.2 step 5, 4.8; behaviour.md section 17) is implemented and unit tested too. Not implemented: the NIC hot-plug (4.3, 4.4), the core changes (4.5).
+Status: **proposal, third version.** Implemented so far, unit tested and not yet run on the lab: the control bridge check and creation at host add (4.7, behaviour.md section 16), and the start of system VMs and routers with the commands through the guest agent (4.2 steps 1 to 4, 4.3 except the NIC hot-plug; behaviour.md section 17). The patching with the payload CD (4.2 step 5, 4.8; behaviour.md section 17) is implemented and unit tested too. 8b is implemented and unit tested (behaviour.md section 18): interface numbers by MAC address, the hot-plug and removal of public interfaces, the traffic counters, the reboot of a router, and core changes 1 and 3 of 4.5; run on the lab: pending. Not implemented: `PlugNicCommand` and `UnPlugNicCommand` for user VMs (4.4), the VPC list (4.5, change 2), and the VPC-specific commands, all of 8c.
 
 - Version 1 put the control traffic on management-network addresses: dropped, it needs the management network stretched to every node.
 - Version 2 sent the control traffic through the guest agent API and left the control address unused.
@@ -40,7 +40,7 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
 ### 4.1 Templates
 
 - **System VM template:** the KVM template (`.qcow2`) is registered **by hand** as a template of type `SYSTEM` for the hypervisor **Proxmox** (`registerTemplate` with `templatetype=SYSTEM`, format QCOW2). The automatic registration of core (`SystemVmTemplateRegistration`) is by hypervisor and architecture and does not know Proxmox; adding Proxmox there is a larger core change that is not needed.
-- **Router template:** core finds the router template by the name in `router.template.kvm`, with the hypervisor type of the router. The core change is to let Proxmox use the **same setting as KVM** (`NetworkHelperImpl` has a map from hypervisor to setting, V). The Proxmox template is registered with **the same name as the KVM one**; names only have to be unique per hypervisor, and a zone with both just works.
+- **Router template:** core finds the router template by the name in a global setting per hypervisor (`router.template.kvm` ...). **Proxmox gets its own, `router.template.proxmox`** (decided, replacing the earlier plan to share the KVM one: a zone with both hypervisors can then name the two templates differently, and the "same name for two hypervisors" question does not arise). A `NetworkHelperImpl` line and a new `ConfigKey` in `VirtualNetworkApplianceManager`.
 - How the template reaches a node is whatever Phases 3 and 6 do today; the rework of that is the separate later piece.
 
 ### 4.2 Starting a system VM or a router (`StartCommand` for a VM that is not a user VM)
@@ -78,7 +78,7 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
 
 ### 4.5 Core changes (the control network needs none)
 
-1. `NetworkHelperImpl`: a router on Proxmox uses the router template setting of KVM (one line in the map).
+1. `NetworkHelperImpl` and `VirtualNetworkApplianceManager`: a new setting `router.template.proxmox` (default `SystemVM Template (Proxmox)`, zone scoped) and one line in the map from hypervisor to setting.
 2. `VpcManagerImpl`: Proxmox in the list of hypervisors that support VPC.
 3. `NetworkOrchestrator.prepareNicForMigration`: Proxmox next to KVM and VMware for routers (their hot-plugged NICs are not in the database), so a router can be live migrated (Phase 5).
 
@@ -177,7 +177,7 @@ Settled in the discussion: the control path is the guest agent API only (no SSH 
 1. **The control bridge is created by the plugin when a host is added, if it is missing; if that fails, adding the host fails with a message that tells the administrator to grant `Sys.Modify` or to create the bridge by hand** (4.7). Decided. An administrator who prefers not to grant the privilege creates `cloud0` on every node first and the plugin leaves it alone (lab T1: the token is refused without `Sys.Modify`, works with it).
 2. **Boot parameters through the guest agent API** (`agent/file-write`), with `agent=1` for system VMs.
 3. **Patching** (decided): small files through the API, `agent.zip` through a payload CD from one `dir` storage entry on the nodes (4.2 step 5, 4.8); a start fails with a message when the upload is not possible; nothing is copied when the VM's signature already matches; nothing needed on the nodes.
-4. **The router template setting is shared with KVM** (`router.template.kvm`, the Proxmox template registered with the same name), instead of a new setting.
+4. **Proxmox has its own router template setting, `router.template.proxmox`** (decided; the plan to share `router.template.kvm` was dropped).
 5. **The system VM template is registered by hand** (no change to `SystemVmTemplateRegistration`).
 6. **Split into 8a (SSVM, CPVM and the control bridge), 8b (VR) and 8c (VPC and NIC hot-plug)**, each with its lab runs.
 7. **Redundant routers, VM statistics, NSX, Netris, security groups and CKS are left for later.**

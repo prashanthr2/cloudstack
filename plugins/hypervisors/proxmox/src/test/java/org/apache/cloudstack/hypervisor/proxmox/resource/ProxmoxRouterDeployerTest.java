@@ -42,7 +42,13 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
+import com.cloud.agent.api.SetupGuestNetworkCommand;
+import com.cloud.agent.api.routing.IpAssocCommand;
+import com.cloud.agent.api.routing.IpAssocVpcCommand;
 import com.cloud.agent.api.routing.NetworkElementCommand;
+import com.cloud.agent.api.routing.SetSourceNatCommand;
+import com.cloud.agent.api.to.IpAddressTO;
+import com.cloud.agent.api.to.NicTO;
 import com.cloud.utils.ExecutionResult;
 
 public class ProxmoxRouterDeployerTest {
@@ -266,5 +272,219 @@ public class ProxmoxRouterDeployerTest {
         verify(cmd).setRouterAccessIp("169.254.8.8");
         assertTrue(deployer.executeInVR("169.254.8.8", "x.sh", null).isSuccess());
         assertTrue(deployer.cleanupCommand(cmd).isSuccess());
+    }
+
+    // ---- the interfaces of a router
+
+    private static final String GUEST_MAC = "02:00:a9:fe:00:01";
+    private static final String CONTROL_MAC = "0e:00:a9:fe:a6:57";
+    private static final String PUBLIC_MAC = "1e:01:b7:00:00:15";
+
+    private java.util.Map<String, String> routerConfig() {
+        java.util.Map<String, String> config = new java.util.LinkedHashMap<>();
+        config.put("net0", "virtio=" + GUEST_MAC + ",bridge=vmbr1,tag=100,firewall=0");
+        config.put("net1", "virtio=" + CONTROL_MAC + ",bridge=cloud0,firewall=0");
+        config.put("net2", "virtio=" + PUBLIC_MAC + ",bridge=vmbr1,tag=51,firewall=0");
+        return config;
+    }
+
+    private static IpAddressTO ip(String mac, boolean add) {
+        IpAddressTO ip = mock(IpAddressTO.class);
+        when(ip.getVifMacAddress()).thenReturn(mac);
+        when(ip.isAdd()).thenReturn(add);
+        when(ip.getPublicIp()).thenReturn("10.0.55.9");
+        when(ip.getNetworkName()).thenReturn("vmbr1");
+        when(ip.getBroadcastUri()).thenReturn("vlan://51");
+        return ip;
+    }
+
+    private IpAssocCommand assoc(IpAddressTO... ips) {
+        IpAssocCommand cmd = mock(IpAssocCommand.class);
+        when(cmd.getIpAddresses()).thenReturn(ips);
+        when(cmd.getRouterAccessIp()).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
+        return cmd;
+    }
+
+    private void commandsSucceed() {
+        when(client.agentExec(anyString(), anyLong(), anyList(), org.mockito.ArgumentMatchers.any())).thenReturn(1L);
+        when(client.agentExecStatus(anyString(), anyLong(), anyLong())).thenReturn(exited(0, "", ""));
+    }
+
+    @Test
+    public void anIpOnAnInterfaceTheRouterHasGetsItsNumberAndNothingIsPlugged() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        commandsSucceed();
+        IpAddressTO ip = ip(PUBLIC_MAC, true);
+
+        assertTrue(deployer.prepareCommand(assoc(ip)).isSuccess());
+
+        verify(ip).setNicDevId(2);
+        verify(ip).setNewNic(false);
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void everyInterfaceIsToldToTheTrafficCounters() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        commandsSucceed();
+
+        deployer.prepareCommand(assoc(ip(PUBLIC_MAC, true)));
+
+        ArgumentCaptor<List<String>> commands = captor();
+        verify(client).agentExec(eq("pve2"), eq(9300L), commands.capture(), org.mockito.ArgumentMatchers.any());
+        assertEquals("/opt/cloud/bin/netusage.sh -a eth2", commands.getValue().get(2));
+    }
+
+    @Test
+    public void anIpWhoseInterfaceIsMissingGetsOneHotPluggedOnItsBridgeAndVlanAndIsWaitedFor() {
+        java.util.Map<String, String> before = routerConfig();
+        java.util.Map<String, String> after = routerConfig();
+        after.put("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,tag=77,firewall=0");
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(before).thenReturn(after);
+        commandsSucceed();
+        IpAddressTO ip = ip("aa:bb:cc:dd:ee:03", true);
+        when(ip.getBroadcastUri()).thenReturn("vlan://77");
+
+        assertTrue(deployer.prepareCommand(assoc(ip)).isSuccess());
+
+        verify(client).updateVmConfig("pve2", 9300L, java.util.Collections.singletonMap("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,tag=77,firewall=0"));
+        verify(ip).setNicDevId(3);
+        verify(ip).setNewNic(true);
+        ArgumentCaptor<List<String>> commands = captor();
+        verify(client, times(2)).agentExec(eq("pve2"), eq(9300L), commands.capture(), org.mockito.ArgumentMatchers.any());
+        assertTrue(commands.getAllValues().get(0).get(2), commands.getAllValues().get(0).get(2).contains("ip -o link | grep -qi aa:bb:cc:dd:ee:03"));
+    }
+
+    @Test
+    public void anUntaggedPublicNetworkIsPluggedWithoutAVlanTag() {
+        java.util.Map<String, String> after = routerConfig();
+        after.put("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,firewall=0");
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig()).thenReturn(after);
+        commandsSucceed();
+        IpAddressTO ip = ip("aa:bb:cc:dd:ee:03", true);
+        when(ip.getBroadcastUri()).thenReturn("vlan://untagged");
+
+        assertTrue(deployer.prepareCommand(assoc(ip)).isSuccess());
+
+        verify(client).updateVmConfig("pve2", 9300L, java.util.Collections.singletonMap("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,firewall=0"));
+    }
+
+    @Test
+    public void anInterfaceWithoutABridgeCannotBePlugged() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        IpAddressTO ip = ip("aa:bb:cc:dd:ee:03", true);
+        when(ip.getNetworkName()).thenReturn(null);
+
+        ExecutionResult result = deployer.prepareCommand(assoc(ip));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getDetails(), result.getDetails().contains("traffic label"));
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void aVpcRouterOnlyGetsTheNumbersOfItsInterfaces() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        IpAddressTO ip = ip(CONTROL_MAC, true);
+        IpAssocVpcCommand cmd = mock(IpAssocVpcCommand.class);
+        when(cmd.getIpAddresses()).thenReturn(new IpAddressTO[] {ip});
+        when(cmd.getRouterAccessIp()).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
+
+        assertTrue(deployer.prepareCommand(cmd).isSuccess());
+
+        verify(ip).setNicDevId(1);
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void theGuestNetworkInterfaceMustBeThereOrTheCommandFailsWithItsMac() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        NicTO nic = mock(NicTO.class);
+        SetupGuestNetworkCommand cmd = mock(SetupGuestNetworkCommand.class);
+        when(cmd.getNic()).thenReturn(nic);
+        when(cmd.getRouterAccessIp()).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
+
+        when(nic.getMac()).thenReturn(GUEST_MAC.toUpperCase());
+        assertTrue(deployer.prepareCommand(cmd).isSuccess());
+
+        when(nic.getMac()).thenReturn("aa:bb:cc:dd:ee:ff");
+        ExecutionResult result = deployer.prepareCommand(cmd);
+        assertFalse(result.isSuccess());
+        assertTrue(result.getDetails(), result.getDetails().contains("aa:bb:cc:dd:ee:ff") && result.getDetails().contains(NAME));
+    }
+
+    @Test
+    public void theSourceNatIpGetsTheNumberOfItsInterface() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        IpAddressTO ip = ip(PUBLIC_MAC, true);
+        SetSourceNatCommand cmd = mock(SetSourceNatCommand.class);
+        when(cmd.getIpAddress()).thenReturn(ip);
+        when(cmd.getRouterAccessIp()).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
+
+        assertTrue(deployer.prepareCommand(cmd).isSuccess());
+
+        verify(ip).setNicDevId(2);
+    }
+
+    @Test
+    public void anApiErrorWhilePreparingIsAFailedResultWithItsMessage() {
+        when(client.getVmConfig("pve2", 9300L)).thenThrow(new ProxmoxApiException("HTTP 403 Forbidden", 403, null));
+
+        ExecutionResult result = deployer.prepareCommand(assoc(ip(PUBLIC_MAC, true)));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getDetails(), result.getDetails().contains("403"));
+    }
+
+    @Test
+    public void whenTheLastIpOfAnExtraInterfaceIsReleasedTheInterfaceIsRemoved() {
+        java.util.Map<String, String> config = routerConfig();
+        config.put("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,tag=77,firewall=0");
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(config);
+        commandsSucceed();
+        IpAssocCommand cmd = assoc(ip("aa:bb:cc:dd:ee:03", false));
+        when(cmd.getAccessDetail(NetworkElementCommand.NETWORK_PUB_LAST_IP)).thenReturn("true");
+
+        assertTrue(deployer.cleanupCommand(cmd).isSuccess());
+
+        verify(client).updateVmConfig("pve2", 9300L, java.util.Collections.singletonMap("delete", "net3"));
+        ArgumentCaptor<List<String>> commands = captor();
+        verify(client).agentExec(eq("pve2"), eq(9300L), commands.capture(), org.mockito.ArgumentMatchers.any());
+        assertEquals("/opt/cloud/bin/netusage.sh -d eth3", commands.getValue().get(2));
+    }
+
+    @Test
+    public void theDefaultPublicInterfaceIsNeverRemoved() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        IpAssocCommand cmd = assoc(ip(PUBLIC_MAC, false));
+        when(cmd.getAccessDetail(NetworkElementCommand.NETWORK_PUB_LAST_IP)).thenReturn("true");
+
+        assertTrue(deployer.cleanupCommand(cmd).isSuccess());
+
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void nothingIsRemovedWhileOtherIpsRemainOrWhenAnIpIsAdded() {
+        java.util.Map<String, String> config = routerConfig();
+        config.put("net3", "virtio=aa:bb:cc:dd:ee:03,bridge=vmbr1,tag=77,firewall=0");
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(config);
+        IpAssocCommand notLast = assoc(ip("aa:bb:cc:dd:ee:03", false));
+        when(notLast.getAccessDetail(NetworkElementCommand.NETWORK_PUB_LAST_IP)).thenReturn("false");
+        IpAssocCommand added = assoc(ip("aa:bb:cc:dd:ee:03", true));
+        when(added.getAccessDetail(NetworkElementCommand.NETWORK_PUB_LAST_IP)).thenReturn("true");
+
+        assertTrue(deployer.cleanupCommand(notLast).isSuccess());
+        assertTrue(deployer.cleanupCommand(added).isSuccess());
+
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
     }
 }

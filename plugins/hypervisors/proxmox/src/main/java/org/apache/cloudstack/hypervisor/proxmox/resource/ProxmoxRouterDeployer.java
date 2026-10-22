@@ -16,9 +16,11 @@
 // under the License.
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongConsumer;
@@ -32,7 +34,13 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.joda.time.Duration;
 
+import com.cloud.agent.api.SetupGuestNetworkCommand;
+import com.cloud.agent.api.routing.IpAssocCommand;
+import com.cloud.agent.api.routing.IpAssocVpcCommand;
 import com.cloud.agent.api.routing.NetworkElementCommand;
+import com.cloud.agent.api.routing.SetSourceNatCommand;
+import com.cloud.agent.api.to.IpAddressTO;
+import com.cloud.agent.api.to.NicTO;
 import com.cloud.agent.resource.virtualnetwork.VRScripts;
 import com.cloud.agent.resource.virtualnetwork.VirtualRouterDeployer;
 import com.cloud.utils.ExecutionResult;
@@ -50,6 +58,8 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
     /** A call carries at most 64 KiB of standard input; 48,000 bytes make 64,000 characters of base64. */
     static final int CHUNK_BYTES = 48000;
     static final long POLL_MILLIS = 300;
+    /** The default public interface of the router of an isolated network: guest eth0, control eth1, public eth2. */
+    static final int DEFAULT_PUBLIC_NIC = 2;
 
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxRouterDeployer.class);
 
@@ -164,11 +174,140 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         // the address core uses for the router; here it is only the key that finds the VM by name
         cmd.setRouterAccessIp(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP));
         register(cmd.getRouterAccessIp(), cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME));
+        try {
+            if (cmd instanceof IpAssocVpcCommand) {
+                return prepareIpAssocVpc((IpAssocVpcCommand) cmd);
+            } else if (cmd instanceof IpAssocCommand) {
+                return prepareIpAssoc((IpAssocCommand) cmd);
+            } else if (cmd instanceof SetupGuestNetworkCommand) {
+                return prepareGuestNetwork((SetupGuestNetworkCommand) cmd);
+            } else if (cmd instanceof SetSourceNatCommand) {
+                return prepareSourceNat((SetSourceNatCommand) cmd);
+            }
+        } catch (ProxmoxApiException e) {
+            LOGGER.warn("Unable to prepare {} for the VM with the address {}: {}", cmd.getClass().getSimpleName(), cmd.getRouterAccessIp(), e.getMessage());
+            return new ExecutionResult(false, e.getMessage());
+        }
         return new ExecutionResult(true, null);
     }
 
+    private List<ProxmoxRouterNics.Nic> nics(ProxmoxApiClient client, ProxmoxApiClient.VmLocation vm) {
+        return ProxmoxRouterNics.parse(client.getVmConfig(vm.getNode(), vm.getVmid()));
+    }
+
+    /** Core says which interface each public IP lives on by its MAC address; the guest's number for it is the position of that MAC. */
+    private ExecutionResult prepareIpAssocVpc(IpAssocVpcCommand cmd) {
+        ProxmoxApiClient client = clients.get();
+        List<ProxmoxRouterNics.Nic> nics = nics(client, locate(client, cmd.getRouterAccessIp()));
+        for (IpAddressTO ip : cmd.getIpAddresses()) {
+            ip.setNicDevId(ProxmoxRouterNics.numberOf(nics, ip.getVifMacAddress()));
+        }
+        return new ExecutionResult(true, null);
+    }
+
+    /**
+     * As KVM does: an IP whose interface (by MAC address) the router does not have yet gets one hot-plugged (on the bridge of the traffic label
+     * and with the VLAN of the IP), and the router's network usage counters are told about every interface.
+     */
+    private ExecutionResult prepareIpAssoc(IpAssocCommand cmd) {
+        ProxmoxApiClient client = clients.get();
+        ProxmoxApiClient.VmLocation vm = locate(client, cmd.getRouterAccessIp());
+        List<ProxmoxRouterNics.Nic> nics = nics(client, vm);
+        for (IpAddressTO ip : cmd.getIpAddresses()) {
+            boolean newNic = false;
+            Integer number = ProxmoxRouterNics.numberOf(nics, ip.getVifMacAddress());
+            if (number == null) {
+                ExecutionResult plugged = plug(client, vm, cmd.getRouterAccessIp(), nics, ip);
+                if (!plugged.isSuccess()) {
+                    return plugged;
+                }
+                nics = nics(client, vm);
+                number = ProxmoxRouterNics.numberOf(nics, ip.getVifMacAddress());
+                newNic = true;
+            }
+            if (number == null) {
+                return new ExecutionResult(false, "The interface with the MAC address " + ip.getVifMacAddress() + " is not in the configuration of " + vm.getName());
+            }
+            run(cmd.getRouterAccessIp(), SCRIPT_DIR + "netusage.sh -a eth" + number, null, Duration.standardSeconds(60));
+            ip.setNicDevId(number);
+            ip.setNewNic(newNic);
+        }
+        return new ExecutionResult(true, null);
+    }
+
+    private ExecutionResult plug(ProxmoxApiClient client, ProxmoxApiClient.VmLocation vm, String routerIp, List<ProxmoxRouterNics.Nic> nics, IpAddressTO ip) {
+        String bridge = ip.getNetworkName();
+        if (StringUtils.isBlank(bridge)) {
+            return new ExecutionResult(false, "The public IP " + ip.getPublicIp() + " has no bridge (the KVM traffic label of the public network) for a new interface of " + vm.getName());
+        }
+        StringBuilder net = new StringBuilder("virtio=").append(ip.getVifMacAddress()).append(",bridge=").append(bridge);
+        String tag = ip.getBroadcastUri() == null ? null : ProxmoxVmConfig.vlanTag(URI.create(ip.getBroadcastUri()));
+        if (tag != null) {
+            net.append(",tag=").append(tag);
+        }
+        net.append(",firewall=0");
+        client.updateVmConfig(vm.getNode(), vm.getVmid(), java.util.Collections.singletonMap("net" + ProxmoxRouterNics.nextIndex(nics), net.toString()));
+        LOGGER.info("Plugged a network interface with the MAC address {} into {}", ip.getVifMacAddress(), vm.getName());
+        // the guest sees it a moment later; the scripts that follow need it
+        String wait = "for i in $(seq 1 30); do ip -o link | grep -qi " + ip.getVifMacAddress() + " && exit 0; sleep 1; done; exit 1";
+        ExecutionResult seen = run(routerIp, wait, null, Duration.standardSeconds(60));
+        return seen.isSuccess() ? seen : new ExecutionResult(false, "The new interface " + ip.getVifMacAddress() + " did not show up in " + vm.getName());
+    }
+
+    private ExecutionResult prepareGuestNetwork(SetupGuestNetworkCommand cmd) {
+        NicTO nic = cmd.getNic();
+        ProxmoxApiClient client = clients.get();
+        ProxmoxApiClient.VmLocation vm = locate(client, cmd.getRouterAccessIp());
+        if (ProxmoxRouterNics.numberOf(nics(client, vm), nic.getMac()) == null) {
+            return new ExecutionResult(false, "Can not find nic with mac " + nic.getMac() + " for VM " + vm.getName());
+        }
+        return new ExecutionResult(true, null);
+    }
+
+    private ExecutionResult prepareSourceNat(SetSourceNatCommand cmd) {
+        ProxmoxApiClient client = clients.get();
+        ProxmoxApiClient.VmLocation vm = locate(client, cmd.getRouterAccessIp());
+        IpAddressTO ip = cmd.getIpAddress();
+        Integer number = ProxmoxRouterNics.numberOf(nics(client, vm), ip.getVifMacAddress());
+        if (number == null) {
+            return new ExecutionResult(false, "Unable to find the interface with the MAC address " + ip.getVifMacAddress() + " for the source NAT of " + vm.getName());
+        }
+        ip.setNicDevId(number);
+        return new ExecutionResult(true, "success");
+    }
+
+    /**
+     * When the last public IP of an interface is released the interface is removed again, except {@code eth2}, the default public interface of the
+     * router of an isolated network (the same rule as on KVM).
+     */
     @Override
     public ExecutionResult cleanupCommand(NetworkElementCommand cmd) {
+        if (!(cmd instanceof IpAssocCommand) || cmd instanceof IpAssocVpcCommand) {
+            return new ExecutionResult(true, null);
+        }
+        IpAssocCommand assoc = (IpAssocCommand) cmd;
+        if (!"true".equalsIgnoreCase(cmd.getAccessDetail(NetworkElementCommand.NETWORK_PUB_LAST_IP))) {
+            return new ExecutionResult(true, null);
+        }
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation vm = locate(client, cmd.getRouterAccessIp());
+            for (IpAddressTO ip : assoc.getIpAddresses()) {
+                if (ip.isAdd()) {
+                    continue;
+                }
+                List<ProxmoxRouterNics.Nic> nics = nics(client, vm);
+                Integer number = ProxmoxRouterNics.numberOf(nics, ip.getVifMacAddress());
+                if (number != null && number != DEFAULT_PUBLIC_NIC) {
+                    client.updateVmConfig(vm.getNode(), vm.getVmid(), java.util.Collections.singletonMap("delete", "net" + ProxmoxRouterNics.indexAt(nics, number)));
+                    run(cmd.getRouterAccessIp(), SCRIPT_DIR + "netusage.sh -d eth" + number, null, Duration.standardSeconds(60));
+                    LOGGER.info("Removed the network interface eth{} of {}", number, vm.getName());
+                }
+            }
+        } catch (ProxmoxApiException e) {
+            LOGGER.warn("Unable to clean up after {}: {}", cmd.getClass().getSimpleName(), e.getMessage());
+            return new ExecutionResult(false, e.getMessage());
+        }
         return new ExecutionResult(true, null);
     }
 }

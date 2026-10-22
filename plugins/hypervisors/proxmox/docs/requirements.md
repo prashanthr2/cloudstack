@@ -327,6 +327,13 @@ ssh -i /etc/pve/priv/cloudstack_systemvm -p 3922 root@<control address of the VM
 - **A bad value is ignored, not fatal.** An entry that is not a public key (`ssh-...`, `ecdsa-...`, `sk-...`, a base64 key, an optional comment) is skipped with a warning in the management server log; the VM still starts and only the troubleshooting login is affected.
 - **The setting is empty by default.** Then nothing is added, and the only way in is the management server's own key.
 
+### Virtual routers on Proxmox (Phase 8b)
+
+- **Template.** The router of an isolated or shared network is started from the system VM template whose name is in the zone-scoped global setting **`router.template.proxmox`** (default `SystemVM Template (Proxmox)`; one setting per hypervisor, like `router.template.kvm`). The template must be registered for the hypervisor **Proxmox** (type `SYSTEM`, format QCOW2), the same way as for the secondary storage VM and the console proxy VM. The simplest is to point the setting at the template you already registered for them: `cmk update configuration name=router.template.proxmox value=<name of that template> zoneid=<zone id>` (or without `zoneid` for all zones), or to register one more template under the default name. The setting is dynamic.
+- **Bridges.** The router's guest and public interfaces use the bridges of the traffic labels of the zone's physical networks and the VLANs of the networks, exactly like user VMs; CloudStack never creates them. Every node that can run a router needs those bridges and the control bridge (see above).
+- **Privileges.** Nothing beyond the roles already listed: the interfaces are added and removed with `VM.Config.Network`, which `PVEVMAdmin` has (lab S6).
+- The router's own scripts run through the guest agent like those of the other system VMs, and the **login keys** (see "Logging in to a system VM from a node") work for routers too.
+
 ### How the secret is stored
 
 The token id and secret are saved with each host under the host detail keys `username` and `password`. The `password` key

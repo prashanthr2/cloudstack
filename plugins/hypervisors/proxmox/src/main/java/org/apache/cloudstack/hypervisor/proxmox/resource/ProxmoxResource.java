@@ -64,7 +64,9 @@ import com.cloud.agent.api.PingCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
 import com.cloud.agent.api.PrepareForMigrationCommand;
+import com.cloud.agent.api.NetworkUsageCommand;
 import com.cloud.agent.api.RebootCommand;
+import com.cloud.agent.api.RebootRouterCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
 import com.cloud.agent.api.StartCommand;
@@ -119,6 +121,7 @@ public class ProxmoxResource implements ServerResource {
     private ProxmoxVmHandler vmHandler;
     private ProxmoxRouterDeployer routerDeployer;
     private VirtualRoutingResource routingResource;
+    private ProxmoxSystemVms systemVms;
     private Map<String, Object> configParams;
     private IAgentControl agentControl;
     private int runLevel;
@@ -163,8 +166,9 @@ public class ProxmoxResource implements ServerResource {
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);
         vmHandler.setControlBridge(ProxmoxConfig.ControlBridge::value);
-        vmHandler.setSystemVms(new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.PatchPath::value,
-                ProxmoxConfig.SystemVmSshKey::value, ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis));
+        systemVms = new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.PatchPath::value,
+                ProxmoxConfig.SystemVmSshKey::value, ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis);
+        vmHandler.setSystemVms(systemVms);
         return true;
     }
 
@@ -301,6 +305,11 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof StopCommand) {
                 // before RebootCommand: a StopCommand is a RebootCommand
                 return vmHandler.stop((StopCommand) cmd);
+            } else if (cmd instanceof RebootRouterCommand) {
+                // before RebootCommand: a RebootRouterCommand is a RebootCommand
+                return execute((RebootRouterCommand) cmd);
+            } else if (cmd instanceof NetworkUsageCommand) {
+                return ProxmoxNetworkUsage.execute((NetworkUsageCommand) cmd, routerDeployer);
             } else if (cmd instanceof RebootCommand) {
                 return vmHandler.reboot((RebootCommand) cmd);
             } else if (cmd instanceof NetworkElementCommand) {
@@ -313,6 +322,23 @@ public class ProxmoxResource implements ServerResource {
             logger.error("Proxmox API error while executing {}: {}", cmd.getClass().getSimpleName(), e.getMessage());
             return new Answer(cmd, false, e.getMessage());
         }
+    }
+
+    /**
+     * Reboots a router and waits until it has configured itself again, then has its traffic counters made, as the KVM host does after it can
+     * reach the router (the router configures itself at boot from its saved boot arguments; nothing is copied).
+     */
+    private Answer execute(RebootRouterCommand cmd) {
+        routerDeployer.register(cmd.getPrivateIpAddress(), cmd.getVmName());
+        Answer answer = vmHandler.reboot(cmd);
+        if (!answer.getResult()) {
+            return answer;
+        }
+        if (!systemVms.waitForConfigured(cmd.getPrivateIpAddress())) {
+            return new Answer(cmd, false, "Virtual router " + cmd.getVmName() + " did not finish configuring itself after the reboot");
+        }
+        ProxmoxNetworkUsage.usage(routerDeployer, cmd.getPrivateIpAddress(), "create", null, null);
+        return answer;
     }
 
     /**

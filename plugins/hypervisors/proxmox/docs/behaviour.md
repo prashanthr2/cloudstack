@@ -465,6 +465,25 @@ Not done yet (it comes with the system VM start, 8a): a check at a later connect
 - `CheckSshCommand` (sent after a start) is answered with a guest agent ping, not a connection to port 3922.
 - `prepareCommand` only records the address and the VM name for now; the NIC hot-plug that IP association, guest network setup and source NAT need on a running router is 8b and 8c, so those commands are not usable yet.
 
+## 18. Virtual routers: interfaces, traffic counters and reboot (Phase 8b, implemented; unit tested, not yet run on the lab)
+
+A router starts like any other system VM (section 17: guest agent, control NIC on the control bridge, boot arguments, `cloud-scripts.tgz` written at every start, login keys), and core's commands for it run through the guest agent. What 8b adds:
+
+- **Which interface is which.** Core names the interface of a public IP, a guest network or the source NAT by MAC address; the router's scripts need its number inside the guest (`eth0`, `eth1` ...). The plugin reads the VM's configuration (`GET .../config`, the entries `net0`, `net1` ...) and takes the **position of the MAC address** in the order of the entries, as the KVM host does with the position in the domain
+  (lab S5 and S6: the guest names the interfaces in the order of the configuration). For a router of an isolated network that is guest `eth0`, control `eth1`, public `eth2`. Done in `ProxmoxRouterDeployer.prepareCommand` (class `ProxmoxRouterNics` parses the configuration):
+  - `IpAssocCommand`: every IP gets its interface number; **an IP whose MAC address the router does not have gets an interface hot-plugged** (`PUT config net<next>=virtio=<mac>,bridge=<traffic label of the public network>,tag=<VLAN of the IP>,firewall=0`; the bridge is `IpAddressTO.networkName`, the VLAN comes from its broadcast URI, `untagged` has none), and the plugin waits up to 30 s until the guest shows the interface (`ip -o link`). For every interface it also runs `netusage.sh -a eth<n>` in the router.
+    A public IP on the interface the router already has needs no hot-plug; one on another VLAN does (not yet run on the lab; planned for 8c).
+  - `IpAssocVpcCommand`: only the interface numbers.
+  - `SetupGuestNetworkCommand`: the guest interface must be in the configuration, otherwise the command fails with "Can not find nic with mac ... for VM ...".
+  - `SetSourceNatCommand`: the number of the interface of the source NAT IP.
+  - After an `IpAssocCommand` (`cleanupCommand`): when the last public IP of an interface is released, **the interface is removed again** (`PUT config delete=net<n>` and `netusage.sh -d eth<n>`), except `eth2`, the default public interface (the same rule as KVM).
+- **Traffic counters** (`NetworkUsageCommand`, class `ProxmoxNetworkUsage`): `netusage.sh` (`-g` to read, `-c` to create, `-r` reset, `-a` and `-d` for an interface) in the router, and for a VPC router `vpc_netusage.sh -l <public gateway>`, run in the router through the guest agent; the answer holds the summed sent and received bytes. A script that fails gives zeros, as on KVM.
+- **Reboot of a router** (`RebootRouterCommand`): the VM is rebooted through Proxmox, the plugin waits until the router has configured itself again (it uses its saved boot arguments, nothing is copied), then creates the traffic counters. It is not a restart of the VM by CloudStack (stop and start), which does the whole start sequence.
+- **Router template.** Core finds the template of a router by the name in a zone-scoped global setting per hypervisor (`router.template.kvm`, `.vmware` ...). Proxmox has its own, **`router.template.proxmox`** (default `SystemVM Template (Proxmox)`; a new key in `VirtualNetworkApplianceManager` and a line in `NetworkHelperImpl`), so a zone with KVM and Proxmox routers keeps one template name for each. A template with that exact name must be registered for the hypervisor Proxmox (requirements.md, "Virtual routers on Proxmox"), for example by setting the value to the name of the template already registered for the secondary storage VM.
+- **Router migration.** `NetworkOrchestrator.prepareNicForMigration` treats a Proxmox router like a KVM or VMware one (its hot-plugged interfaces are not in the database), one added condition.
+
+Not done: VPC (tiers, ACLs, private gateways, VPN) and a public IP on another VLAN were not run on the lab (8c); redundant routers and security groups are out of scope.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

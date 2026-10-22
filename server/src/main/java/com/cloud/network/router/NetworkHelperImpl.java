@@ -189,6 +189,7 @@ public class NetworkHelperImpl implements NetworkHelper {
     protected void setupHypervisorsMap() {
         hypervisorsMap.put(HypervisorType.XenServer, VirtualNetworkApplianceManager.RouterTemplateXen);
         hypervisorsMap.put(HypervisorType.KVM, VirtualNetworkApplianceManager.RouterTemplateKvm);
+        hypervisorsMap.put(HypervisorType.Proxmox, VirtualNetworkApplianceManager.RouterTemplateProxmox);
         hypervisorsMap.put(HypervisorType.VMware, VirtualNetworkApplianceManager.RouterTemplateVmware);
         hypervisorsMap.put(HypervisorType.Hyperv, VirtualNetworkApplianceManager.RouterTemplateHyperV);
         hypervisorsMap.put(HypervisorType.LXC, VirtualNetworkApplianceManager.RouterTemplateLxc);

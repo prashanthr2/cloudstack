@@ -370,6 +370,11 @@ public class ProxmoxSystemVms {
         }
     }
 
+    /** Waits until the VM has configured itself (after a reboot too: the unit is "activating" while it runs); false after {@code READY_WAIT_SECONDS}. */
+    public boolean waitForConfigured(String controlIp) {
+        return waitUntilConfigured(controlIp);
+    }
+
     private boolean waitUntilConfigured(String controlIp) {
         long deadline = clock.getAsLong() + READY_WAIT_SECONDS * 1000L;
         while (true) {

@@ -534,4 +534,14 @@ public class NetworkHelperImplTest {
         Map<Network, List<? extends NicProfile>> nic = networkHelperSpy.configurePublicNic(routerDeploymentDefinitionMock, false);
         Mockito.verify(ipv6ServiceMock).updateNicIpv6(Mockito.eq(nic.get(networkMock).get(0)), Mockito.any(), Mockito.eq(networkMock));
     }
+
+    @Test
+    public void routersOnProxmoxHaveTheirOwnRouterTemplateSetting() {
+        NetworkHelperImpl helper = new NetworkHelperImpl();
+        helper.setupHypervisorsMap();
+
+        assertTrue(helper.hypervisorsMap.get(com.cloud.hypervisor.Hypervisor.HypervisorType.Proxmox) == VirtualNetworkApplianceManager.RouterTemplateProxmox);
+        assertEquals("router.template.proxmox", VirtualNetworkApplianceManager.RouterTemplateProxmox.key());
+        assertEquals("SystemVM Template (Proxmox)", VirtualNetworkApplianceManager.RouterTemplateProxmox.defaultValue());
+    }
 }
