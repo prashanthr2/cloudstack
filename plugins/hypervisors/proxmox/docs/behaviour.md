@@ -452,6 +452,9 @@ Not done yet (it comes with the system VM start, 8a): a check at a later connect
   - **A router, and every VM that needs patching, then gets `cloud-scripts.tgz` and `patch-sysvms.sh`** through the API (base64 pieces appended to `<file>.part` and moved into place when complete), `cloud-scripts.tgz` last, because that is the file `cloud-early-config` waits for and
     `agent.zip` has to be in place by then.
   - The copy of 110 MiB takes seconds (upload 1.7 s, guest read 3 s in the lab), not the 12 to 34 minutes of copying through the API in pieces.
+- **Login keys for troubleshooting** (setting `proxmox.systemvm.ssh.key`, empty by default; requirements.md, "Logging in to a system VM from a node"): after the VM has finished configuring itself (sshd is listening, so cloud-early-config has already written `authorized_keys` from the boot arguments)
+  and before the setup check, the plugin adds the public key(s) of the setting to the VM's `/root/.ssh/authorized_keys` through the guest agent (the directory and file are created with modes 700 and 600; a key already in the file is not added again). Entries are separated by `|` or a line break;
+  an entry that is not a public key line is skipped with a warning, and a failure to add the keys is logged: neither fails the start. The keys are added at every start by CloudStack, since the VM rewrites the file at its own boot.
 
 **Router and system VM commands** (`NetworkElementCommand`s, and core's `VirtualRoutingResource` behind them) are run by `ProxmoxRouterDeployer`, which core calls instead of SSH:
 

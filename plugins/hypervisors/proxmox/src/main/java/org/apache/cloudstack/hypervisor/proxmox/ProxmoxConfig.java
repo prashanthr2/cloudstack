@@ -67,6 +67,13 @@ public class ProxmoxConfig implements Configurable {
                     + "storage VM or console proxy VM, as one Proxmox storage entry. Proxmox creates the directory; the API token needs the "
                     + "privileges to create a storage entry and to upload to it (PVEDatastoreAdmin on /storage)", true);
 
+    public static final ConfigKey<String> SystemVmSshKey = new ConfigKey<>("Advanced", String.class,
+            "proxmox.systemvm.ssh.key", "",
+            "Public SSH key(s), the contents of a .pub file, that CloudStack adds to /root/.ssh/authorized_keys of every system VM and router on "
+                    + "Proxmox after it has started, so that an administrator can log in from a Proxmox node with ssh -p 3922 root@<control address of "
+                    + "the VM>. Several keys are separated by | . Empty (the default): nothing is added and only the management server's key works. "
+                    + "See the Proxmox plugin requirements, \"Logging in to a system VM from a node\"", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -74,6 +81,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey};
     }
 }

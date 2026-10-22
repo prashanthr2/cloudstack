@@ -164,7 +164,7 @@ public class ProxmoxResource implements ServerResource {
         routingResource.configure(name, params);
         vmHandler.setControlBridge(ProxmoxConfig.ControlBridge::value);
         vmHandler.setSystemVms(new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.PatchPath::value,
-                ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis));
+                ProxmoxConfig.SystemVmSshKey::value, ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis));
         return true;
     }
 

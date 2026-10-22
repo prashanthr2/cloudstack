@@ -52,7 +52,7 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(8, config.getConfigKeys().length);
+        assertEquals(9, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
@@ -65,6 +65,9 @@ public class ProxmoxConfigTest {
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.PatchPath));
         assertEquals("/var/lib/cloudstack-patch", ProxmoxConfig.PatchPath.value());
         assertTrue(ProxmoxConfig.PatchPath.isDynamic());
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.SystemVmSshKey));
+        assertEquals("", ProxmoxConfig.SystemVmSshKey.value());
+        assertTrue(ProxmoxConfig.SystemVmSshKey.isDynamic());
         assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
         assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());

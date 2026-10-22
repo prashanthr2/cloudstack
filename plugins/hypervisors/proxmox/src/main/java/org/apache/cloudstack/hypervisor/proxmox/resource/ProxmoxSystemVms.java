@@ -68,16 +68,18 @@ public class ProxmoxSystemVms {
     private final VirtualRoutingResource routing;
     private final Supplier<ProxmoxPatchFiles> patchFiles;
     private final Supplier<String> patchPath;
+    private final Supplier<String> sshKeys;
     private final IntSupplier taskTimeoutSeconds;
     private final LongConsumer pauser;
     private final LongSupplier clock;
 
     public ProxmoxSystemVms(ProxmoxRouterDeployer deployer, VirtualRoutingResource routing, Supplier<ProxmoxPatchFiles> patchFiles,
-            Supplier<String> patchPath, IntSupplier taskTimeoutSeconds, LongConsumer pauser, LongSupplier clock) {
+            Supplier<String> patchPath, Supplier<String> sshKeys, IntSupplier taskTimeoutSeconds, LongConsumer pauser, LongSupplier clock) {
         this.deployer = deployer;
         this.routing = routing;
         this.patchFiles = patchFiles;
         this.patchPath = patchPath;
+        this.sshKeys = sshKeys;
         this.taskTimeoutSeconds = taskTimeoutSeconds;
         this.pauser = pauser;
         this.clock = clock;
@@ -262,6 +264,7 @@ public class ProxmoxSystemVms {
                 return String.format("The system VM %s did not finish configuring itself within %d seconds after it received its boot "
                         + "arguments; see /var/log/cloud.log in the VM", vm.getName(), READY_WAIT_SECONDS);
             }
+            installLoginKeys(vm, controlIp);
             if (!routing.isSystemVMSetup(vm.getName(), controlIp)) {
                 return "The system VM " + vm.getName() + " did not complete its setup";
             }
@@ -299,6 +302,51 @@ public class ProxmoxSystemVms {
             }
         }
         return String.format("Unable to give the boot arguments to %s through its guest agent: %s", vm.getName(), last == null ? "" : last.getMessage());
+    }
+
+    /** A public key line: its type, the base64 key and a comment; nothing that could end the quotes of a shell command. */
+    static final java.util.regex.Pattern PUBLIC_KEY = java.util.regex.Pattern.compile("(ssh|ecdsa|sk)-[A-Za-z0-9@.\\-]+ [A-Za-z0-9+/=]+( [A-Za-z0-9@._:+=/ \\-]*)?");
+
+    /** The keys of the setting: one per line or separated by a vertical bar, blanks ignored. */
+    static java.util.List<String> splitKeys(String setting) {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        if (setting != null) {
+            for (String part : setting.split("[|\\r\\n]")) {
+                if (!part.trim().isEmpty()) {
+                    keys.add(part.trim());
+                }
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Adds the administrator's public keys (the setting proxmox.systemvm.ssh.key) to the VM's authorized_keys, after cloud-early-config has written
+     * that file from the boot arguments, so that a login from a Proxmox node works. A problem with a key or with the call is logged and does not
+     * fail the start: it only affects the troubleshooting login. The VM rewrites the file at its next boot from its boot arguments, so the keys are
+     * added again at every start.
+     */
+    private void installLoginKeys(VirtualMachineTO vm, String controlIp) {
+        StringBuilder script = new StringBuilder("mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys");
+        int added = 0;
+        for (String key : splitKeys(sshKeys.get())) {
+            if (!PUBLIC_KEY.matcher(key).matches()) {
+                LOGGER.warn("The setting proxmox.systemvm.ssh.key has an entry that is not a usable public key and is ignored: {}",
+                        org.apache.commons.lang3.StringUtils.abbreviate(key, 40));
+                continue;
+            }
+            script.append(" && (grep -qxF -- '").append(key).append("' /root/.ssh/authorized_keys || echo '").append(key).append("' >> /root/.ssh/authorized_keys)");
+            added++;
+        }
+        if (added == 0) {
+            return;
+        }
+        ExecutionResult result = deployer.run(controlIp, script.toString(), null, Duration.standardSeconds(30));
+        if (result.isSuccess()) {
+            LOGGER.info("Added {} login key(s) to {}", added, vm.getName());
+        } else {
+            LOGGER.warn("Could not add the login keys to {}: {}", vm.getName(), result.getDetails());
+        }
     }
 
     private boolean waitUntilConfigured(String controlIp) {

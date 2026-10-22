@@ -579,3 +579,11 @@ sectors), `ProxmoxStorageNames` (`csp-` entry, `cs-patch-<sha>.iso`), the settin
 `ProxmoxRouterDeployerTest` +1; `ProxmoxVmConfigTest` +3; `ProxmoxVmHandlerSystemVmTest` +2; `ProxmoxApiClientVmTest` +5; `ProxmoxStorageNamesTest` +2; `ProxmoxConfigTest`). Not run on a lab. To check there: that the padded read gives the exact `agent.zip`
 (lab P3 stopped at the unpadded size), that `/dev/sr0` is the reserved drive in the template, a second node getting its own directory, and that an SSVM and a CPVM really come up and connect.
 
+### Phase 8a, login keys for troubleshooting: implementation, unit tests (2026-10-22)
+
+Lab finding (2026-10-22): a console proxy VM created on Proxmox (after `system.vm.default.hypervisor` was set to Proxmox and the CPVM destroyed) came up and the console works: the first system VM run on Proxmox. Login with the node's own key (`/root/.ssh/id_rsa` of pve2) to `169.254.56.178:3922`
+was refused: the VM trusts only the management server's public key, which is not on the node.
+
+Done: the global setting `proxmox.systemvm.ssh.key` (empty by default) and `ProxmoxSystemVms.installLoginKeys`, which appends the public key(s) to `/root/.ssh/authorized_keys` through the guest agent after the VM is configured and before the setup check (entries split on `|` or line breaks; an entry that is not
+a public key line is skipped, nothing is run for a setting without a usable key, and a failure is logged without failing the start). Plugin: **378 tests pass** (`ProxmoxSystemVmsTest` +7, `ProxmoxConfigTest`). To see on the lab: the key is in `authorized_keys` of a restarted system VM and the login from the node works.
+

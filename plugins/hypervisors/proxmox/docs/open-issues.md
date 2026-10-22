@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-21 (items 19 to 21 added).
+Last updated 2026-10-21 (items 19 to 22 added).
 
 ## Decisions waiting for you
 
@@ -16,6 +16,7 @@ None at the moment.
 | 19 | **Control bridge at host add (N1 to N5)** | Implemented and unit tested (behaviour.md section 16, test-log.md), not run on the lab: it needs a Proxmox node that is not added yet (nodes already added are skipped). N1 bridge exists, no change; N2 missing and no `Sys.Modify`, the add fails with the grant-or-by-hand message; N3 pending network changes, refused (and check that `GET /nodes/<node>/network` carries `changes` next to `data`: not seen yet); N4 missing and `Sys.Modify` granted, created and applied; N5 the setting names something that is not a bridge. Also still to see on the lab: the same lab T1 side effect, Proxmox rewrites `/etc/network/interfaces` |
 | 20 | **System VM start through the guest agent (8a)** | Implemented and unit tested (behaviour.md section 17), not run on the lab. Needs: the KVM system VM template registered for Proxmox (`registerTemplate`, `templatetype=SYSTEM`) and a zone where the SSVM and CPVM get created on a Proxmox node. To see: the VM boots on the Proxmox node, takes its boot arguments from the guest agent, the readiness check passes, `CheckSshCommand` is answered, the SSVM connects to the management server and the CPVM serves a console |
 | 21 | **Patch files for system VMs (8a): implemented, to see on the lab** | Payload CD from one `dir` entry (`csp-...`), design 4.2 step 5 and 4.8, behaviour.md section 17; unit tested (371). To see: the padded read is exactly `agent.zip` (P3 stopped at the unpadded size), `/dev/sr0` is the reserved drive in the template, a second node gets its own directory, and an SSVM and a CPVM come up and connect. Item 20 covers the same run |
+| 22 | **Troubleshooting login from a node: implemented, to see on the lab** | Decided: the Proxmox administrator creates one key pair (`ssh-keygen -t ed25519 -f /etc/pve/priv/cloudstack_systemvm` on any node) and puts the public key in the global setting `proxmox.systemvm.ssh.key`; the plugin appends it to every system VM's `authorized_keys` through the guest agent after the VM is configured (behaviour.md section 17, requirements.md "Logging in to a system VM from a node"). To see: that `/etc/pve/priv` accepts the new file (otherwise create it in `/root/.ssh` and copy it to each node), that `ssh -i ... -p 3922 root@<control address>` works from the node, and that a bad value in the setting is ignored with a warning |
 
 ## Known limits (not bugs; confirm they are acceptable)
 

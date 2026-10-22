@@ -227,7 +227,7 @@ VM that its owner believes is protected.
 **What it is and why.** Every system VM (secondary storage VM, console proxy) and virtual router has a *control* NIC with a link-local address (`169.254.x.y`). In
 CloudStack that NIC must sit on a host-only bridge, `cloud0` on a KVM host. CloudStack's control of the VM does **not** use it on Proxmox (that goes through the
 guest agent and the API), but the NIC still has to be attached to a bridge of the node, and the node should have the link-local gateway address on that bridge so that
-an administrator can log in to the node and reach the system VM's shell (`ssh -p 3922`) for troubleshooting. The bridge has no ports: nothing leaves the node.
+an administrator can log in to the node and reach the system VM's shell (`ssh -p 3922`) for troubleshooting (the key for that login is set up as described in "Logging in to a system VM from a node" below). The bridge has no ports: nothing leaves the node.
 **It must exist on every node of the cluster**, because Proxmox HA or a migration can start the VM on any of them; a system VM or router cannot start on a node without it
 (the start fails with a message that names the bridge). The name is the setting `proxmox.control.bridge` (default `cloud0`).
 
@@ -291,6 +291,41 @@ A new secondary storage VM or console proxy VM needs the Java agent (`agent.zip`
 - **Room:** 110 MiB on the node's disk under that path, once per version of the management server.
 - **The management server** needs `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` in `/usr/share/cloudstack-common/vms/` (the package `cloudstack-common` installs them). If they are missing, the start of the system VM fails with a message that names the directory.
 - The entry appears in the Proxmox web interface as one fixed entry named `csp-...`; it is not removed when the last SSVM goes away.
+
+### Logging in to a system VM from a node (troubleshooting; Phase 8a)
+
+**What this is for.** The control path of system VMs and routers is the guest agent API, so CloudStack never needs to log in to them. To look inside one (logs, `iptables`, the agent), an administrator logs in to the **Proxmox node the VM runs on** and
+connects to the VM's control address (`169.254.x.y`, shown as the control NIC of `listSystemVms` and `listRouters`) on port 3922. That works through the control bridge (see "The link-local control bridge" above). **The system VMs have no root password; only keys work.**
+
+**Why a key of your own is needed.** A system VM trusts only the management server's public key (`ssh.publickey`). On a KVM host CloudStack copies the matching private key to the host at host add, over SSH. For Proxmox CloudStack has no SSH access to the nodes and does not
+copy the management server's private key anywhere. Instead **you create a key pair for troubleshooting and give CloudStack its public half**; CloudStack adds that public key to every system VM and router it starts.
+
+**Set up, once per CloudStack installation** (any size of cluster: one key, one setting):
+
+1. On **any** Proxmox node, as root, create the key pair in Proxmox's cluster-wide private directory. Proxmox replicates `/etc/pve/priv` to every node of the cluster, current and future, and keeps it readable by root only, so the private key is then on all nodes:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "cloudstack-systemvm" -f /etc/pve/priv/cloudstack_systemvm
+   cat /etc/pve/priv/cloudstack_systemvm.pub
+   ```
+   The second command prints one line, `ssh-ed25519 AAAA... cloudstack-systemvm`. **Not yet confirmed on a lab:** that `/etc/pve/priv` accepts a new file with that name. If it does not, create the pair in `/root/.ssh/` on one node and copy the private file (mode 600, owner root) to the same
+   place on every node yourself; nothing else changes.
+2. Put that line into the global setting **`proxmox.systemvm.ssh.key`** (Global Settings in the UI, or `cmk update configuration name=proxmox.systemvm.ssh.key value="ssh-ed25519 AAAA... cloudstack-systemvm"`). The value is the public key only: never the contents of the file without `.pub`.
+   Several public keys can be given, separated by `|` (for example one per administrator). The setting is dynamic: no restart of the management server is needed.
+3. **Restart the system VMs and routers** that should accept the key (stop and start, or destroy the SSVM and CPVM so they are created again; for a router, restart the network). The key is added when CloudStack starts a VM, not to VMs that are already running.
+
+**Logging in**, from the node the VM runs on (the VM's host is shown in CloudStack and in the Proxmox web interface):
+
+```bash
+ssh -i /etc/pve/priv/cloudstack_systemvm -p 3922 root@<control address of the VM>
+```
+
+**Good to know**
+- **Where the private key is used.** Only on the Proxmox nodes, by the administrators who log in there. The management server's private key stays on the management server.
+- **Who gets access.** Whoever has the private key can log in as root to every system VM and router. The control network exists only inside each node, so this is no more than what root on the node can already do with its VMs.
+- **Rotating the key.** Create a new pair, replace the setting, and restart the VMs. Remove the old private file.
+- **A reboot from inside the VM** (not a start by CloudStack) rewrites its `authorized_keys` from its boot arguments and removes the key until CloudStack starts the VM again.
+- **A bad value is ignored, not fatal.** An entry that is not a public key (`ssh-...`, `ecdsa-...`, `sk-...`, a base64 key, an optional comment) is skipped with a warning in the management server log; the VM still starts and only the troubleshooting login is affected.
+- **The setting is empty by default.** Then nothing is added, and the only way in is the management server's own key.
 
 ### How the secret is stored
 

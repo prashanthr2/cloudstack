@@ -71,6 +71,7 @@ public class ProxmoxSystemVmsTest {
     private ProxmoxSystemVms systemVms;
     private String agentSha;
     private String scriptsSha;
+    private String sshKeys = "";
     private final AtomicLong now = new AtomicLong();
 
     @Before
@@ -85,7 +86,7 @@ public class ProxmoxSystemVmsTest {
         client = mock(ProxmoxApiClient.class);
         deployer = mock(ProxmoxRouterDeployer.class);
         routing = mock(VirtualRoutingResource.class);
-        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> PATCH_PATH, () -> 600, millis -> now.addAndGet(millis), now::get);
+        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> PATCH_PATH, () -> sshKeys, () -> 600, millis -> now.addAndGet(millis), now::get);
         when(client.agentPing("pve1", 9300L)).thenReturn(true);
         when(deployer.run(eq(IP), eq(ProxmoxSystemVms.READY_CHECK), any(), any())).thenReturn(new ExecutionResult(true, ""));
         when(deployer.run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any())).thenReturn(new ExecutionResult(true, "SIG=\nAGENT=no\n"));
@@ -388,11 +389,86 @@ public class ProxmoxSystemVmsTest {
 
     @Test
     public void aPathThatIsNotADirectoryPathIsRefused() {
-        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> "relative path", () -> 600, millis -> { }, now::get);
+        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> "relative path", () -> "", () -> 600, millis -> { }, now::get);
 
         String problem = systemVms.beforeStart(client, ssvm(), "pve1");
 
         assertTrue(problem, problem.contains("proxmox.patch.path"));
         verify(client, never()).createPatchStorage(anyString(), anyString());
+    }
+
+    // ---- the administrator's login keys
+
+    private static final String KEY1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ0example1 cloudstack-systemvm";
+    private static final String KEY2 = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQexample2= root@pve1";
+
+    @Test
+    public void withoutTheSettingNothingIsAddedToTheAuthorizedKeys() {
+        assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
+
+        verify(deployer, never()).run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any());
+    }
+
+    @Test
+    public void theKeyIsAddedOnceAfterTheVmIsConfiguredAndBeforeItIsCheckedForSetup() throws Exception {
+        sshKeys = KEY1;
+        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any())).thenReturn(new ExecutionResult(true, ""));
+
+        assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
+
+        InOrder order = inOrder(deployer, routing);
+        order.verify(deployer).run(eq(IP), eq(ProxmoxSystemVms.READY_CHECK), any(), any());
+        order.verify(deployer).run(eq(IP), eq("mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
+                + " && (grep -qxF -- '" + KEY1 + "' /root/.ssh/authorized_keys || echo '" + KEY1 + "' >> /root/.ssh/authorized_keys)"), any(), any());
+        order.verify(routing).isSystemVMSetup("s-1-VM", IP);
+    }
+
+    @Test
+    public void severalKeysSeparatedByABarOrALineAreAllAdded() {
+        sshKeys = KEY1 + "|" + KEY2 + "\n  \n";
+        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any())).thenReturn(new ExecutionResult(true, ""));
+
+        systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        verify(deployer).run(eq(IP), org.mockito.ArgumentMatchers.argThat(command -> command.contains(KEY1) && command.contains(KEY2)), any(), any());
+    }
+
+    @Test
+    public void anEntryThatIsNotAPublicKeyIsIgnoredSoNothingOddReachesAShell() {
+        sshKeys = "ssh-ed25519 AAAA'; rm -rf / #|not a key|" + KEY2;
+        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any())).thenReturn(new ExecutionResult(true, ""));
+
+        systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        verify(deployer).run(eq(IP), org.mockito.ArgumentMatchers.argThat(command -> command.contains(KEY2) && !command.contains("rm -rf") && !command.contains("not a key")),
+                any(), any());
+    }
+
+    @Test
+    public void aSettingWithNoUsableKeyRunsNothing() {
+        sshKeys = "just some text";
+
+        assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
+
+        verify(deployer, never()).run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any());
+    }
+
+    @Test
+    public void aFailureToAddTheKeysDoesNotFailTheStart() {
+        sshKeys = KEY1;
+        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("authorized_keys"), any(), any())).thenReturn(new ExecutionResult(false, "read-only file system"));
+
+        assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
+    }
+
+    @Test
+    public void thePublicKeyCheckAcceptsTheCommonKeyTypes() {
+        for (String key : new String[] {KEY1, KEY2, "ecdsa-sha2-nistp256 AAAAE2VjZHNhexample3= admin", "sk-ssh-ed25519@openssh.com AAAAGnNrexample4 token",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ0example1"}) {
+            assertTrue(key, ProxmoxSystemVms.PUBLIC_KEY.matcher(key).matches());
+        }
+        for (String key : new String[] {"", "AAAA", "ssh-ed25519", "ssh-ed25519 AAAA with'quote", "ssh-ed25519 AAAA $(id)", "ssh-ed25519 AAAA; id"}) {
+            assertTrue(key, !ProxmoxSystemVms.PUBLIC_KEY.matcher(key).matches());
+        }
     }
 }
