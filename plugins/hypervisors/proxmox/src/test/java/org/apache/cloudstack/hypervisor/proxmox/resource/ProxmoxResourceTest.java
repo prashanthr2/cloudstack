@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -462,5 +463,50 @@ public class ProxmoxResourceTest {
         Answer answer = resource.executeRequest(new GetStorageStatsCommand(POOL_UUID, Storage.StoragePoolType.NetworkFilesystem));
 
         assertFalse(answer.getResult());
+    }
+
+    // ---- CheckSshCommand: the guest agent of a started system VM
+
+    private com.cloud.agent.api.Answer checkSsh() {
+        return resource.executeRequest(new com.cloud.agent.api.check.CheckSshCommand("r-58-VM", "169.254.1.1", 3922));
+    }
+
+    @Test
+    public void aRouterWhoseAgentAnswersAtOnceIsReachable() {
+        when(client.findVmByName("r-58-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9300, "r-58-VM", NODE, "running"));
+        when(client.agentPing(NODE, 9300L)).thenReturn(true);
+
+        assertTrue(checkSsh().getResult());
+    }
+
+    @Test
+    public void aRouterWhoseAgentAnswersAfterAWhileIsWaitedFor() {
+        when(client.findVmByName("r-58-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9300, "r-58-VM", NODE, "running"));
+        when(client.agentPing(NODE, 9300L)).thenReturn(false, false, false, true);
+
+        assertTrue(checkSsh().getResult());
+        verify(client, times(4)).agentPing(NODE, 9300L);
+    }
+
+    @Test
+    public void aRouterWhoseAgentNeverAnswersFailsAfterTheWholeWaitWithTheReason() {
+        when(client.findVmByName("r-58-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9300, "r-58-VM", NODE, "running"));
+        when(client.agentPing(NODE, 9300L)).thenReturn(false);
+
+        com.cloud.agent.api.Answer answer = checkSsh();
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("The guest agent of r-58-VM does not answer") && answer.getDetails().contains("120 seconds"));
+        verify(client, times(ProxmoxResource.CHECK_SSH_ATTEMPTS)).agentPing(NODE, 9300L);
+    }
+
+    @Test
+    public void aVmThatCannotBeFoundFailsWithThatReasonAfterTheWait() {
+        when(client.findVmByName("r-58-VM")).thenReturn(null);
+
+        com.cloud.agent.api.Answer answer = checkSsh();
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("Proxmox has no VM r-58-VM"));
     }
 }

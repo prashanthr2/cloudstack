@@ -462,7 +462,7 @@ Not done yet (it comes with the system VM start, 8a): a check at a later connect
 - `createFileInVR` writes the file with `agent/file-write` when it is at most 48,000 bytes, and above that appends it piece by piece (`base64 -d >>` with 48,000 bytes of the file per call, as one call carries at most 64 KiB of input).
 - The address core passes (the control address, link-local) is **never connected to**. It is only a key: it maps to the VM's name, learned when the VM is started, from the name every network command carries, and from `CheckSshCommand`; the VM is then found by name in the cluster for every call, so it works on whichever
   node the VM is on after a migration or an HA restart. An address with no VM known fails the call with a message naming the address; a VM Proxmox no longer has fails it naming the VM.
-- `CheckSshCommand` (sent after a start) is answered with a guest agent ping, not a connection to port 3922.
+- `CheckSshCommand` (sent after a start, in the same batch as the start) is answered with a guest agent ping, not a connection to port 3922; the ping is repeated every 2 s for up to 120 s (KVM tries to connect for minutes), because a router can leave its agent unanswered for a short while right after it has been configured. A failure after the whole wait is logged with its reason and fails the start of the router (core then stops the rest of the start commands).
 - `prepareCommand` only records the address and the VM name for now; the NIC hot-plug that IP association, guest network setup and source NAT need on a running router is 8b and 8c, so those commands are not usable yet.
 
 ## 18. Virtual routers: interfaces, traffic counters and reboot (Phase 8b, implemented; unit tested, not yet run on the lab)

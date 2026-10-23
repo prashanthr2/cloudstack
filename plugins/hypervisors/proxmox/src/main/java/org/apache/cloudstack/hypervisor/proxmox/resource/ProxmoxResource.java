@@ -102,6 +102,9 @@ public class ProxmoxResource implements ServerResource {
     protected static final int STORAGE_ACTIVATION_ATTEMPTS = 15;
     protected static final long STORAGE_ACTIVATION_WAIT_MS = 2000;
     protected static final String STORAGE_CONTENT = "images";
+    /** How long the guest agent of a started system VM is waited for after the start answer: 60 times 2 seconds. */
+    static final int CHECK_SSH_ATTEMPTS = 60;
+    static final long CHECK_SSH_POLL_MILLIS = 2000;
 
     protected Logger logger = LogManager.getLogger(getClass());
 
@@ -342,20 +345,31 @@ public class ProxmoxResource implements ServerResource {
     }
 
     /**
-     * Sent after a system VM or router has started: on KVM it opens a connection to the VM's SSH port. The management server cannot reach the VM's
-     * control address, so the guest agent is asked instead; it answers once the VM is up.
+     * Sent after a system VM or router has started: on KVM it opens a connection to the VM's SSH port, trying for minutes. The management
+     * server cannot reach the VM's control address, so the guest agent is asked instead, and for up to {@code CHECK_SSH_ATTEMPTS} times
+     * 2 seconds: a router that has just been configured can leave its agent unanswered for a short while (lab 2026-10-23: "The guest agent of
+     * r-58-VM does not answer" right after a start that had succeeded).
      */
     private Answer execute(CheckSshCommand cmd) {
         routerDeployer.register(cmd.getIp(), cmd.getName());
-        try {
-            ProxmoxApiClient.VmLocation vm = routerDeployer.locate(client, cmd.getIp());
-            if (client.agentPing(vm.getNode(), vm.getVmid())) {
-                return new CheckSshAnswer(cmd);
+        String problem = null;
+        for (int attempt = 1; attempt <= CHECK_SSH_ATTEMPTS; attempt++) {
+            try {
+                ProxmoxApiClient.VmLocation vm = routerDeployer.locate(client, cmd.getIp());
+                if (client.agentPing(vm.getNode(), vm.getVmid())) {
+                    return new CheckSshAnswer(cmd);
+                }
+                problem = "The guest agent of " + cmd.getName() + " does not answer";
+            } catch (ProxmoxApiException e) {
+                problem = e.getMessage();
             }
-            return new CheckSshAnswer(cmd, "The guest agent of " + cmd.getName() + " does not answer");
-        } catch (ProxmoxApiException e) {
-            return new CheckSshAnswer(cmd, e.getMessage());
+            if (attempt < CHECK_SSH_ATTEMPTS) {
+                pause(CHECK_SSH_POLL_MILLIS);
+            }
         }
+        problem += " (tried for " + CHECK_SSH_ATTEMPTS * CHECK_SSH_POLL_MILLIS / 1000 + " seconds)";
+        logger.warn("{} is not reachable: {}", cmd.getName(), problem);
+        return new CheckSshAnswer(cmd, problem);
     }
 
     /**
