@@ -64,6 +64,10 @@ import com.cloud.agent.api.PrepareForMigrationAnswer;
 import com.cloud.agent.api.PrepareForMigrationCommand;
 import com.cloud.agent.api.RebootAnswer;
 import com.cloud.agent.api.RebootCommand;
+import com.cloud.agent.api.PlugNicAnswer;
+import com.cloud.agent.api.PlugNicCommand;
+import com.cloud.agent.api.UnPlugNicAnswer;
+import com.cloud.agent.api.UnPlugNicCommand;
 import com.cloud.agent.api.StartAnswer;
 import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StopAnswer;
@@ -652,6 +656,57 @@ class ProxmoxVmHandler {
             }
         }
         return null;
+    }
+
+    /**
+     * Adds a network interface to a VM, running or stopped (a VPC tier or a public network for a router, "add network" for an instance). The
+     * interface is {@code net<device id>} on the bridge of the traffic label with the VLAN tag of the network, as at start; when that key is
+     * taken the next free one is used. An interface with the MAC address that the VM already has is a success (core may repeat the command).
+     * On a running VM Proxmox plugs it at once when the VM's {@code hotplug} option includes the network (the default; lab S6).
+     */
+    Answer plugNic(PlugNicCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new PlugNicAnswer(cmd, false, "Proxmox has no VM " + cmd.getVmName());
+            }
+            NicTO nic = cmd.getNic();
+            Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
+            List<ProxmoxRouterNics.Nic> nics = ProxmoxRouterNics.parse(config);
+            if (ProxmoxRouterNics.numberOf(nics, nic.getMac()) != null) {
+                return new PlugNicAnswer(cmd, true, "success");
+            }
+            String model = cmd.getVMType() != null && cmd.getVMType() != VirtualMachine.Type.User ? "virtio" : ProxmoxVmConfig.nicModel(cmd.getDetails());
+            String key = config.containsKey("net" + nic.getDeviceId()) ? "net" + ProxmoxRouterNics.nextIndex(nics) : "net" + nic.getDeviceId();
+            client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(key, ProxmoxVmConfig.netOption(nic, model, nic.getName())));
+            LOGGER.info("Plugged the network interface {} ({}) into {}", key, nic.getMac(), cmd.getVmName());
+            return new PlugNicAnswer(cmd, true, "success");
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not plug a network interface into {}: {}", node, cmd.getVmName(), e.getMessage());
+            return new PlugNicAnswer(cmd, false, "Plug Nic failed: " + e.getMessage() + " (the option hotplug of the VM must include network)");
+        }
+    }
+
+    /** Removes the network interface with the MAC address of the command; a VM that does not have it is a success, as on KVM. */
+    Answer unplugNic(UnPlugNicCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getVmName());
+            if (location == null) {
+                return new UnPlugNicAnswer(cmd, true, "success");
+            }
+            List<ProxmoxRouterNics.Nic> nics = ProxmoxRouterNics.parse(client.getVmConfig(location.getNode(), location.getVmid()));
+            Integer position = ProxmoxRouterNics.numberOf(nics, cmd.getNic().getMac());
+            if (position != null) {
+                client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", "net" + ProxmoxRouterNics.indexAt(nics, position)));
+                LOGGER.info("Removed the network interface net{} ({}) of {}", ProxmoxRouterNics.indexAt(nics, position), cmd.getNic().getMac(), cmd.getVmName());
+            }
+            return new UnPlugNicAnswer(cmd, true, "success");
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not remove a network interface of {}: {}", node, cmd.getVmName(), e.getMessage());
+            return new UnPlugNicAnswer(cmd, false, "Unplug Nic failed: " + e.getMessage());
+        }
     }
 
     Answer stop(StopCommand cmd) {

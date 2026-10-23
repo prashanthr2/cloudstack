@@ -333,7 +333,12 @@ public final class ProxmoxVmConfig {
      * Refused when Proxmox has no such model, so that the VM does not start with something else than was asked for.
      */
     static String nicModel(VirtualMachineTO vm) {
-        String requested = vm.getDetails() == null ? null : vm.getDetails().get(VmDetailConstants.NIC_ADAPTER);
+        return nicModel(vm.getDetails());
+    }
+
+    /** As above, from the details of a VM (a plug command carries them). */
+    static String nicModel(Map<String, String> details) {
+        String requested = details == null ? null : details.get(VmDetailConstants.NIC_ADAPTER);
         if (StringUtils.isBlank(requested)) {
             return DEFAULT_NIC_MODEL;
         }

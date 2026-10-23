@@ -261,7 +261,10 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         if (ProxmoxRouterNics.numberOf(nics(client, vm), nic.getMac()) == null) {
             return new ExecutionResult(false, "Can not find nic with mac " + nic.getMac() + " for VM " + vm.getName());
         }
-        return new ExecutionResult(true, null);
+        // a tier that was just plugged shows up in the guest a moment later; the configuration that follows needs it
+        ExecutionResult seen = run(cmd.getRouterAccessIp(), "for i in $(seq 1 30); do ip -o link | grep -qi " + nic.getMac() + " && exit 0; sleep 1; done; exit 1", null,
+                Duration.standardSeconds(60));
+        return seen.isSuccess() ? seen : new ExecutionResult(false, "The interface " + nic.getMac() + " did not show up in " + vm.getName());
     }
 
     private ExecutionResult prepareSourceNat(SetSourceNatCommand cmd) {

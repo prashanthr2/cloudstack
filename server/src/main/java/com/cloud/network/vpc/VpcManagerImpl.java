@@ -351,6 +351,7 @@ public class VpcManagerImpl extends ManagerBase implements VpcManager, VpcProvis
         hTypes.add(HypervisorType.XenServer);
         hTypes.add(HypervisorType.VMware);
         hTypes.add(HypervisorType.KVM);
+        hTypes.add(HypervisorType.Proxmox);
         hTypes.add(HypervisorType.Simulator);
         hTypes.add(HypervisorType.LXC);
         hTypes.add(HypervisorType.Hyperv);

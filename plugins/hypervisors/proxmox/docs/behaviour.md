@@ -484,6 +484,17 @@ A router starts like any other system VM (section 17: guest agent, control NIC o
 
 Not done: VPC (tiers, ACLs, private gateways, VPN) and a public IP on another VLAN were not run on the lab (8c); redundant routers and security groups are out of scope.
 
+## 19. VPC and plugging interfaces (Phase 8c, implemented; unit tested, not yet run on the lab)
+
+- **`PlugNicCommand`** (a VPC tier or a private gateway added to a running VPC router, "add network" on an instance, and any other interface added to a VM): `ProxmoxVmHandler.plugNic` finds the VM by name in the cluster, and sets `net<device id>` (the next free number when that key is taken) to `<model>=<mac>,bridge=<bridge of the traffic label>,tag=<VLAN of the network>,firewall=0`, through the same `netOption` as a start. A running VM gets the interface at once when its `hotplug` option includes the network (the Proxmox default,
+  lab S6); a stopped VM has it at its next start. The adapter model is the `nicAdapter` detail for an instance and always virtio for a router. An interface with the MAC address the VM already has is a success and nothing is changed, as on KVM. A network without a bridge fails the command with the message about the KVM traffic label; a refusal by Proxmox fails it with Proxmox's text and a hint about the `hotplug` option.
+  Not done, unlike KVM: the config drive ISO is not detached and attached again for an instance, and no security group rules (the capability is off).
+- **`UnPlugNicCommand`**: the interface with that MAC address is removed (`PUT config delete=net<n>`); a VM that is gone or does not have it is a success. The bridge and its VLAN are never touched (Proxmox makes and removes the VLAN sub-bridge of a node itself).
+- **VPC router.** Core lists Proxmox among the hypervisors that support a VPC (`VpcManagerImpl`, one line, upstream note 25). The router is the same system VM as in section 18; its control NIC is `eth0` (type `vpcrouter`), the public NIC `eth1` and the tiers `eth2` and up, and the commands that are specific to it need nothing more than section 18 already does: `IpAssocVpcCommand` (interface numbers by MAC), `SetupGuestNetworkCommand` (the tier's interface must be in the configuration and, since a tier is plugged a moment before, **the plugin now also waits up to 30 s until the guest shows it**), `NetworkUsageCommand` with `vpc_netusage.sh`, and the ACL, route and VPN commands, which are scripts run in the router.
+- **A public IP on another VLAN** needs a new public interface: the hot-plug of section 18 (`IpAssocCommand`) does it, on the bridge of the public traffic label with the VLAN of the IP.
+
+Not done: site-to-site VPN and remote access VPN were not run on the lab; redundant VPC routers are out of scope.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

@@ -63,6 +63,7 @@ import com.cloud.agent.api.ModifyStoragePoolCommand;
 import com.cloud.agent.api.PingCommand;
 import com.cloud.agent.api.PingRoutingCommand;
 import com.cloud.agent.api.PingTestCommand;
+import com.cloud.agent.api.PlugNicCommand;
 import com.cloud.agent.api.PrepareForMigrationCommand;
 import com.cloud.agent.api.NetworkUsageCommand;
 import com.cloud.agent.api.RebootCommand;
@@ -74,6 +75,7 @@ import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
 import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
+import com.cloud.agent.api.UnPlugNicCommand;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.check.CheckSshAnswer;
@@ -308,6 +310,10 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof StopCommand) {
                 // before RebootCommand: a StopCommand is a RebootCommand
                 return vmHandler.stop((StopCommand) cmd);
+            } else if (cmd instanceof PlugNicCommand) {
+                return vmHandler.plugNic((PlugNicCommand) cmd);
+            } else if (cmd instanceof UnPlugNicCommand) {
+                return vmHandler.unplugNic((UnPlugNicCommand) cmd);
             } else if (cmd instanceof RebootRouterCommand) {
                 // before RebootCommand: a RebootRouterCommand is a RebootCommand
                 return execute((RebootRouterCommand) cmd);

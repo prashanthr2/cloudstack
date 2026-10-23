@@ -658,4 +658,12 @@ public class VpcManagerImplTest {
         Assert.assertTrue(result.isEmpty());
     }
 
+    @Test
+    public void proxmoxIsOneOfTheHypervisorsThatSupportVpc() {
+        VpcManagerImpl vpcManager = new VpcManagerImpl();
+        vpcManager.setupSupportedVpcHypervisorsList();
+
+        Assert.assertTrue(vpcManager.getSupportedVpcHypervisors().contains(com.cloud.hypervisor.Hypervisor.HypervisorType.Proxmox));
+    }
+
 }

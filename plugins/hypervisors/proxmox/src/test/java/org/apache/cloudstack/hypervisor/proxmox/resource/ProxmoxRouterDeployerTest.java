@@ -410,6 +410,7 @@ public class ProxmoxRouterDeployerTest {
         when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
         when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
 
+        commandsSucceed();
         when(nic.getMac()).thenReturn(GUEST_MAC.toUpperCase());
         assertTrue(deployer.prepareCommand(cmd).isSuccess());
 
@@ -486,5 +487,24 @@ public class ProxmoxRouterDeployerTest {
         assertTrue(deployer.cleanupCommand(added).isSuccess());
 
         verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void aGuestInterfaceThatNeverShowsUpInTheRouterFailsTheCommand() {
+        when(client.getVmConfig("pve2", 9300L)).thenReturn(routerConfig());
+        when(client.agentExec(anyString(), anyLong(), anyList(), org.mockito.ArgumentMatchers.any())).thenReturn(1L);
+        when(client.agentExecStatus(anyString(), anyLong(), anyLong())).thenReturn(exited(1, "", ""));
+        NicTO nic = mock(NicTO.class);
+        when(nic.getMac()).thenReturn(GUEST_MAC);
+        SetupGuestNetworkCommand cmd = mock(SetupGuestNetworkCommand.class);
+        when(cmd.getNic()).thenReturn(nic);
+        when(cmd.getRouterAccessIp()).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP)).thenReturn(IP);
+        when(cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME)).thenReturn(NAME);
+
+        ExecutionResult result = deployer.prepareCommand(cmd);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getDetails(), result.getDetails().contains("did not show up"));
     }
 }
