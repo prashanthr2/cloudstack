@@ -19,6 +19,8 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -102,6 +104,10 @@ public final class ProxmoxVmConfig {
         // CloudStack sizes the VM; Proxmox's memory ballooning would let it shrink below that
         options.put("balloon", "0");
         options.put("ostype", StringUtils.defaultIfBlank(vm.getPlatformEmulator(), DEFAULT_OS_TYPE));
+        String smbios = smbios(vm);
+        if (smbios != null) {
+            options.put("smbios1", smbios);
+        }
         options.put("scsihw", "virtio-scsi-single");
         String firstDrive = CDROM_DRIVES[0];
         boolean bootFromCd = vm.getBootloader() == BootloaderType.CD && cdroms.containsKey(firstDrive);
@@ -122,6 +128,37 @@ public final class ProxmoxVmConfig {
             }
         }
         return options;
+    }
+
+    /**
+     * The SMBIOS system information of the VM, as the KVM plugin gives it to libvirt: the manufacturer and the product name that core sets
+     * ("Apache Software Foundation", "CloudStack Proxmox Hypervisor") and the VM's uuid, also as its serial. cloud-init recognises a CloudStack
+     * guest by a product name that starts with "CloudStack" and only then reads the metadata service of the router (host name, user data, SSH
+     * key, password); without it cloud-init of an Ubuntu image disables itself. The strings are base64 encoded (Proxmox's {@code base64=1}), so
+     * that no comma or space needs escaping. Null when core sent neither name.
+     */
+    static String smbios(VirtualMachineTO vm) {
+        if (StringUtils.isAllBlank(vm.getMetadataManufacturer(), vm.getMetadataProductName())) {
+            return null;
+        }
+        StringBuilder smbios = new StringBuilder();
+        if (StringUtils.isNotBlank(vm.getUuid())) {
+            smbios.append("uuid=").append(vm.getUuid()).append(',');
+        }
+        if (StringUtils.isNotBlank(vm.getMetadataManufacturer())) {
+            smbios.append("manufacturer=").append(base64(vm.getMetadataManufacturer())).append(',');
+        }
+        if (StringUtils.isNotBlank(vm.getMetadataProductName())) {
+            smbios.append("product=").append(base64(vm.getMetadataProductName())).append(',');
+        }
+        if (StringUtils.isNotBlank(vm.getUuid())) {
+            smbios.append("serial=").append(base64(vm.getUuid())).append(',');
+        }
+        return smbios.append("base64=1").toString();
+    }
+
+    private static String base64(String text) {
+        return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
     }
 
     /** The drives a root disk can be on. */

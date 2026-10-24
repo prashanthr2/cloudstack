@@ -543,4 +543,35 @@ public class ProxmoxVmConfigTest {
 
         assertEquals("csi-1:iso/x.iso,media=cdrom", ProxmoxVmConfig.startOptions(vm, 0, cdroms, "scsi0", "cloud0").get("ide2"));
     }
+
+    @Test
+    public void theSmbiosInformationLetsCloudInitRecognizeACloudStackGuest() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+        when(vm.getUuid()).thenReturn("745e6cee-8ff1-4206-8ad2-6c7c3e3bad67");
+        when(vm.getMetadataManufacturer()).thenReturn("Apache Software Foundation");
+        when(vm.getMetadataProductName()).thenReturn("CloudStack Proxmox Hypervisor");
+
+        String smbios = ProxmoxVmConfig.startOptions(vm, 0).get("smbios1");
+
+        assertEquals("uuid=745e6cee-8ff1-4206-8ad2-6c7c3e3bad67,manufacturer=QXBhY2hlIFNvZnR3YXJlIEZvdW5kYXRpb24=,"
+                + "product=Q2xvdWRTdGFjayBQcm94bW94IEh5cGVydmlzb3I=,serial=NzQ1ZTZjZWUtOGZmMS00MjA2LThhZDItNmM3YzNlM2JhZDY3,base64=1", smbios);
+        assertEquals("CloudStack Proxmox Hypervisor",
+                new String(java.util.Base64.getDecoder().decode(smbios.replaceAll(".*product=([^,]*),.*", "$1")), java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void withoutTheMetadataNamesThereIsNoSmbiosOption() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+        when(vm.getUuid()).thenReturn("745e6cee-8ff1-4206-8ad2-6c7c3e3bad67");
+
+        assertTrue(!ProxmoxVmConfig.startOptions(vm, 0).containsKey("smbios1"));
+    }
+
+    @Test
+    public void aBlankUuidLeavesOutTheUuidAndTheSerial() {
+        VirtualMachineTO vm = vm("l26", nic(0, "02:00:00:aa:bb:01", "vmbr1", null, null));
+        when(vm.getMetadataProductName()).thenReturn("CloudStack Proxmox Hypervisor");
+
+        assertEquals("product=Q2xvdWRTdGFjayBQcm94bW94IEh5cGVydmlzb3I=,base64=1", ProxmoxVmConfig.startOptions(vm, 0).get("smbios1"));
+    }
 }

@@ -276,6 +276,8 @@ Details that are easy to get wrong:
   cores x MHz, on a scale of 1 to 10000, the same idea as the shares the KVM plugin sets. Left at Proxmox's default (100) when the offering has no
   speed. A CPU limit ("limit CPU use") is not mapped yet. The weight is relative, so Proxmox VMs not created by CloudStack, which keep 100, get
   very little CPU next to CloudStack's VMs when the node is busy.
+- **SMBIOS information** (`smbios1`): the VM is given the manufacturer and product name that core sends in the start command (settings `vm.metadata.manufacturer` and `vm.metadata.product`; defaults "Apache Software Foundation" and "CloudStack Proxmox Hypervisor"), and its uuid, also as its serial, like the KVM plugin does with libvirt's sysinfo. cloud-init recognises a CloudStack guest by a DMI product name that starts with "CloudStack"; without it the cloud-init of an Ubuntu image
+  disables itself, and the host name, user data, SSH key and password from the router's metadata service are never applied (lab 2026-10-24: "cloud-init: disabled", the host name unchanged). The strings are sent base64 encoded (`base64=1`). Applied at start, so a VM started before this build needs one stop and start.
 - **A NIC's bridge is the zone's KVM traffic label** (the lab: `vmbr1`); the VLAN is the number in the network's broadcast URI. A NIC
   without a label fails the start with a message that says so.
 - **The guest OS mapping** is read from `guest_os_hypervisor` for `Proxmox` (`ostype`), `other` without a row (see the design, 4.8).
