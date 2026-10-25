@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-21 (items 19 to 35 added).
+Last updated 2026-10-21 (items 19 to 36 added).
 
 ## Decisions waiting for you
 
@@ -21,7 +21,7 @@ None at the moment.
 | 24 | **A new VM started on another node than the one that created its disk can fail once (NFS visibility)** | Seen on the lab 2026-10-22 (SSVM run 2): `qmstart failed: volume ... does not exist` on pve1, five seconds later core started it on pve2 and it worked. The disk is made on the node that gets the volume command; the planner may pick another node, which does not see the new file yet (NFS directory cache, most likely). Harmless when another host is eligible (costs about 5 s and an error line); with no other eligible host the start would fail until the file shows up. If it matters: wait for the volume to show on the target node (`getImageInfo`) or retry the start for a short time before failing; not done |
 | 25 | **Virtual router (8b) on the lab: done 2026-10-23** | Implemented and unit tested (behaviour.md section 18, test-log.md), not run. Needs the system VM template registered for Proxmox and its name in the new setting `router.template.proxmox` (requirements.md, "Virtual routers on Proxmox"). To see: an isolated network with a Proxmox VM: the router starts, the VM gets DHCP, DNS, user data, outbound access through source NAT; static NAT, port forwarding, firewall; statistics; `reboot router` and a network restart; a public IP on another VLAN (hot-plug) is 8c |
 | 26 | **Router script bug with `kvm64` guests: rebuild `cloud-scripts.tgz` for the router test** | Found on the lab 2026-10-22: DHCP and every other command that runs `update_config.py` failed with `OSError: [Errno 75]` because the router counts its CPUs wrongly when the CPU model name contains "processor" (Proxmox's default `kvm64`); fixed in the system VM scripts of this branch (upstream note 24). The fix is only in `cloud-scripts.tgz`, so the management server's copy in `/usr/share/cloudstack-common/vms/` has to be rebuilt (`-Dsystemvm -pl systemvm`) and replaced, then the router restarted (a router gets the file at every start). Quick unblock for a running router: `qm guest exec <vmid> -- rm -f /etc/rpsrfsenable`, unti
-| 27 | **VPC and plugging interfaces (8c) on the lab** | Implemented and unit tested (behaviour.md section 19, test-log.md), not run. To see: a VPC with two tiers (router start, DHCP for a VM in each tier, routing between the tiers, a network ACL), a public IP on another VLAN (interface hot-plug into the router, and its removal when the IP is released), \"add network\" and \"remove network\" on a running instance, restart of the VPC with cleanup, `reboot router`. Not planned: VPN, private gateways with a VLAN of their own, redundant routers |l its next boot |
+| 27 | **VPC and plugging interfaces (8c) on the lab: done 2026-10-25 except the live migration of the router (fix in this branch, to be re-run)** | Implemented and unit tested (behaviour.md section 19, test-log.md), not run. To see: a VPC with two tiers (router start, DHCP for a VM in each tier, routing between the tiers, a network ACL), a public IP on another VLAN (interface hot-plug into the router, and its removal when the IP is released), \"add network\" and \"remove network\" on a running instance, restart of the VPC with cleanup, `reboot router`. Not planned: VPN, private gateways with a VLAN of their own, redundant routers |l its next boot |
 
 ## Known limits (not bugs; confirm they are acceptable)
 
@@ -48,6 +48,7 @@ None at the moment.
 | 33 | **Load balancing by the router was not run; the internal load balancer VM, Kubernetes (CKS) and shared file system VMs were not tried** | The router's load balancer is a script run in the router like the other rules; the other VM types are system VMs that the start path of section 17 should handle, but none was run |
 | 34 | **VM and volume statistics are answered "unsupported"** | `GetVmStatsCommand`, `GetVmDiskStatsCommand` and `GetVmNetworkStatsCommand` (CPU, memory, disk and network usage of VMs) are not implemented for Proxmox; the router's own traffic counters are |
 | 35 | **The first start of a new SSVM or CPVM on another node can fail once** | Same as open issue 24: the disk made on one node is not yet visible on the node that starts the VM (NFS caching); core retries on another host |
+| 36 | **VPC traffic statistics are empty (system VM scripts)** | `vpc_netusage.sh -l <public ip> -g` prints nothing in a VPC router: its create option exits without making rules and nothing else creates the `NETWORK_STATS_<dev>` chain it reads, so `NetworkUsageCommand` for a VPC always reports 0 bytes. Seen on the lab 2026-10-25 with a few pings; read in the scripts of this branch, so most likely the same on KVM (not run there). The fix is in `systemvm/debian/opt/cloud/bin` (make the chains for the public interface of a VPC router), not in the plugin |
 
 ## Later work (not started)
 
