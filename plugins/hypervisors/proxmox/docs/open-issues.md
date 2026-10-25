@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-21 (items 19 to 37 added).
+Last updated 2026-10-25 (items 19 to 39 added).
 
 ## Decisions waiting for you
 
@@ -50,6 +50,8 @@ None at the moment.
 | 35 | **The first start of a new SSVM or CPVM on another node can fail once** | Same as open issue 24: the disk made on one node is not yet visible on the node that starts the VM (NFS caching); core retries on another host |
 | 36 | **VPC traffic statistics are empty (system VM scripts)** | `vpc_netusage.sh -l <public ip> -g` prints nothing in a VPC router: its create option exits without making rules and nothing else creates the `NETWORK_STATS_<dev>` chain it reads, so `NetworkUsageCommand` for a VPC always reports 0 bytes. Seen on the lab 2026-10-25 with a few pings; read in the scripts of this branch, so most likely the same on KVM (not run there). The fix is in `systemvm/debian/opt/cloud/bin` (make the chains for the public interface of a VPC router), not in the plugin |
 | 37 | **A router, the SSVM or the CPVM cannot be migrated to another host (`migrateSystemVm`)** | Seen on the lab 2026-10-25 (VPC router): core requires the hypervisor to claim `VmStorageMigration` and the storage motion capability of its exact version (`hypervisor_capabilities`, the Proxmox row has `storage_motion_supported` 0) before it finds out that no volume has to move; see upstream note 26. Decision: no change to core for this; revisit with the storage migration of the plugin (item 17: `move_disk`, `with-local-disks`), when the capability row and the functionality are set for Proxmox. Workaround: stop and start the system VM or router on another host (a router: restart the network with cleanup). User instances migrate (Phase 5). `prepareNicForMigration` already treats Proxmox routers like KVM ones (8b), so their hot-plugged interfaces are covered once a migration is possible |
+| 38 | **`PatchSystemVmCommand` and `SetHostParamsCommand` are not implemented** | The "patch system VM" API and the check after a management server upgrade answer "unsupported" for a Proxmox system VM; patching happens at every start only. The code of the start (`ProxmoxSystemVms`) can be reused. Decide whether an upgrade by restarting the system VMs is enough |
+| 39 | **No warning at a later connect when the control bridge has disappeared** | Designed (design-phase8 4.7 step 5) but not built. A start of a system VM on that node fails with a clear message, so the effect is a later failure instead of an early warning |
 
 ## Later work (not started)
 

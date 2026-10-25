@@ -109,3 +109,21 @@ security problem: those are reported privately, not as public issues.
 26. **`migrateSystemVm` with a host needs storage motion support even when no volume moves.** `MigrateSystemVMCmd` calls `UserVmManagerImpl.migrateVirtualMachineWithVolume` with an empty volume map. That method requires the hypervisor to have the functionality `VmStorageMigration`, then (in `getHostsForMigrateVmWithStorage`) the storage motion capability of the hypervisor and its exact version (`HypervisorCapabilitiesDaoImpl.isStorageMotionSupported`, which falls back to any row only for KVM), and only afterwards finds out that no volume has to move and calls `migrateVirtualMachine`. A router or an SSVM on shared storage of a hypervisor whose plugin does not implement storage motion (Proxmox, not yet) can therefore not be migrated between hosts. Not changed in this branch (decision: it is revisited with the storage migration of the plugin, open issue 17 and 37). Possible direction for upstream: move the capability checks after the "no volume to move" test.
 27. **`vpc_netusage.sh` never creates the counters it reads** (`systemvm/debian/opt/cloud/bin/vpc_netusage.sh`): `-c` exits early and `create_usage_rules` is not called, and no other script makes `NETWORK_STATS_<dev>` for a VPC router, so the traffic statistics of a VPC are always zero.
 
+## Pull request plan
+
+How the changes outside `plugins/hypervisors/proxmox` could be split. Each PR is minimal and stands alone; the plugin PR goes last (it needs the type from the first). Item numbers are those of this file.
+
+| PR | Contents | Files | Tests | Notes |
+|---|---|---|---|---|
+| A. The hypervisor type | `HypervisorType.Proxmox` and its capabilities row, schema entry in `hypervisor_capabilities` | `api/.../Hypervisor.java`, `schema-*.sql` | none yet (add a capability test) | Everything else depends on it; no behaviour change for other hypervisors |
+| B. Hard-coded hypervisor lists | Proxmox added to the lists of live migration, volume resize, VM setting suggestions, VPC support (items 13, 16, 18, 23, 25) | `ManagementServerImpl`, `UserVmManagerImpl`, `VirtualMachineManagerImpl`, `VolumeOrchestrator`, `VolumeApiServiceImpl`, `QueryManagerImpl`, `VpcManagerImpl` | one test per list (`VpcManagerImplTest` +1) | One line or block each; could be split per list if a reviewer asks |
+| C. Router template setting | `router.template.proxmox`, key in `VirtualNetworkApplianceManager`, registered in the impl, line in `NetworkHelperImpl.setupHypervisorsMap` | 3 files | `NetworkHelperImplTest` +1 | Default name `SystemVM Template (Proxmox)`, zone scoped |
+| D. Router NIC preparation for migration | Proxmox next to KVM and VMware in `NetworkOrchestrator.prepareNicForMigration` | 1 file, 1 line | none yet (add one) | Needed for the live migration of a router, which is blocked by item 26 |
+| E. System VM scripts | CPU count by lines that start with "processor" (item 24) | `CsAddress.py`, `ipassoc.sh`, `setup/common.sh` | none (scripts); verified on KVM routers | Bug fix independent of Proxmox; also fixes any guest whose CPU model contains "processor" |
+| F. Console and VNC | The Proxmox console changes (Phase 4) | `ConsoleAccessManagerImpl`, `ConsoleProxy*`, `NoVnc*`, `VncPasswordAuthenticator`, `WebSocketReverseProxy` | their tests | The largest core change; separate review |
+| G. Host, HA and network manager touches | HA (`HighAvailabilityManagerImpl`), `ResourceManagerImpl`, `NetworkModelImpl`, `StoragePoolMonitor`, `PhysicalNetworkTrafficTypeDaoImpl`, `VolumeDaoImpl`, `Config`, schema | see `git diff --stat` against the base | their tests | Each from an earlier phase; see behaviour.md for the reason of each |
+| H. UI | `RegisterOrUploadTemplate.vue` and the Add Host hints (item 19) | `ui/` | none | Optional |
+| I. The plugin | `plugins/hypervisors/proxmox` and `plugins/pom.xml` | the module | 419 unit tests | Last |
+
+Not proposed as changes (reported only): items 1 to 12, 14, 15, 17, 20 to 22, 26 and 27 are observations for issues; items 26 (storage motion gate for `migrateSystemVm`) and 27 (`vpc_netusage.sh`) would be small fixes in their own PRs when the storage migration is done.
+

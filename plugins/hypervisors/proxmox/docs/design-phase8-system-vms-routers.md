@@ -1,12 +1,12 @@
 # Phase 8 design: system VMs (SSVM, console proxy) and virtual routers
 
-Status: **proposal, third version.** Implemented so far, unit tested and not yet run on the lab: the control bridge check and creation at host add (4.7, behaviour.md section 16), and the start of system VMs and routers with the commands through the guest agent (4.2 steps 1 to 4, 4.3 except the NIC hot-plug; behaviour.md section 17). The patching with the payload CD (4.2 step 5, 4.8; behaviour.md section 17) is implemented and unit tested too. 8b is implemented and unit tested (behaviour.md section 18): interface numbers by MAC address, the hot-plug and removal of public interfaces, the traffic counters, the reboot of a router, and core changes 1 and 3 of 4.5; run on the lab: pending. 8c is implemented and unit tested (behaviour.md section 19): `PlugNicCommand` and `UnPlugNicCommand` (4.4), Proxmox in the VPC list (4.5, change 2); lab runs pending. 8a and 8b ran on the lab.
+Status: **implemented and run on the lab (2026-10-25); section 10 is the as-built summary, with the deviations from this design and what is left.** 8a (SSVM, CPVM, control bridge, patching, login keys), 8b (virtual router) and 8c (VPC, plug and unplug of interfaces) all ran on the lab (test-log.md, behaviour.md sections 16 to 19), except the live migration of a router or system VM (open issue 37). Sections 1 to 9 keep the design as it was agreed, corrected where the build differed; the marks "U" below were all settled by the lab runs.
 
 - Version 1 put the control traffic on management-network addresses: dropped, it needs the management network stretched to every node.
 - Version 2 sent the control traffic through the guest agent API and left the control address unused.
 - **Version 3 (this one)** keeps the guest agent API as the only control path, and adds a **real node-local link-local network on every node, for troubleshooting only**: an administrator logs in to the node and reaches a system VM's shell from there, as on KVM. No SSH credentials of the nodes are held by CloudStack.
 
-"V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under `promox-src`, branch `stable-bookworm`). "U" means **unverified**: it has not been run, and each U has a lab check in section 8.
+"V" means read in code (CloudStack in this repository; Proxmox in the 8.x mirrors under `promox-src`, branch `stable-bookworm`). "U" meant **unverified**; every U was settled by a lab check of section 8 or by the lab runs of 8a to 8c (section 10).
 
 ## 1. Goal and scope
 
@@ -48,7 +48,7 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
 1. The VM is created and configured as any VM (Phases 3, 6 and 7), with **`agent=1`** for the types SSVM, CPVM and router.
 2. **NICs.** The *control* NIC (type Control) goes on the control bridge (setting `proxmox.control.bridge`, default `cloud0`), without a VLAN tag; the plugin checks before the start that the node has that bridge and fails with a clear message if not. *Management*, *public* and *guest* NICs map as for user VMs (traffic labels, the VLAN tag from the broadcast URI). `net<deviceId>` is as CloudStack numbers them.
 3. After the VM is running the plugin **waits for the guest agent** (`agent/ping`, polled for a few minutes; the system VM only waits 60 s for the file after its agent starts, so the poll is frequent), writes the boot arguments to `/var/cache/cloud/cmdline` with `agent/file-write`, and the system VM boots on from there. The boot arguments contain the control address, so the control NIC gets it here.
-4. **Waiting for the system VM** (what KVM does over SSH): the plugin runs `isSystemVMSetup` (core's `VirtualRoutingResource`, which uses the deployer) until the setup is done, or fails the start with the reason.
+4. **Waiting for the system VM** (what KVM does over SSH): the plugin runs `isSystemVMSetup` (core's `VirtualRoutingResource`, which uses the deployer) until the setup is done, or fails the start with the reason. **As built:** readiness is `cloud-early-config` reported *active* by systemd and port 3922 listening (waiting for the port alone was wrong: sshd listens before early-config has replaced `authorized_keys`, so the login key was lost once), the phases are timed in the log, and the troubleshooting key is installed after that point. The CPVM and SSVM hypervisor is chosen by core's `system.vm.default.hypervisor` (a global setting; "Any" picks at random among the cluster types), which has to be set to Proxmox to place them there (upstream note 20). The SMBIOS product string `CloudStack KVM Hypervisor` is set (`smbios1`, base64) so that cloud-init in a user VM template finds its CloudStack data source (lab 8c: hostnames were not set without it).
 5. **Patching** (what KVM does with `scpPatchFiles`; sizes from an installed management server, `/usr/share/cloudstack-common/vms/`: `agent.zip` 115,550,932 bytes, `cloud-scripts.tgz` 149,002 bytes, `patch-sysvms.sh` 5,135 bytes). The template has the scripts but **no Java agent**, so
    an SSVM or CPVM needs `agent.zip` at its first start (it keeps the agent on its disk afterwards), and a router needs `cloud-scripts.tgz` at every start; `cloud-early-config` waits only 2 minutes for `cloud-scripts.tgz`, and `agent.zip` must be in place by then.
    Through the guest agent API a copy of 110 MiB would take 12 to 34 minutes (lab S3: about 56 kB/s), so the files are delivered in two ways:
@@ -68,9 +68,9 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
   - `createFileInVR(controlIp, path, name, content)` -> `agent/file-write` (a file above 60 KiB goes in chunks with `exec`, the same as a patch file);
   - `prepareCommand`/`cleanupCommand` (below).
   `executeRequest` hands every `NetworkElementCommand` to it. This answers `GetDomRVersionCmd`, `CheckRouterCommand`, the alerts and monitor commands, `NetworkUsageCommand` and the rest.
-- **`CheckSshCommand`** (core sends it after a start): answered by asking the VM's agent to run a command, not by connecting to the address.
+- **`CheckSshCommand`** (core sends it after a start): answered by asking the VM's agent to run a command, not by connecting to the address. **As built** it polls up to 120 s (60 tries 2 s apart), because a router restarted by core is checked while its agent is still starting (lab 8b).
 - **`prepareCommand`** also does what KVM's `prepareNetworkElementCommand` does, with the Proxmox API in place of libvirt: for `IpAssocCommand` (and the VPC variant), `SetupGuestNetworkCommand` and `SetSourceNatCommand` it reads the VM's configuration, **finds the NIC number from the MAC address** of each IP (`net<N>` is `eth<N>`), **hot-plugs a NIC** when the IP's VLAN has none (the bridge is `IpAddressTO.networkName`, the traffic label core puts there, V; the VLAN is its `broadcastUri`), and sets `nicDevId`. A NIC that is no longer needed is removed when its last IP is released.
-- **`PatchSystemVmCommand`** (the "patch system VM" API and the check after an upgrade): the same steps as 4.2 step 5.
+- **`PatchSystemVmCommand`** (the "patch system VM" API and the check after an upgrade): the same steps as 4.2 step 5. **Not implemented** (open issue 38); the patching runs at every start only. `SetHostParamsCommand` is not implemented either (the host parameters reach the system VM through the boot arguments).
 
 ### 4.4 NIC hot-plug for any VM
 
@@ -81,6 +81,9 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
 1. `NetworkHelperImpl` and `VirtualNetworkApplianceManager`: a new setting `router.template.proxmox` (default `SystemVM Template (Proxmox)`, zone scoped) and one line in the map from hypervisor to setting.
 2. `VpcManagerImpl`: Proxmox in the list of hypervisors that support VPC.
 3. `NetworkOrchestrator.prepareNicForMigration`: Proxmox next to KVM and VMware for routers (their hot-plugged NICs are not in the database), so a router can be live migrated (Phase 5).
+4. **System VM scripts** (`CsAddress.py`, `ipassoc.sh`, `setup/common.sh`): the CPU count looks for lines that *start with* "processor" (a guest CPU model of "Common KVM processor" was counted twice, which made `ethtool`/`rps` writes fail with `Errno 75` and broke every router command; found on the lab, identical results on KVM). Upstream note 24.
+
+No core change was made for the migration of a router or system VM (`migrateSystemVm`; two gates in core, upstream note 26, open issue 37): it waits for the storage migration of the plugin.
 
 ### 4.6 HA, migration and console
 
@@ -92,7 +95,7 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
 
 **The bridge on every node.** An empty Linux bridge named by `proxmox.control.bridge` (default `cloud0`), with the **link-local gateway address on the node** (the address core uses as the gateway of the control network: `NetUtils.getLinkLocalGateway()` with the mask of `NetUtils.getLinkLocalCIDR()`; the same address on every node, as on KVM hosts). The address makes the node a neighbour of every system VM on it: the node has a connected route to `169.254.0.0/16` through the bridge.
 
-**How it is created, no SSH needed.** The Proxmox API creates and applies a bridge: `POST /nodes/<node>/network` (`iface`, `type=bridge`, `cidr`, `autostart`), then `PUT /nodes/<node>/network` to apply (U: lab check T1). It needs `Sys.Modify` on `/nodes/<node>`, which `PVEVMAdmin` does not have. So:
+**How it is created, no SSH needed.** The Proxmox API creates and applies a bridge: `POST /nodes/<node>/network` (`iface`, `type=bridge`, `cidr`, `autostart`), then `PUT /nodes/<node>/network` to apply (lab check T1: works). It needs `Sys.Modify` on `/nodes/<node>`, which `PVEVMAdmin` does not have. So:
 
 **The control path, step by step (decided).** The check and the creation happen **when a host is added** (the plugin's discovery of the node, before the host is accepted), once per node:
 
@@ -104,7 +107,7 @@ Out of scope for now: redundant routers (VRRP; nothing in the design prevents it
    - Pending network changes: *"Proxmox node <node> has pending network changes (/etc/network/interfaces.new), so CloudStack will not apply the network configuration to create the control bridge '<bridge>'. Apply or discard the pending changes in the Proxmox web interface, or create the bridge by hand, and add the host again."*
    - The name is taken by something that is not a bridge: *"Proxmox node <node> has an interface named '<bridge>' that is not a bridge; choose another name in the setting proxmox.control.bridge or remove it."*
    - Any other Proxmox error: the message names the step (create or apply) and carries Proxmox's own text.
-5. **After the host is added** the plugin does not create or change anything on the node again. At a later connect it only checks that the bridge is still there and logs a warning if it is not; a system VM or router start on a node without it fails with a message that names the bridge and points to the same requirements section. Nodes that join the cluster later go through the same steps when they are added as hosts.
+5. **After the host is added** the plugin does not create or change anything on the node again. *(Designed: at a later connect it only checks that the bridge is still there and logs a warning. **Not implemented**, open issue 39.)* A system VM or router start on a node without the bridge fails with a message that names the bridge and points to the same requirements section. Nodes that join the cluster later go through the same steps when they are added as hosts.
 
 
 **Lab T1, second run (the role granted):** create, apply and delete all worked through the API with only `Sys.Modify` on the node. One side effect: Proxmox rewrites the whole `/etc/network/interfaces` from its parsed configuration, so the comments and layout of the file are lost (settings kept). This is documented in requirements.md and is a reason to leave the privilege optional.
@@ -123,9 +126,12 @@ uploaded. The entry is one fixed, clearly named entry, not one per ISO. Needs `D
 ## 5. Privileges
 
 - `VM.GuestAgent.Unrestricted` (agent ping, exec, file write), `VM.Config.Network` (NIC hot-plug) and `VM.Config.Options` are all in `PVEVMAdmin`: nothing new for the control path. requirements.md gets the confirmation from lab checks S1 to S3 and S6. **Note:** `VM.GuestAgent.Unrestricted` allows running commands as root in any guest with an agent (that is how the router commands are run); it is part of the existing role, not new, but it is now used.
+- **`Datastore.Allocate` and `Datastore.AllocateTemplate` on `/storage`** for the patch storage entry (4.8) and the upload of `agent.zip`, and the change of the medium of a CD drive (covered by `VM.Config.CDROM` in `PVEVMAdmin`); all in `PVEDatastoreAdmin` and `PVEVMAdmin` (lab P1 to P3, 8a).
 - **`Sys.Modify` on `/nodes/<node>` only to let the plugin create the control bridge** (lab T1: refused with 403 without it). It is optional: without it the administrator creates the bridge by hand on every node before adding the hosts, or the host add fails with a message saying so. It is the only broader privilege in this phase and is not used for any other network (4.7). It is given in a role of its own (`CloudStackNet`, only `Sys.Modify`) on the node paths, without propagation.
 
 ## 6. Risks and limits
+
+**Seen on the lab:** a slow `hostname` at the boot of an SSVM once made its agent register under the wrong name (open issue 23, upstream note 22, not reproduced in three later boots); a first start on a node that did not yet see the new disk on NFS failed once and core retried on another host (open issues 24 and 35); `cmk reboot systemvm` after a manual stop left the agent not Up, `stop` then `start` is the way (cause not proven); the network garbage collector (20 s in the lab) shut down a tier that had VMs in it, which was the setting and not the plugin.
 
 - **The first start of an SSVM or CPVM uploads 110 MiB to the node** (once per node and version; later starts find the file). A node without room or a token without upload rights fails the start with a message (4.2 step 5, 4.8). A router only needs a 150 kB file.
 - **A VR or system VM without a working guest agent cannot be managed at all** (no IP path to fall back on). The KVM template has the agent and enables it for `kvm`.
@@ -136,7 +142,7 @@ uploaded. The entry is one fixed, clearly named entry, not one per ISO. Needs `D
 - **Redundant routers, NSX, Netris, security groups, VM statistics and CKS are not part of this phase** (section 1).
 - **The core changes are small** (4.5) and are recorded in upstream-notes.md.
 
-## 7. Test plan once built
+## 7. Test plan once built (all run, results in test-log.md; the unit tests are in the plugin, 419 pass)
 
 **Unit tests:**
 - The start of a system VM: `agent=1`, the NICs mapped (control to the control bridge, the others as user VMs, the control NIC found by type and not by position), a node without the control bridge failing with a message, the boot arguments written after the agent answers, a failed ping or write failing the start.
@@ -180,4 +186,23 @@ Settled in the discussion: the control path is the guest agent API only (no SSH 
 4. **Proxmox has its own router template setting, `router.template.proxmox`** (decided; the plan to share `router.template.kvm` was dropped).
 5. **The system VM template is registered by hand** (no change to `SystemVmTemplateRegistration`).
 6. **Split into 8a (SSVM, CPVM and the control bridge), 8b (VR) and 8c (VPC and NIC hot-plug)**, each with its lab runs.
-7. **Redundant routers, VM statistics, NSX, Netris, security groups and CKS are left for later.**
+7. **Redundant routers, VM statistics, NSX, Netris, security groups and CKS are left for later** (open issues 28 to 36).
+8. **No core change for the migration of a router or system VM** (decided 2026-10-25), revisited with the storage migration.
+9. **The troubleshooting key is created by the Proxmox administrator**, one key in `proxmox.systemvm.ssh.key` (decided; no key generation by the plugin).
+
+## 10. As built (2026-10-25)
+
+**What works on the lab:** SSVM and CPVM on Proxmox (template download, agent Up, console proxy, troubleshooting login from a node on port 3922); the virtual router of an isolated network (DHCP, DNS, source NAT, static NAT, port forwarding, firewall, reboot, traffic statistics, public IP on another VLAN with the NIC hot-plug); a VPC with two tiers (router, DHCP per tier, ACL, tier add and remove with plug and unplug); "add network" and "remove network" on an instance; restart with cleanup.
+
+**Deviations from the design**
+- `router.template.proxmox` is its own setting instead of sharing the KVM one (decision 4).
+- Readiness of a system VM is `cloud-early-config` active, not just the SSH port (4.2).
+- `CheckSshCommand` polls for 120 s (4.3).
+- SMBIOS product string added (for cloud-init).
+- Core change 4 (system VM scripts, CPU count) was not foreseen.
+- Not implemented from the design: `PatchSystemVmCommand`, `SetHostParamsCommand`, the warning at a later connect when the control bridge is gone (open issues 38 and 39).
+
+**Core changes of the phase** (the full list with the PR scope of each is in upstream-notes.md, "Pull request plan"): `router.template.proxmox` (3 files), `prepareNicForMigration` (1 line), the VPC hypervisor list (1 line), the system VM script fix (3 files).
+
+**Left:** router and system VM migration and storage migration (17, 37); security groups, VPN, private gateways, redundant routers, config drive on plug, load balancing and other VM types, VM statistics, VPC traffic statistics (28 to 36); the unimplemented items above; cleanup of the `cst-` and `csi-` storage entries (8).
+
