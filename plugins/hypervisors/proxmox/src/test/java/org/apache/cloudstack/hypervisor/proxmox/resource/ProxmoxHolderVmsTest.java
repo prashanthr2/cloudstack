@@ -159,6 +159,31 @@ public class ProxmoxHolderVmsTest {
     }
 
     @Test
+    public void handBackGoesOnWhenTheTaskCouldNotBeFollowedButTheHolderListsTheVolume() {
+        String moved = "cs-b:900000002/vm-900000002-disk-0.qcow2";
+        Map<String, String> after = new LinkedHashMap<>();
+        after.put("unused0", moved);
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(new LinkedHashMap<>(), after, after);
+        when(client.reassignDisk(NODE, 9101, "unused0", HOLDER, "unused0")).thenReturn("UPID:move");
+        org.mockito.Mockito.doThrow(new ProxmoxApiException("bad task id")).when(client).waitForTask("UPID:move", 60);
+
+        assertEquals(moved, holders.handBack(NODE, 9101, "unused0", HOLDER));
+    }
+
+    @Test
+    public void handBackStillFailsWhenTheTaskCouldNotBeFollowedAndNothingMoved() {
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(new LinkedHashMap<>());
+        when(client.reassignDisk(NODE, 9101, "unused0", HOLDER, "unused0")).thenReturn("UPID:move");
+        org.mockito.Mockito.doThrow(new ProxmoxApiException("bad task id")).when(client).waitForTask("UPID:move", 60);
+        try {
+            holders.handBack(NODE, 9101, "unused0", HOLDER);
+            fail();
+        } catch (ProxmoxApiException e) {
+            assertEquals("bad task id", e.getMessage());
+        }
+    }
+
+    @Test
     public void handBackFailsWhenTheHolderDoesNotListTheVolumeAfterwards() {
         when(client.getVmConfig(NODE, HOLDER)).thenReturn(new LinkedHashMap<>());
         when(client.reassignDisk(NODE, 9101, "unused0", HOLDER, "unused0")).thenReturn("UPID:move");

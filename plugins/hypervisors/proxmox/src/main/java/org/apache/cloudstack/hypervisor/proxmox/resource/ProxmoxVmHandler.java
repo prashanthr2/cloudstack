@@ -1068,8 +1068,11 @@ class ProxmoxVmHandler {
             Long owner = ownerVm(resolved);
             if (owner != null && owner == location.getVmid() && isHolderAccount(volume.getAccountId())) {
                 // the instance owns the disk (a live move made it so): it goes back to the holder, and the answer tells CloudStack the new path
-                String back = giveBackToHolder(client, location, resolved, volume.getAccountId(), false);
+                // with an alias, so that a detach that is repeated after a failure (CloudStack still has the old path) finds the volume; the alias is
+                // dropped again once the answer carries the new path
+                String back = giveBackToHolder(client, location, resolved, volume.getAccountId(), true);
                 answer.setContextParam("volumePath", StringUtils.substringAfter(back, ":"));
+                forgetOldVolumeAlias(client, volume.getAccountId(), resolved);
             }
             return answer;
         } catch (ProxmoxApiException e) {
@@ -1174,6 +1177,18 @@ class ProxmoxVmHandler {
         if (entry != null) {
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", entry));
             LOGGER.info("Removed {} of VM {} with the volume {}", entry, owner, volumeId);
+        }
+    }
+
+    /** Drops the aliases of a volume whose new path CloudStack is being told. Best effort: a stale alias is harmless. */
+    private void forgetOldVolumeAlias(ProxmoxApiClient client, long accountId, String oldVolumeId) {
+        try {
+            ProxmoxApiClient.VmLocation holder = client.findVm(ProxmoxVmConfig.holderVmId(accountId));
+            if (holder != null) {
+                new ProxmoxHolderVms(client, taskTimeoutSeconds).forgetAliases(holder, oldVolumeId);
+            }
+        } catch (ProxmoxApiException e) {
+            LOGGER.warn("The alias of {} stays on the holder VM of account {}: {}", oldVolumeId, accountId, e.getMessage());
         }
     }
 

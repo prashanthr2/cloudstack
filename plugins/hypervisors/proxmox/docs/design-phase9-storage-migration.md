@@ -171,3 +171,9 @@ Proxmox numbers a VM's disks per storage, and CloudStack stores the path without
 - `MigrateVolumeCommand` names no source pool: when more than one drive holds the path, the volume type chooses (root volume: a drive of the root slots; data volume: any other), and the command is refused if that still does not give one drive;
 - the start and destroy hooks recognise the root volume by its whole id (by path only when its pool is not known).
 Proxmox picks the first free number on the target storage, so a moved disk is renamed (`disk-0` to `disk-1` when the target already has a `disk-0` of that VM); the answer carries the new path.
+
+## 16. Safety net after lab T4 (2026-10-29)
+
+T4 failed because the task id of a `target-vmid` move has a `>` that broke the status URL (fixed in the client): Proxmox had moved the disk, CloudStack still had the old path, and a repeated detach could not find the volume. Two nets so that a failure after a move cannot lose the path:
+- `handBack` carries on when following the task fails but the holder already lists the volume (the move happened);
+- the detach of an instance-owned volume now records an alias too, and drops it after the answer carries the new path; a detach that is repeated after a failure resolves the old path through it.

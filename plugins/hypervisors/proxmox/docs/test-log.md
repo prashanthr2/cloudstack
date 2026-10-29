@@ -657,3 +657,7 @@ Created `900000099` with `protection=1`, listed a volume as `unused0`, `move-dis
 - **T1 (M9, detached data volume to the other pool): pass** (after pulling the rebuilt jar; the first try ran the old build).
 - **T2 (live move of a data volume): needed a capability row for the exact host version** `8.4.21`: core looks it up without the `default` fallback. With the row inserted, the live move worked. Step 5 must cover every version (plan: the discoverer inserts the row).
 - **T3 (live move of the root volume): worked; Proxmox renamed the root disk to `106/vm-106-disk-1.qcow2`** because the target already had `disk-0` of that VM (the data volume). The data and root volume both had the path `106/vm-106-disk-0.qcow2` on different pools, which exposed lookups by path alone: fixed (design section 15), +3 unit tests (two volumes with one path: live move of each, detach), plugin total 462 pass.
+
+### Phase 9, lab T4 (2026-10-29): first try failed
+
+Detach of a live-moved data volume: `IllegalArgumentException: Illegal character in path` (the task id `...qmmove:106-unused0>900000002-unused0...`). Proxmox had already moved the disk, so core kept the old path. Fixed: task ids are encoded in the status URL (`pathSafe`, +1 test), `handBack` goes on when the holder lists the volume although the task could not be followed (+2 tests), and the running detach records an alias until the answer carries the new path. Plugin total 465 pass. T4 to be rerun with a fresh volume.

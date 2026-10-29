@@ -140,7 +140,15 @@ final class ProxmoxHolderVms {
      */
     String handBack(String node, long instanceVmid, String entry, long holderVmid) {
         String holderEntry = freeEntry(client.getVmConfig(node, holderVmid));
-        client.waitForTask(client.reassignDisk(node, instanceVmid, entry, holderVmid, holderEntry), taskTimeoutSeconds.getAsInt());
+        try {
+            client.waitForTask(client.reassignDisk(node, instanceVmid, entry, holderVmid, holderEntry), taskTimeoutSeconds.getAsInt());
+        } catch (ProxmoxApiException e) {
+            // the task may have done its work although it could not be followed (lab T4): if the holder lists the volume, it is done
+            if (volumeIdOf(client.getVmConfig(node, holderVmid).get(holderEntry)) == null) {
+                throw e;
+            }
+            LOGGER.warn("Following the task that handed {} of VM {} to the holder VM {} failed ({}), but the holder lists the volume", entry, instanceVmid, holderVmid, e.getMessage());
+        }
         String volumeId = volumeIdOf(client.getVmConfig(node, holderVmid).get(holderEntry));
         if (volumeId == null) {
             throw new ProxmoxApiException("Proxmox handed " + entry + " of VM " + instanceVmid + " to the holder VM " + holderVmid + " but it does not list it");
