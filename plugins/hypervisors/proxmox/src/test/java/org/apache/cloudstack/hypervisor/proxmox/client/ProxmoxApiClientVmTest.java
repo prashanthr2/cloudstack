@@ -684,4 +684,11 @@ public class ProxmoxApiClientVmTest {
     public void anUploadOfAFileThatCannotBeReadFailsWithAMessage() {
         client.uploadIso("pve1", "csp-1", "x.iso", java.nio.file.Paths.get("/nonexistent/agent.zip"), 2048);
     }
+
+    @Test
+    public void aTaskIdWithCharactersAUriDoesNotAllowIsEncodedInThePath() {
+        assertEquals("UPID:pve1:00010B1A:00246999:6ACCFCCB:qmmove:106-unused0%3E900000002-unused0:root@pam!cloudstack:",
+                ProxmoxApiClient.pathSafe("UPID:pve1:00010B1A:00246999:6ACCFCCB:qmmove:106-unused0>900000002-unused0:root@pam!cloudstack:"));
+        assertEquals(UPID, ProxmoxApiClient.pathSafe(UPID));
+    }
 }

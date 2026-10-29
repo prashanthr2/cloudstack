@@ -1026,6 +1026,23 @@ public class ProxmoxApiClient implements Closeable {
         return StringUtils.substringBefore(volid, ":");
     }
 
+    /**
+     * A task id as a URL path segment. It is used as it is (":" "@" "!" are fine) except for characters a URI does not allow: the task of a disk
+     * handed to another VM is "...:qmmove:106-unused0&gt;900000002-unused0:...", and "&gt;" made the request fail (lab T4).
+     */
+    static String pathSafe(String upid) {
+        StringBuilder safe = new StringBuilder();
+        for (byte b : upid.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            char c = (char) (b & 0xff);
+            if (b >= 0 && (Character.isLetterOrDigit(c) || ":@!._-~$&'()*+,;=".indexOf(c) >= 0)) {
+                safe.append(c);
+            } else {
+                safe.append(String.format("%%%02X", b & 0xff));
+            }
+        }
+        return safe.toString();
+    }
+
     private static String encodeVolume(String volid) {
         try {
             return java.net.URLEncoder.encode(volid, "UTF-8");
@@ -1442,7 +1459,7 @@ public class ProxmoxApiClient implements Closeable {
         String node = taskNode(upid);
         long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
         while (true) {
-            JsonNode status = get("/nodes/" + node + "/tasks/" + upid + "/status");
+            JsonNode status = get("/nodes/" + node + "/tasks/" + pathSafe(upid) + "/status");
             if ("stopped".equals(status.path("status").asText())) {
                 String exit = status.path("exitstatus").asText("");
                 if (exit.equals("OK") || exit.startsWith("WARNINGS")) {
@@ -1482,7 +1499,7 @@ public class ProxmoxApiClient implements Closeable {
 
     private String taskLogTail(String node, String upid) {
         try {
-            JsonNode log = get("/nodes/" + node + "/tasks/" + upid + "/log?limit=500");
+            JsonNode log = get("/nodes/" + node + "/tasks/" + pathSafe(upid) + "/log?limit=500");
             if (log == null || !log.isArray() || log.size() == 0) {
                 return "";
             }
