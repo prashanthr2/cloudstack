@@ -661,3 +661,11 @@ Created `900000099` with `protection=1`, listed a volume as `unused0`, `move-dis
 ### Phase 9, lab T4 (2026-10-29): first try failed
 
 Detach of a live-moved data volume: `IllegalArgumentException: Illegal character in path` (the task id `...qmmove:106-unused0>900000002-unused0...`). Proxmox had already moved the disk, so core kept the old path. Fixed: task ids are encoded in the status URL (`pathSafe`, +1 test), `handBack` goes on when the holder lists the volume although the task could not be followed (+2 tests), and the running detach records an alias until the answer carries the new path. Plugin total 465 pass. T4 to be rerun with a fresh volume.
+
+### Phase 9, lab T4 to T6 (2026-10-29)
+
+- **T4 (detach of a live-moved data volume from a running instance): pass** on a healthy instance (after the task-id encoding fix and the safety net). The path core stores is the holder's.
+- **T5 (live move, stop the instance, detach while stopped, start): pass.**
+- **T6 (destroy an instance that owns a moved data volume, keep the volume): pass**, seen on instance 101: the volume went to the holder as `900000002/vm-900000002-disk-0.qcow2`, core kept the old path `101/vm-101-disk-1.qcow2`, and an attach to instance 122 resolved the alias (`scsi1` on the holder path). Core keeps showing the old path until the volume is deleted (known cost, design section 11).
+- **First T4 attempt, not explained:** on an instance whose guest was in a kernel panic, the hot-unplug stayed pending (`del scsi1` in `qm pending`) and the plugin's undo got `HTTP 400 Parameter verification failed`, while `qm set <vmid> --revert scsi1` by hand worked. The error text now names the rejected parameter (change f86cacd645); the cause of the 400 is still open. Not reproduced on a healthy instance.
+- Not run yet: T7 (attach, detach, delete of a volume that is still listed).

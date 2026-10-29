@@ -60,3 +60,4 @@ None at the moment.
 - Removing storage entries that are no longer used (items 8).
 - A way for a hypervisor plugin to declare its own VM settings instead of the hard-coded list in core (upstream-notes.md, 16).
 - Everything in upstream-notes.md (items 1 to 18) is to be turned into separate, minimal pull requests; the core changes are kept as small as they are for that reason.
+- **Detach of a drive the guest does not release (open):** if the guest never acknowledges the hot-unplug (seen with a guest in a kernel panic), Proxmox keeps `delete <drive>` pending and the plugin's `revert` of it got `HTTP 400` once (a manual `--revert` worked). The detach fails with the instance still attached, which is right, but the pending change is left. Reproduce with a panicked or paused guest and read the new error text (names the rejected parameter).
