@@ -669,3 +669,7 @@ Detach of a live-moved data volume: `IllegalArgumentException: Illegal character
 - **T6 (destroy an instance that owns a moved data volume, keep the volume): pass**, seen on instance 101: the volume went to the holder as `900000002/vm-900000002-disk-0.qcow2`, core kept the old path `101/vm-101-disk-1.qcow2`, and an attach to instance 122 resolved the alias (`scsi1` on the holder path). Core keeps showing the old path until the volume is deleted (known cost, design section 11).
 - **First T4 attempt, not explained:** on an instance whose guest was in a kernel panic, the hot-unplug stayed pending (`del scsi1` in `qm pending`) and the plugin's undo got `HTTP 400 Parameter verification failed`, while `qm set <vmid> --revert scsi1` by hand worked. The error text now names the rejected parameter (change f86cacd645); the cause of the 400 is still open. Not reproduced on a healthy instance.
 - Not run yet: T7 (attach, detach, delete of a volume that is still listed).
+
+### Phase 9, vmid reuse (2026-10-29): unit test
+
+Seen in lab T7 preparation: the path of a volume handed to the holder still names the destroyed instance's vmid. The alias map is now read before the image (design section 17); `anAliasWinsOverAnImageThatNowHasTheOldPathBecauseAnotherVmGotTheOldVmId`. Plugin total 467 pass. Not lab tested.

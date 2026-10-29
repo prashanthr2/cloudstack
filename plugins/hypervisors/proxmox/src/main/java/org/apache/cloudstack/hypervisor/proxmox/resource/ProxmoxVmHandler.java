@@ -687,11 +687,12 @@ class ProxmoxVmHandler {
 
     /**
      * The volume id that the path of a data volume stands for now. Core keeps the path it was given, and a volume that the plugin handed to the
-     * holder VM when no answer could carry the new path has another one (the alias map, design-phase9-storage-migration.md section 10). The image
-     * is looked for first, which is all a volume needs that was never renamed.
+     * holder VM when no answer could carry the new path has another one (the alias map, design-phase9-storage-migration.md section 10). The alias
+     * map is read first, not only when the image is missing: the old path names the id of an instance that is gone, and Proxmox can give that id to
+     * a new VM whose disk would then be taken for the volume.
      */
     private String resolveVolumeId(ProxmoxApiClient client, String volumeId, Long accountId) {
-        if (!isHolderAccount(accountId) || client.getImageInfo(node, volumeId) != null) {
+        if (!isHolderAccount(accountId)) {
             return volumeId;
         }
         return new ProxmoxHolderVms(client, taskTimeoutSeconds).resolve(accountId, volumeId);
@@ -1223,12 +1224,9 @@ class ProxmoxVmHandler {
             }
             Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
             Long account = accountOfInstance(cmd.getAttachedVmName());
-            List<String> drives = ProxmoxVmConfig.drivesHolding(config, cmd.getVolumePath());
-            if (drives.isEmpty() && isHolderAccount(account)) {
-                // a volume that was handed to the holder with an alias keeps the path CloudStack has
-                String resolved = new ProxmoxHolderVms(client, taskTimeoutSeconds).resolveByPath(account, cmd.getVolumePath());
-                drives = resolved == null ? drives : ProxmoxVmConfig.drivesHolding(config, StringUtils.substringAfter(resolved, ":"));
-            }
+            // a volume that was handed to the holder with an alias keeps the path CloudStack has, and the alias comes first (see resolveVolumeId)
+            String resolved = isHolderAccount(account) ? new ProxmoxHolderVms(client, taskTimeoutSeconds).resolveByPath(account, cmd.getVolumePath()) : null;
+            List<String> drives = ProxmoxVmConfig.drivesHolding(config, resolved == null ? cmd.getVolumePath() : StringUtils.substringAfter(resolved, ":"));
             if (drives.size() > 1) {
                 // the command names no source pool and Proxmox numbers disks per storage, so a root and a data volume can share a path: tell them by type
                 boolean root = cmd.getVolumeType() == Volume.Type.ROOT;
@@ -1487,14 +1485,11 @@ class ProxmoxVmHandler {
         // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one;
         // a volume that was renamed without core hearing of it is found through the alias map
         ProxmoxApiClient.VmLocation holder = isHolderAccount(volume.getAccountId()) ? client.findVm(ProxmoxVmConfig.holderVmId(volume.getAccountId())) : null;
-        if (holder != null && client.getImageInfo(node, requested) == null) {
+        if (holder != null) {
             volumeId = holders.resolve(holder, requested);
         }
         removeFromOwner(client, volumeId);
         if (holder != null) {
-            if (client.getImageInfo(node, requested) == null) {
-                volumeId = holders.resolve(holder, requested);
-            }
             holders.deleteListed(holder, volumeId);
         }
         try {

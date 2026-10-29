@@ -788,5 +788,26 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client, org.mockito.Mockito.atLeastOnce()).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi1"));
         verify(client, never()).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi0"));
     }
+
+    @Test
+    public void anAliasWinsOverAnImageThatNowHasTheOldPathBecauseAnotherVmGotTheOldVmId() {
+        // the volume was handed to the holder when VM 9204 was destroyed; Proxmox then gave 9204 to a new VM whose disk has the old path
+        String holderPath = POOL + ":900000002/vm-900000002-disk-0.qcow2";
+        Map<String, String> aliases = new HashMap<>();
+        aliases.put(OWNED_ID, holderPath);
+        Map<String, String> holderConfig = config("description", ProxmoxVolumeAliases.render("text", aliases));
+        when(client.findVm(900000002L)).thenReturn(new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped"));
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(holderConfig);
+        when(client.getImageInfo(NODE, OWNED_ID)).thenReturn(new ProxmoxApiClient.ImageInfo(1 * GIB, 1024, "qcow2", "/mnt/x"));
+        theVmIs("stopped", config("scsi0", "x"));
+        VolumeObjectTO volume = volumeOn(POOL_UUID, OWNED_PATH);
+        when(volume.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+
+        Answer answer = handler.attach(new AttachCommand(dataDisk(volume, 1), VM, Collections.emptyMap()));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("scsi1", holderPath));
+        verify(client, never()).findVm(9204L);
+    }
 }
 
