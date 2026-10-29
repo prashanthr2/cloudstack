@@ -20,8 +20,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -339,6 +341,35 @@ public final class ProxmoxVmConfig {
             }
         }
         return null;
+    }
+
+    /**
+     * The drive that holds exactly the volume {@code volumeId} ("&lt;pool entry&gt;:&lt;path&gt;"), or null. Proxmox numbers a VM's disks per storage, so two
+     * volumes of one VM on different pools can have the same path (after a move); the pool entry tells them apart.
+     */
+    public static String driveHoldingVolume(Map<String, String> config, String volumeId) {
+        if (StringUtils.isBlank(volumeId)) {
+            return null;
+        }
+        for (Map.Entry<String, String> entry : config.entrySet()) {
+            if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && volumeId.equals(StringUtils.substringBefore(entry.getValue(), ","))) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** Every disk drive that holds a volume at {@code volumePath}, in the configuration's order (see {@link #driveHoldingVolume} for why there can be several). */
+    public static List<String> drivesHolding(Map<String, String> config, String volumePath) {
+        List<String> drives = new ArrayList<>();
+        if (StringUtils.isNotBlank(volumePath)) {
+            for (Map.Entry<String, String> entry : config.entrySet()) {
+                if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && entry.getValue().contains(":" + volumePath)) {
+                    drives.add(entry.getKey());
+                }
+            }
+        }
+        return drives;
     }
 
     /** The IDE drive of a CloudStack CD-ROM slot (a null slot is the first). */

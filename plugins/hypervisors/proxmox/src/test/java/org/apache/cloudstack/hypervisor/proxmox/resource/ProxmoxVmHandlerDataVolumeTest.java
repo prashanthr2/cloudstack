@@ -734,5 +734,59 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "unused0"));
     }
+
+    // ---- two volumes of one instance with the same path on different pools (Proxmox numbers disks per storage) ----
+
+    private static final String SHARED_PATH = "9204/vm-9204-disk-0.qcow2";
+
+    @Test
+    public void aLiveMoveOfTheDataVolumeLeavesTheRootDiskThatHasTheSamePath() {
+        Map<String, String> vmConfig = config("scsi0", POOL + ":" + SHARED_PATH + ",size=8G", "scsi1", OTHER + ":" + SHARED_PATH + ",size=5G");
+        theVmIs("running", vmConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.put("scsi1", POOL + ":9204/vm-9204-disk-1.qcow2,size=5G");
+            return "UPID:move";
+        }).when(client).moveDisk(NODE, 9204L, "scsi1", POOL);
+        MigrateVolumeCommand cmd = liveMove(SHARED_PATH, POOL_UUID);
+        when(cmd.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+
+        Answer answer = handler.migrateVolume(cmd);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client, never()).moveDisk(eq(NODE), eq(9204L), eq("scsi0"), anyString());
+    }
+
+    @Test
+    public void aLiveMoveOfTheRootVolumeLeavesTheDataDiskThatHasTheSamePath() {
+        Map<String, String> vmConfig = config("scsi0", POOL + ":" + SHARED_PATH + ",size=8G", "scsi1", OTHER + ":" + SHARED_PATH + ",size=5G");
+        theVmIs("running", vmConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.put("scsi0", OTHER + ":9204/vm-9204-disk-1.qcow2,size=8G");
+            return "UPID:move";
+        }).when(client).moveDisk(NODE, 9204L, "scsi0", OTHER);
+        MigrateVolumeCommand cmd = liveMove(SHARED_PATH, OTHER_UUID);
+        when(cmd.getVolumeType()).thenReturn(Volume.Type.ROOT);
+
+        Answer answer = handler.migrateVolume(cmd);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("9204/vm-9204-disk-1.qcow2", ((MigrateVolumeAnswer) answer).getVolumePath());
+    }
+
+    @Test
+    public void detachingTheDataVolumeRemovesTheDriveOfItsPoolNotTheRootDisk() {
+        Map<String, String> vmConfig = config("scsi0", POOL + ":" + SHARED_PATH + ",size=8G", "scsi1", OTHER + ":" + SHARED_PATH + ",size=5G");
+        theVmIs("stopped", vmConfig);
+        VolumeObjectTO volume = volumeOn(OTHER_UUID, SHARED_PATH);
+        when(volume.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+        DettachCommand cmd = mock(DettachCommand.class);
+        when(cmd.getVmName()).thenReturn(VM);
+        when(cmd.getDisk()).thenReturn(dataDisk(volume, 1));
+
+        handler.detach(cmd);
+
+        verify(client, org.mockito.Mockito.atLeastOnce()).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi1"));
+        verify(client, never()).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi0"));
+    }
 }
 

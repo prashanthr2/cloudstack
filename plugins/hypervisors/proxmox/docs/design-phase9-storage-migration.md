@@ -163,3 +163,11 @@ The source stays listed as a further `unusedK`, so a failed copy loses nothing; 
 ## 14. Lab M9 (2026-10-29): a protected holder
 
 On a VM with `protection=1`: `qm set <vm> --unused0 <A>:<vm>/<file>` works; `qm move-disk <vm> unused0 <B> --format qcow2 --delete 0` works (the copy is `<B>:<vm>/vm-<vm>-disk-0.qcow2` as `unused0`, the source stays as `unused1`); **`qm set <vm> --delete unused0` is refused: "can't remove unused disk ... protection mode enabled".** So the plugin switches `protection` off for the one change that removes an entry (`deleteListed`) and on again in `finally`. Not yet shown on a protected holder: the reassign (`target-vmid`) into and out of it (M5/M6 may have used an unprotected one).
+
+## 15. Same path on two pools (found in lab T3, 2026-10-29)
+
+Proxmox numbers a VM's disks per storage, and CloudStack stores the path without the pool entry. After live moves a root volume and a data volume of one instance can both be `106/vm-106-disk-0.qcow2` (one on each pool). Lookups that matched a drive by path alone could take the wrong drive. Now:
+- commands that carry the pool (attach, detach, resize, and every hand-over) match the whole volume id with `ProxmoxVmConfig.driveHoldingVolume`;
+- `MigrateVolumeCommand` names no source pool: when more than one drive holds the path, the volume type chooses (root volume: a drive of the root slots; data volume: any other), and the command is refused if that still does not give one drive;
+- the start and destroy hooks recognise the root volume by its whole id (by path only when its pool is not known).
+Proxmox picks the first free number on the target storage, so a moved disk is renamed (`disk-0` to `disk-1` when the target already has a `disk-0` of that VM); the answer carries the new path.

@@ -34,6 +34,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
@@ -1022,7 +1023,7 @@ class ProxmoxVmHandler {
             }
             String existing = client.getVmConfig(location.getNode(), location.getVmid()).get(drive);
             if (existing != null) {
-                if (existing.contains(":" + StringUtils.substringAfter(wanted, ":"))) {
+                if (wanted.equals(StringUtils.substringBefore(existing, ","))) {
                     return new AttachAnswer(disk);
                 }
                 return new AttachAnswer("The drive " + drive + " of " + cmd.getVmName() + " already holds another disk");
@@ -1052,7 +1053,7 @@ class ProxmoxVmHandler {
                 return new DettachAnswer(disk);
             }
             String resolved = resolveVolumeId(client, volume);
-            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()), StringUtils.substringAfter(resolved, ":"));
+            String drive = ProxmoxVmConfig.driveHoldingVolume(client.getVmConfig(location.getNode(), location.getVmid()), resolved);
             if (drive == null) {
                 return new DettachAnswer(disk);
             }
@@ -1097,7 +1098,7 @@ class ProxmoxVmHandler {
             Map<String, String> config = client.getVmConfig(owner.getNode(), owner.getVmid());
             String entry = ProxmoxHolderVms.entryOf(config, volumeId);
             if (entry == null) {
-                String drive = ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(volumeId, ":"));
+                String drive = ProxmoxVmConfig.driveHoldingVolume(config, volumeId);
                 if (drive == null) {
                     throw new ProxmoxApiException("Proxmox VM " + owner.getVmid() + " does not list the disk " + volumeId);
                 }
@@ -1122,12 +1123,14 @@ class ProxmoxVmHandler {
         if (!isHolderAccount(account)) {
             return;
         }
-        String rootPath = rootVolumePath(vm);
+        VolumeObjectTO rootVolume = rootVolume(vm);
+        String rootId = rootVolume == null || StringUtils.isBlank(rootVolume.getPath()) || !(rootVolume.getDataStore() instanceof PrimaryDataStoreTO) ? null : volumeId(rootVolume);
+        String rootPath = rootVolume == null ? null : rootVolume.getPath();
         for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(node, location.getVmid())).entrySet()) {
             String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
-            // the root disk may still be on the drive it was moved from (moveRootDisk), so it is told by its path, not its drive
+            // the root disk may still be on the drive it was moved from (moveRootDisk), so it is told by its volume id, not its drive
             if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && !existing.getKey().equals(rootDrive) && volumeId != null
-                    && !volumeId.endsWith(":" + rootPath)
+                    && !volumeId.equals(rootId) && !(rootId == null && rootPath != null && volumeId.endsWith(":" + rootPath))
                     && Long.valueOf(location.getVmid()).equals(ownerVm(volumeId)) && dataDrives.values().stream().noneMatch(value -> value.startsWith(volumeId))) {
                 giveBackToHolder(client, location, volumeId, account, true);
             }
@@ -1142,7 +1145,7 @@ class ProxmoxVmHandler {
         for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(location.getNode(), location.getVmid())).entrySet()) {
             String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
             if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && volumeId != null && Long.valueOf(location.getVmid()).equals(ownerVm(volumeId))
-                    && !volumeId.endsWith(":" + root.getPath())) {
+                    && !volumeId.equals(volumeId(root))) {
                 giveBackToHolder(client, location, volumeId, root.getAccountId(), true);
             }
         }
@@ -1159,7 +1162,7 @@ class ProxmoxVmHandler {
             return;
         }
         Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
-        String drive = ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(volumeId, ":"));
+        String drive = ProxmoxVmConfig.driveHoldingVolume(config, volumeId);
         if (drive != null) {
             if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) != null) {
                 throw new ProxmoxApiException("The volume " + volumeId + " is still on " + drive + " of the running VM " + owner);
@@ -1205,15 +1208,22 @@ class ProxmoxVmHandler {
             }
             Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
             Long account = accountOfInstance(cmd.getAttachedVmName());
-            String drive = ProxmoxVmConfig.driveHolding(config, cmd.getVolumePath());
-            if (drive == null && isHolderAccount(account)) {
+            List<String> drives = ProxmoxVmConfig.drivesHolding(config, cmd.getVolumePath());
+            if (drives.isEmpty() && isHolderAccount(account)) {
                 // a volume that was handed to the holder with an alias keeps the path CloudStack has
                 String resolved = new ProxmoxHolderVms(client, taskTimeoutSeconds).resolveByPath(account, cmd.getVolumePath());
-                drive = resolved == null ? null : ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(resolved, ":"));
+                drives = resolved == null ? drives : ProxmoxVmConfig.drivesHolding(config, StringUtils.substringAfter(resolved, ":"));
             }
-            if (drive == null) {
-                return new MigrateVolumeAnswer(cmd, false, "The volume " + cmd.getVolumePath() + " is not on a drive of " + cmd.getAttachedVmName(), null);
+            if (drives.size() > 1) {
+                // the command names no source pool and Proxmox numbers disks per storage, so a root and a data volume can share a path: tell them by type
+                boolean root = cmd.getVolumeType() == Volume.Type.ROOT;
+                drives = drives.stream().filter(candidate -> root == Arrays.asList(ProxmoxVmConfig.ROOT_DRIVES).contains(candidate)).collect(Collectors.toList());
             }
+            if (drives.size() != 1) {
+                return new MigrateVolumeAnswer(cmd, false, drives.isEmpty() ? "The volume " + cmd.getVolumePath() + " is not on a drive of " + cmd.getAttachedVmName()
+                        : "More than one drive of " + cmd.getAttachedVmName() + " holds " + cmd.getVolumePath() + " and the volume type does not tell them apart: " + drives, null);
+            }
+            String drive = drives.get(0);
             String destStorage = ProxmoxStorageNames.storageId(cmd.getPool().getUuid());
             String current = ProxmoxHolderVms.volumeIdOf(config.get(drive));
             if (current.startsWith(destStorage + ":")) {
@@ -1247,9 +1257,8 @@ class ProxmoxVmHandler {
                 return new ResizeVolumeAnswer(cmd, false, "Proxmox can only resize a disk that is attached to an instance: attach the volume first, then resize it");
             }
             Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
-            String resolved = cmd.getPool() == null ? cmd.getPath() : StringUtils.substringAfter(
-                    resolveVolumeId(client, ProxmoxStorageNames.storageId(cmd.getPool().getUuid()) + ":" + cmd.getPath(), accountOfInstance(cmd.getInstanceName())), ":");
-            String drive = ProxmoxVmConfig.driveHolding(config, resolved);
+            String drive = cmd.getPool() == null ? ProxmoxVmConfig.driveHolding(config, cmd.getPath()) : ProxmoxVmConfig.driveHoldingVolume(config,
+                    resolveVolumeId(client, ProxmoxStorageNames.storageId(cmd.getPool().getUuid()) + ":" + cmd.getPath(), accountOfInstance(cmd.getInstanceName())));
             if (drive == null) {
                 return new ResizeVolumeAnswer(cmd, false, "The volume " + cmd.getPath() + " is not on a drive of " + cmd.getInstanceName());
             }

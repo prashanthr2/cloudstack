@@ -651,3 +651,9 @@ Lab result (2026-10-24 and 25, 8c, VPC): the VPC tests pass: two tiers and their
 ### Phase 9, lab M9 (2026-10-29): protected holder, run on pve1 by hand
 
 Created `900000099` with `protection=1`, listed a volume as `unused0`, `move-disk` of `unused0` to the other NFS entry with `--delete 0` worked (copy as `unused0`, source as `unused1`); `--delete unused0` was refused: "protection mode enabled". Fix: `deleteListed` lifts protection around the removal (unit test `protectionIsOffOnlyWhileTheEntryIsRemoved`, plugin total 459 pass). The test VM `900000099` and its two volumes are still on the lab: `qm set 900000099 --protection 0 && qm destroy 900000099 --purge`, then remove `/mnt/<pool>/images/900000099` leftovers if any.
+
+### Phase 9, lab T1 to T3 (2026-10-29)
+
+- **T1 (M9, detached data volume to the other pool): pass** (after pulling the rebuilt jar; the first try ran the old build).
+- **T2 (live move of a data volume): needed a capability row for the exact host version** `8.4.21`: core looks it up without the `default` fallback. With the row inserted, the live move worked. Step 5 must cover every version (plan: the discoverer inserts the row).
+- **T3 (live move of the root volume): worked; Proxmox renamed the root disk to `106/vm-106-disk-1.qcow2`** because the target already had `disk-0` of that VM (the data volume). The data and root volume both had the path `106/vm-106-disk-0.qcow2` on different pools, which exposed lookups by path alone: fixed (design section 15), +3 unit tests (two volumes with one path: live move of each, detach), plugin total 462 pass.
