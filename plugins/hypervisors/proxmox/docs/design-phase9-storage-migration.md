@@ -135,3 +135,15 @@ When the plugin hands a volume to the holder VM at a moment when core cannot be 
 **Aliases end** when the volume is deleted, or when core is given the new path (a later detach or migrate answer): `forgetAliases`.
 
 **Where the hand-over with an alias happens** (built together with the live move, step 3): attach of a volume that is still in another, stopped instance's configuration, the start of an instance whose configuration still lists a detached data volume, the destruction of an instance, and the delete of a volume still listed by a stopped instance. At a *running* detach the new path goes in the detach answer and no alias is made.
+
+## 12. Step 2 as built: offline copy of a detached data volume
+
+`CopyCommand` volume to volume, both on primary storage, handled by `ProxmoxVmHandler.copyDataVolume`:
+
+1. the source id is resolved (alias map), and the copy is refused when the volume is on the destination pool already or has no image;
+2. under the holder lock: `ensureHolder` on the executing node, `adopt` lists the volume as `unusedN`, then `move_disk` of that entry to the destination storage with `delete=0`;
+3. the holder's `unusedN` now names the copy (`<holder>/vm-<holder>-disk-<n>.qcow2` on the destination); the answer carries that path and the size read from the image.
+
+The source stays listed as a further `unusedK`, so a failed copy loses nothing; core's `DeleteCommand` for the old volume then removes it through `deleteListed`. Not covered here (decision still open, 4.1): the root volume of a stopped instance. Lab check to run: M9 below.
+
+**M9 (lab):** with a detached data volume on pool A and pool B added, run "migrate volume" to B (API `migrateVolume`, no live flag); expect the volume path `<holder>/vm-<holder>-disk-<n>.qcow2` on B, the holder VM listing the new volume, and no file left on A.

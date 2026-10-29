@@ -639,3 +639,7 @@ Lab result (2026-10-24 and 25, 8c, VPC): the VPC tests pass: two tiers and their
 ### Phase 9, the alias map (2026-10-29): unit tests
 
 `ProxmoxVolumeAliasesTest` (7: parse/render, one-step lookup after a second rename, forget, capacity at 8000 characters), `ProxmoxHolderVmsTest` (+6: resolve, record keeps the text, forget, hand-over with alias, refusal before the rename when the description is full), `ProxmoxVmHandlerDataVolumeTest` (+4: attach, detach, delete and resize of a renamed volume). Plugin: **451 tests pass**. Not run on a lab (nothing renames a volume until the live move is built).
+
+### Phase 9, step 2: offline copy of a detached data volume (2026-10-29): unit tests
+
+`ProxmoxVmHandlerDataVolumeTest` (+3: copy via the holder entry with `delete=0` and the new path in the answer, refusal when the destination is the current pool, refusal without an image and nothing changed). Plugin total 454 pass, 0 fail. Lab check M9 (design section 12) not run yet.

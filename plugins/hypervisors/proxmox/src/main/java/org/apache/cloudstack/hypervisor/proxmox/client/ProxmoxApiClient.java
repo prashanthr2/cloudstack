@@ -1105,11 +1105,16 @@ public class ProxmoxApiClient implements Closeable {
      * "vm-&lt;vmid&gt;-disk-&lt;first free number&gt;" on the target, so the caller reads the configuration afterwards. Returns the task id.
      */
     public String moveDisk(String node, long vmid, String disk, String storage) {
+        return moveDisk(node, vmid, disk, storage, true);
+    }
+
+    /** As above; with {@code deleteSource} false the old volume stays and the VM lists it as "unusedN". */
+    public String moveDisk(String node, long vmid, String disk, String storage, boolean deleteSource) {
         Map<String, String> form = new LinkedHashMap<>();
         form.put("disk", disk);
         form.put("storage", storage);
         form.put("format", "qcow2");
-        form.put("delete", "1");
+        form.put("delete", deleteSource ? "1" : "0");
         return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/move_disk", form));
     }
 

@@ -518,3 +518,7 @@ Not done: site-to-site VPN and remote access VPN were not run on the lab; redund
 - Some Proxmox operations (setting raw QEMU `args`) are root-only; whether a root token passes that check is unverified.
 - Not yet implemented: system VMs and virtual routers, snapshots, uploading and downloading volumes (see section 10 for what a VM can do now).
 - Proxmox's own maintenance state is not set by CloudStack (section 12).
+
+## 21. Moving a detached data volume to another primary storage
+
+"Migrate volume" of a detached data volume copies it with Proxmox (`move_disk` of the holder VM's `unusedN` entry to the other storage), answers with the new path (Proxmox picks the name `<holder>/vm-<holder>-disk-<n>.qcow2`), and CloudStack then deletes the old volume. The holder VM keeps listing the volume. The root volume of a stopped instance and live moves are not done yet (Phase 9, steps 2 and 3).

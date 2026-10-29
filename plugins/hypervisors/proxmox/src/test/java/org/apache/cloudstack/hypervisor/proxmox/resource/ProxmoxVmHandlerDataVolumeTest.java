@@ -35,6 +35,8 @@ import java.util.Map;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.storage.command.AttachAnswer;
 import org.apache.cloudstack.storage.command.AttachCommand;
+import org.apache.cloudstack.storage.command.CopyCmdAnswer;
+import org.apache.cloudstack.storage.command.CopyCommand;
 import org.apache.cloudstack.storage.command.CreateObjectAnswer;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
 import org.apache.cloudstack.storage.command.DeleteCommand;
@@ -574,6 +576,72 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).resizeDisk(NODE, 9204L, "scsi1", "5G");
+    }
+
+    // ---- copy to another primary storage (Phase 9, detached volume) ----
+
+    private static final String OTHER_UUID = "11111111-2222-3333-4444-555555555555";
+    private static final String OTHER = "cs-" + OTHER_UUID;
+
+    private static VolumeObjectTO volumeOn(String poolUuid, String path) {
+        PrimaryDataStoreTO pool = mock(PrimaryDataStoreTO.class);
+        when(pool.getUuid()).thenReturn(poolUuid);
+        VolumeObjectTO volume = mock(VolumeObjectTO.class);
+        when(volume.getUuid()).thenReturn(UUID);
+        when(volume.getAccountId()).thenReturn(2L);
+        when(volume.getDataStore()).thenReturn(pool);
+        when(volume.getPath()).thenReturn(path);
+        when(volume.getSize()).thenReturn(5 * GIB);
+        return volume;
+    }
+
+    private static CopyCommand copyOf(VolumeObjectTO src, VolumeObjectTO dest) {
+        CopyCommand cmd = mock(CopyCommand.class);
+        when(cmd.getSrcTO()).thenReturn(src);
+        when(cmd.getDestTO()).thenReturn(dest);
+        return cmd;
+    }
+
+    @Test
+    public void aDetachedDataVolumeIsCopiedByMovingTheHoldersEntryAndKeepsTheSource() {
+        Map<String, String> holderConfig = new HashMap<>();
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(new ProxmoxApiClient.ImageInfo(5 * GIB, 1024, "qcow2", "/mnt/x"));
+        when(client.getImageInfo(NODE, OTHER + ":900000002/vm-900000002-disk-1.qcow2"))
+                .thenReturn(new ProxmoxApiClient.ImageInfo(5 * GIB, 2048, "qcow2", "/mnt/y"));
+        when(client.findVm(900000002L)).thenReturn(new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped"));
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(holderConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            holderConfig.put("unused0", OTHER + ":900000002/vm-900000002-disk-1.qcow2");
+            return "UPID:move";
+        }).when(client).moveDisk(NODE, 900000002L, "unused0", OTHER, false);
+
+        Answer answer = handler.copy(copyOf(volumeOn(POOL_UUID, PATH), volumeOn(OTHER_UUID, null)));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("900000002/vm-900000002-disk-1.qcow2", ((VolumeObjectTO) ((CopyCmdAnswer) answer).getNewData()).getPath());
+        verify(client).updateVmConfig(NODE, 900000002L, Collections.singletonMap("unused0", VOLUME_ID));
+        verify(client, never()).moveDisk(anyString(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    public void copyingToTheStorageTheVolumeIsOnFails() {
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(new ProxmoxApiClient.ImageInfo(5 * GIB, 1024, "qcow2", "/mnt/x"));
+
+        Answer answer = handler.copy(copyOf(volumeOn(POOL_UUID, PATH), volumeOn(POOL_UUID, null)));
+
+        assertFalse(answer.getResult());
+        verify(client, never()).moveDisk(anyString(), anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    public void copyingAVolumeWithoutAnImageFailsAndChangesNothing() {
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(null);
+
+        Answer answer = handler.copy(copyOf(volumeOn(POOL_UUID, PATH), volumeOn(OTHER_UUID, null)));
+
+        assertFalse(answer.getResult());
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
+        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
 }
 

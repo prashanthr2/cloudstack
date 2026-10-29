@@ -220,12 +220,55 @@ class ProxmoxVmHandler {
             if (src instanceof TemplateObjectTO && src.getDataStore() instanceof PrimaryDataStoreTO && dest instanceof VolumeObjectTO) {
                 return createRootVolume((TemplateObjectTO) src, (VolumeObjectTO) dest);
             }
+            if (src instanceof VolumeObjectTO && dest instanceof VolumeObjectTO && src.getDataStore() instanceof PrimaryDataStoreTO
+                    && dest.getDataStore() instanceof PrimaryDataStoreTO) {
+                return copyDataVolume((VolumeObjectTO) src, (VolumeObjectTO) dest);
+            }
             return new CopyCmdAnswer("Copying " + (src == null ? null : src.getObjectType()) + " to " + (dest == null ? null : dest.getObjectType())
                     + " is not supported for Proxmox");
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not complete {}: {}", node, cmd.getClass().getSimpleName(), e.getMessage());
             return new CopyCmdAnswer(e.getMessage());
         }
+    }
+
+    /**
+     * Copies a data volume that no running VM uses to another primary storage (CloudStack's "migrate volume" of a detached volume). The holder VM of
+     * the account lists the volume, and Proxmox copies that entry to the other storage (move_disk of an "unusedN" entry, which needs no running VM).
+     * The source is not removed here: it stays listed as another "unusedN" and CloudStack's DeleteCommand for the old volume takes it away, so a
+     * failed copy loses nothing. The new volume is named by Proxmox ("&lt;holder&gt;/vm-&lt;holder&gt;-disk-&lt;n&gt;.qcow2") and the answer carries it.
+     */
+    private Answer copyDataVolume(VolumeObjectTO src, VolumeObjectTO dest) {
+        if (!isHolderAccount(src.getAccountId())) {
+            return new CopyCmdAnswer("The volume " + src.getUuid() + " has no account that Proxmox can hold data volumes for");
+        }
+        ProxmoxApiClient client = clients.get();
+        String destStorage = ProxmoxStorageNames.storageId(((PrimaryDataStoreTO) dest.getDataStore()).getUuid());
+        String srcId = resolveVolumeId(client, src);
+        if (srcId.startsWith(destStorage + ":")) {
+            return new CopyCmdAnswer("The volume " + src.getUuid() + " is on " + destStorage + " already");
+        }
+        if (client.getImageInfo(node, srcId) == null) {
+            return new CopyCmdAnswer("Proxmox has no disk image " + srcId + " to copy");
+        }
+        long holderVmid = ProxmoxVmConfig.holderVmId(src.getAccountId());
+        ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
+        String newId = holders.withLock(holderVmid, () -> {
+            ProxmoxApiClient.VmLocation holder = holders.ensureHolder(src.getAccountId(), node);
+            String entry = holders.adopt(holder, srcId);
+            waitFor(client, client.moveDisk(node, holderVmid, entry, destStorage, false));
+            return ProxmoxHolderVms.volumeIdOf(client.getVmConfig(node, holderVmid).get(entry));
+        });
+        if (newId == null || !newId.startsWith(destStorage + ":")) {
+            return new CopyCmdAnswer("Proxmox copied " + srcId + " but the holder VM " + holderVmid + " does not list the copy on " + destStorage);
+        }
+        ProxmoxApiClient.ImageInfo copy = client.getImageInfo(node, newId);
+        VolumeObjectTO moved = new VolumeObjectTO();
+        moved.setPath(StringUtils.substringAfter(newId, ":"));
+        moved.setSize(copy == null ? src.getSize() : Long.valueOf(copy.getSize()));
+        moved.setFormat(Storage.ImageFormat.QCOW2);
+        LOGGER.info("Copied data volume {} to {}", srcId, newId);
+        return new CopyCmdAnswer(moved);
     }
 
     /**
