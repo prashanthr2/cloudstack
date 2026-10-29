@@ -203,8 +203,8 @@ public class ProxmoxApiClient implements Closeable {
                 String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
                 current = index;
                 if (status < 200 || status >= 300) {
-                    throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s", lastTarget, status,
-                            response.getStatusLine().getReasonPhrase()), status, null);
+                    throw new ProxmoxApiException(String.format("Proxmox API %s failed: HTTP %d %s%s", lastTarget, status,
+                            response.getStatusLine().getReasonPhrase(), errorDetail(body)), status, null);
                 }
                 return body;
             } catch (IOException e) {
@@ -213,6 +213,24 @@ public class ProxmoxApiClient implements Closeable {
         }
         throw new ProxmoxApiException(String.format("Unable to reach the Proxmox API for %s on any of %s: %s", lastTarget,
                 baseUrls, lastFailure == null ? "no address" : lastFailure.getMessage()), lastFailure);
+    }
+
+    /** What Proxmox says about the rejected parameters of an error answer ({"errors":{"delete":"..."}}), as " (delete: ...)", or nothing. */
+    static String errorDetail(String body) {
+        if (StringUtils.isBlank(body)) {
+            return "";
+        }
+        try {
+            JsonNode errors = MAPPER.readTree(body).path("errors");
+            if (!errors.isObject() || errors.size() == 0) {
+                return "";
+            }
+            List<String> parts = new ArrayList<>();
+            errors.fields().forEachRemaining(entry -> parts.add(entry.getKey() + ": " + entry.getValue().asText()));
+            return " (" + String.join("; ", parts) + ")";
+        } catch (IOException e) {
+            return "";
+        }
     }
 
     static JsonNode parseData(String body) {

@@ -691,4 +691,12 @@ public class ProxmoxApiClientVmTest {
                 ProxmoxApiClient.pathSafe("UPID:pve1:00010B1A:00246999:6ACCFCCB:qmmove:106-unused0>900000002-unused0:root@pam!cloudstack:"));
         assertEquals(UPID, ProxmoxApiClient.pathSafe(UPID));
     }
+
+    @Test
+    public void theRejectedParametersOfAnErrorAnswerAreInTheMessage() {
+        assertEquals(" (revert: unable to revert; delete: bad)", ProxmoxApiClient.errorDetail("{\"data\":null,\"errors\":{\"revert\":\"unable to revert\",\"delete\":\"bad\"}}"));
+        assertEquals("", ProxmoxApiClient.errorDetail("{\"data\":null}"));
+        assertEquals("", ProxmoxApiClient.errorDetail("not json"));
+        assertEquals("", ProxmoxApiClient.errorDetail(""));
+    }
 }
