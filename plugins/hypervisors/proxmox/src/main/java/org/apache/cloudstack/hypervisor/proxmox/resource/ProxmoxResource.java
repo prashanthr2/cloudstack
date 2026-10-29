@@ -77,6 +77,7 @@ import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UnPlugNicCommand;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
+import com.cloud.agent.api.storage.MigrateVolumeCommand;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.check.CheckSshAnswer;
 import com.cloud.agent.api.check.CheckSshCommand;
@@ -285,6 +286,8 @@ public class ProxmoxResource implements ServerResource {
                 return execute((GetStorageStatsCommand) cmd);
             } else if (cmd instanceof CopyCommand) {
                 return vmHandler.copy((CopyCommand) cmd);
+            } else if (cmd instanceof MigrateVolumeCommand) {
+                return vmHandler.migrateVolume((MigrateVolumeCommand) cmd);
             } else if (cmd instanceof DeleteCommand) {
                 return vmHandler.delete((DeleteCommand) cmd);
             } else if (cmd instanceof CreateObjectCommand) {

@@ -52,9 +52,12 @@ import com.cloud.agent.api.Answer;
 import com.cloud.agent.api.GetVolumeStatsAnswer;
 import com.cloud.agent.api.GetVolumeStatsCommand;
 import com.cloud.agent.api.StartCommand;
+import com.cloud.agent.api.storage.MigrateVolumeAnswer;
+import com.cloud.agent.api.storage.MigrateVolumeCommand;
 import com.cloud.agent.api.storage.ResizeVolumeAnswer;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.to.DiskTO;
+import com.cloud.agent.api.to.StorageFilerTO;
 import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.offering.DiskOffering.DiskCacheMode;
 import com.cloud.storage.Storage;
@@ -338,10 +341,9 @@ public class ProxmoxVmHandlerDataVolumeTest {
     }
 
     @Test
-    public void aDataVolumeThatWasDetachedSinceTheLastStartLosesItsDriveAndOtherDisksAreLeftAlone() {
+    public void aDataVolumeThatWasDetachedSinceTheLastStartLosesItsDrive() {
         StartCommand cmd = start(null, rootVolume());
-        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("scsi0", POOL + ":9204/vm-9204-disk-0.qcow2,size=8G", "scsi2", VOLUME_ID,
-                "scsi3", POOL + ":9204/vm-9204-disk-1.qcow2,size=1G"));
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("scsi0", POOL + ":9204/vm-9204-disk-0.qcow2,size=8G", "scsi2", VOLUME_ID));
 
         assertTrue(handler.start(cmd).getResult());
 
@@ -642,6 +644,95 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertFalse(answer.getResult());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
+    }
+
+    // ---- live move of an attached volume, and the way back to the holder (Phase 9) ----
+
+    private static final String OWNED_PATH = "9204/vm-9204-disk-2.qcow2";
+    private static final String OWNED_ID = POOL + ":" + OWNED_PATH;
+
+    private static MigrateVolumeCommand liveMove(String path, String poolUuid) {
+        StorageFilerTO pool = mock(StorageFilerTO.class);
+        when(pool.getUuid()).thenReturn(poolUuid);
+        MigrateVolumeCommand cmd = mock(MigrateVolumeCommand.class);
+        when(cmd.getAttachedVmName()).thenReturn(VM);
+        when(cmd.getVolumePath()).thenReturn(path);
+        when(cmd.getPool()).thenReturn(pool);
+        return cmd;
+    }
+
+    @Test
+    public void aLiveMoveMovesTheDriveAndAnswersWithThePathTheVmOwnsNow() {
+        Map<String, String> vmConfig = config("scsi0", POOL + ":9204/vm-9204-disk-0.qcow2,size=8G", "scsi1", VOLUME_ID + ",size=5G");
+        theVmIs("running", vmConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.put("scsi1", OTHER + ":9204/vm-9204-disk-1.qcow2,size=5G");
+            return "UPID:move";
+        }).when(client).moveDisk(NODE, 9204L, "scsi1", OTHER);
+
+        Answer answer = handler.migrateVolume(liveMove(PATH, OTHER_UUID));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("9204/vm-9204-disk-1.qcow2", ((MigrateVolumeAnswer) answer).getVolumePath());
+    }
+
+    @Test
+    public void aLiveMoveToTheStorageTheVolumeIsOnFailsWithoutMovingAnything() {
+        theVmIs("running", config("scsi1", VOLUME_ID + ",size=5G"));
+
+        Answer answer = handler.migrateVolume(liveMove(PATH, POOL_UUID));
+
+        assertFalse(answer.getResult());
+        verify(client, never()).moveDisk(anyString(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    public void detachingAVolumeTheInstanceOwnsHandsItToTheHolderAndTellsCloudStackThePath() {
+        Map<String, String> vmConfig = config("scsi1", OWNED_ID + ",size=5G");
+        theVmIs("running", vmConfig);
+        Map<String, String> holderConfig = new HashMap<>();
+        when(client.findVm(900000002L)).thenReturn(new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped"));
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(holderConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.remove("scsi1");
+            vmConfig.put("unused0", OWNED_ID);
+            return null;
+        }).when(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi1"));
+        org.mockito.Mockito.doAnswer(call -> {
+            holderConfig.put("unused0", POOL + ":900000002/vm-900000002-disk-1.qcow2");
+            return "UPID:reassign";
+        }).when(client).reassignDisk(NODE, 9204L, "unused0", 900000002L, "unused0");
+        VolumeObjectTO volume = volumeOn(POOL_UUID, OWNED_PATH);
+        when(volume.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+        DettachCommand cmd = mock(DettachCommand.class);
+        when(cmd.getVmName()).thenReturn(VM);
+        when(cmd.getDisk()).thenReturn(dataDisk(volume, 1));
+
+        Answer answer = handler.detach(cmd);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("900000002/vm-900000002-disk-1.qcow2", answer.getContextParam("volumePath"));
+    }
+
+    @Test
+    public void deletingAVolumeThatAStoppedInstanceStillListsRemovesItsEntriesAndTheDisk() {
+        Map<String, String> vmConfig = config("scsi1", OWNED_ID + ",size=5G");
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204L, VM, NODE, "stopped"));
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(vmConfig);
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.remove("scsi1");
+            vmConfig.put("unused0", OWNED_ID);
+            return null;
+        }).when(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi1"));
+        VolumeObjectTO volume = volumeOn(POOL_UUID, OWNED_PATH);
+        when(volume.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+        DeleteCommand cmd = mock(DeleteCommand.class);
+        when(cmd.getData()).thenReturn(volume);
+
+        Answer answer = handler.delete(cmd);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "unused0"));
     }
 }
 

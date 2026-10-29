@@ -189,6 +189,24 @@ final class ProxmoxHolderVms {
         return ProxmoxVolumeAliases.resolve(ProxmoxVolumeAliases.parse(descriptionOf(holder)), volumeId);
     }
 
+    /**
+     * What a path that CloudStack still has stands for now, when the pool is not known (a live move command names no source pool): the id of the
+     * first alias whose old id ends with the path, resolved, or null.
+     */
+    String resolveByPath(long accountId, String path) {
+        ProxmoxApiClient.VmLocation holder = client.findVm(ProxmoxVmConfig.holderVmId(accountId));
+        if (holder == null || path == null) {
+            return null;
+        }
+        Map<String, String> aliases = ProxmoxVolumeAliases.parse(descriptionOf(holder));
+        for (String oldId : aliases.keySet()) {
+            if (oldId.endsWith(":" + path)) {
+                return ProxmoxVolumeAliases.resolve(aliases, oldId);
+            }
+        }
+        return null;
+    }
+
     /** Fails before a rename if the holder's description cannot take one more alias, so that no volume is renamed without a way back. */
     void checkRoomForAlias(ProxmoxApiClient.VmLocation holder, String oldVolumeId, String expectedNewVolumeId) {
         String description = descriptionOf(holder);
@@ -250,5 +268,12 @@ final class ProxmoxHolderVms {
         client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("delete", entry));
         LOGGER.info("Deleted {} through {} of the holder VM {}", volumeId, entry, holder.getVmid());
         return true;
+    }
+
+    /** Removes the entry of a volume whose file is gone (a live move deleted it). Does nothing when the holder does not list it or the file is there. */
+    void dropDanglingEntry(ProxmoxApiClient.VmLocation holder, String volumeId) {
+        if (client.getImageInfo(holder.getNode(), volumeId) == null) {
+            deleteListed(holder, volumeId);
+        }
     }
 }

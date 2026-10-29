@@ -643,3 +643,7 @@ Lab result (2026-10-24 and 25, 8c, VPC): the VPC tests pass: two tiers and their
 ### Phase 9, step 2: offline copy of a detached data volume (2026-10-29): unit tests
 
 `ProxmoxVmHandlerDataVolumeTest` (+3: copy via the holder entry with `delete=0` and the new path in the answer, refusal when the destination is the current pool, refusal without an image and nothing changed). Plugin total 454 pass, 0 fail. Lab check M9 (design section 12) not run yet.
+
+### Phase 9, step 3: live move and hand-overs (2026-10-29): unit tests
+
+`ProxmoxVmHandlerDataVolumeTest` (+4: live move answers the new path, live move to the same storage refused, detach of an instance-owned volume hands it to the holder and sets `volumePath`, delete of a volume a stopped instance still lists). Plugin total 458 pass, 0 fail. A bug found while writing: the start hook took the old root drive of a moved root disk for a stale data disk; the root volume is now told by path. Not run in the lab yet.

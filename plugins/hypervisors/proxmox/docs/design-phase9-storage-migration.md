@@ -147,3 +147,15 @@ When the plugin hands a volume to the holder VM at a moment when core cannot be 
 The source stays listed as a further `unusedK`, so a failed copy loses nothing; core's `DeleteCommand` for the old volume then removes it through `deleteListed`. Not covered here (decision still open, 4.1): the root volume of a stopped instance. Lab check to run: M9 below.
 
 **M9 (lab):** with a detached data volume on pool A and pool B added, run "migrate volume" to B (API `migrateVolume`, no live flag); expect the volume path `<holder>/vm-<holder>-disk-<n>.qcow2` on B, the holder VM listing the new volume, and no file left on A.
+
+## 13. Step 3 as built: live move and the hand-overs
+
+- **`MigrateVolumeCommand`** (`ProxmoxVmHandler.migrateVolume`): the drive that holds the path is found in the configuration of the instance named in the command (a path core still has for a volume handed over with an alias is found through the alias map: `resolveByPath`, since this command names no source pool), `move_disk` with `delete=1` runs (timeout `migrate.wait`), the answer carries the new path `<vmid>/vm-<vmid>-disk-<n>.qcow2`. The holder's entry for the old volume (a copy of step 2 leaves one) and its aliases are removed afterwards (best effort).
+- **Hand-over hooks** (`giveBackToHolder`: drive removed so the instance lists `unusedN`, the holder moved to the instance's node, `unusedN` reassigned to the holder):
+  - *detach of a running instance's volume the instance owns:* the answer's context `volumePath` carries the holder path, so core learns it (no alias);
+  - *start:* a drive that holds a disk the instance owns, that is not the root volume (told by path) and that the command does not list, was detached while stopped: handed back with an alias;
+  - *destroy of the instance (root `DeleteCommand`):* every such drive goes back before the VM is destroyed with its disks;
+  - *attach:* a volume that another instance still lists goes back first, with an alias;
+  - *delete of a data volume:* an instance that still lists it loses the drive and the entry, which removes the disk (refused while the drive is in a running VM).
+- **Behaviour change to settle:** at start, any disk of an instance that is not its root volume and not in the command, and that the instance owns, is treated as a data volume and handed to the holder (it cannot be told from a disk someone added by hand in Proxmox). Before this step such a disk was left alone.
+- **Lab checks to run before M-checks of step 3** (they decide whether a holder with `protection=1` works): see test-log "Phase 9, step 3".

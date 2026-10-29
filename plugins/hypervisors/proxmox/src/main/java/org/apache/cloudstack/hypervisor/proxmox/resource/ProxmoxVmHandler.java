@@ -75,6 +75,8 @@ import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StopAnswer;
 import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.VolumeStatsEntry;
+import com.cloud.agent.api.storage.MigrateVolumeAnswer;
+import com.cloud.agent.api.storage.MigrateVolumeCommand;
 import com.cloud.agent.api.storage.ResizeVolumeAnswer;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.to.DataTO;
@@ -256,7 +258,7 @@ class ProxmoxVmHandler {
         String newId = holders.withLock(holderVmid, () -> {
             ProxmoxApiClient.VmLocation holder = holders.ensureHolder(src.getAccountId(), node);
             String entry = holders.adopt(holder, srcId);
-            waitFor(client, client.moveDisk(node, holderVmid, entry, destStorage, false));
+            client.waitForTask(client.moveDisk(node, holderVmid, entry, destStorage, false), migrationTimeoutSeconds.getAsInt());
             return ProxmoxHolderVms.volumeIdOf(client.getVmConfig(node, holderVmid).get(entry));
         });
         if (newId == null || !newId.startsWith(destStorage + ":")) {
@@ -533,10 +535,11 @@ class ProxmoxVmHandler {
                 }
             }
             Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive, control);
+            Map<String, String> dataDrives = dataDrives(client, vm, rootDrive);
+            giveBackStaleDataDisks(client, location, vm, rootDrive, dataDrives);
             Map<String, String> current = client.getVmConfig(node, vmid);
             moveRootDisk(options, current, rootVolumePath(vm), rootDrive, vm.getName());
             applyRootDriveOptions(options, current, vm, rootDrive);
-            Map<String, String> dataDrives = dataDrives(client, vm, rootDrive);
             options.putAll(dataDrives);
             // a data volume that the VM has from an earlier start but that the command does not list was detached: it must not stay
             for (Map.Entry<String, String> existing : current.entrySet()) {
@@ -1008,6 +1011,15 @@ class ProxmoxVmHandler {
             }
             String drive = ProxmoxVmConfig.dataDrive(disk.getDiskSeq(), cmd.getControllerInfo());
             String wanted = resolveVolumeId(client, volume);
+            // a volume that another instance still has (a live move made it that instance's disk, and detaching it from a stopped instance sends
+            // no command) goes back to the holder first, or destroying that instance would destroy the volume
+            Long owner = ownerVm(wanted);
+            if (owner != null && owner != location.getVmid() && isHolderAccount(volume.getAccountId())) {
+                ProxmoxApiClient.VmLocation ownerLocation = client.findVm(owner);
+                if (ownerLocation != null) {
+                    wanted = giveBackToHolder(client, ownerLocation, wanted, volume.getAccountId(), true);
+                }
+            }
             String existing = client.getVmConfig(location.getNode(), location.getVmid()).get(drive);
             if (existing != null) {
                 if (existing.contains(":" + StringUtils.substringAfter(wanted, ":"))) {
@@ -1039,8 +1051,8 @@ class ProxmoxVmHandler {
             if (location == null) {
                 return new DettachAnswer(disk);
             }
-            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()),
-                    StringUtils.substringAfter(resolveVolumeId(client, volume), ":"));
+            String resolved = resolveVolumeId(client, volume);
+            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()), StringUtils.substringAfter(resolved, ":"));
             if (drive == null) {
                 return new DettachAnswer(disk);
             }
@@ -1051,10 +1063,175 @@ class ProxmoxVmHandler {
                         drive, cmd.getVmName(), ProxmoxVmConfig.controllerOf(drive)));
             }
             LOGGER.info("Detached {} from {} ({})", volume.getPath(), cmd.getVmName(), drive);
-            return new DettachAnswer(disk);
+            DettachAnswer answer = new DettachAnswer(disk);
+            Long owner = ownerVm(resolved);
+            if (owner != null && owner == location.getVmid() && isHolderAccount(volume.getAccountId())) {
+                // the instance owns the disk (a live move made it so): it goes back to the holder, and the answer tells CloudStack the new path
+                String back = giveBackToHolder(client, location, resolved, volume.getAccountId(), false);
+                answer.setContextParam("volumePath", StringUtils.substringAfter(back, ":"));
+            }
+            return answer;
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not detach {} from {}: {}", node, volume.getPath(), cmd.getVmName(), e.getMessage());
             return new DettachAnswer(e.getMessage());
+        }
+    }
+
+    // ---- Phase 9: disks that an instance owns after a live move, and their way back to the holder ----
+
+    /** The VM that owns the disk of a volume id, or null when a holder VM (a data volume as Phase 7 made it) or nobody does. */
+    private static Long ownerVm(String volumeId) {
+        Long vmid = ProxmoxVmConfig.vmIdOfVolumePath(volumeId);
+        return vmid == null || ProxmoxVmConfig.isReservedVmId(vmid) ? null : vmid;
+    }
+
+    /**
+     * Gives a disk that the instance owns to the account's holder VM: the drive that holds it (if it is still on one) is removed, which makes it an
+     * "unusedN" entry of the instance (lab M5), and Proxmox hands that entry to the holder (lab M6). The holder is moved to the node of the instance first.
+     * With {@code withAlias} the old id is recorded, because CloudStack is not told the new path. Returns the new volume id.
+     */
+    private String giveBackToHolder(ProxmoxApiClient client, ProxmoxApiClient.VmLocation owner, String volumeId, long accountId, boolean withAlias) {
+        ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
+        return holders.withLock(ProxmoxVmConfig.holderVmId(accountId), () -> {
+            ProxmoxApiClient.VmLocation holder = holders.ensureHolder(accountId, owner.getNode());
+            Map<String, String> config = client.getVmConfig(owner.getNode(), owner.getVmid());
+            String entry = ProxmoxHolderVms.entryOf(config, volumeId);
+            if (entry == null) {
+                String drive = ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(volumeId, ":"));
+                if (drive == null) {
+                    throw new ProxmoxApiException("Proxmox VM " + owner.getVmid() + " does not list the disk " + volumeId);
+                }
+                client.updateVmConfig(owner.getNode(), owner.getVmid(), Collections.singletonMap("delete", drive));
+                entry = ProxmoxHolderVms.entryOf(client.getVmConfig(owner.getNode(), owner.getVmid()), volumeId);
+                if (entry == null) {
+                    throw new ProxmoxApiException("Proxmox removed " + drive + " of VM " + owner.getVmid() + " but did not keep " + volumeId + " as an unused disk");
+                }
+            }
+            return withAlias ? holders.handBackWithAlias(holder, owner.getNode(), owner.getVmid(), entry, volumeId)
+                    : holders.handBack(owner.getNode(), owner.getVmid(), entry, holder.getVmid());
+        });
+    }
+
+    /**
+     * At start: a data disk that the instance owns and that the command does not list was detached while the instance was stopped (CloudStack sends
+     * no command then): it goes back to the holder, with an alias, as it would otherwise stay in the instance and go with it.
+     */
+    private void giveBackStaleDataDisks(ProxmoxApiClient client, ProxmoxApiClient.VmLocation location, VirtualMachineTO vm, String rootDrive,
+            Map<String, String> dataDrives) {
+        Long account = accountOfInstance(vm.getName());
+        if (!isHolderAccount(account)) {
+            return;
+        }
+        String rootPath = rootVolumePath(vm);
+        for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(node, location.getVmid())).entrySet()) {
+            String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
+            // the root disk may still be on the drive it was moved from (moveRootDisk), so it is told by its path, not its drive
+            if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && !existing.getKey().equals(rootDrive) && volumeId != null
+                    && !volumeId.endsWith(":" + rootPath)
+                    && Long.valueOf(location.getVmid()).equals(ownerVm(volumeId)) && dataDrives.values().stream().noneMatch(value -> value.startsWith(volumeId))) {
+                giveBackToHolder(client, location, volumeId, account, true);
+            }
+        }
+    }
+
+    /** Before an instance is destroyed: every disk on a drive that is not its root volume is a data volume that came to it by a live move. */
+    private void giveBackDataDisks(ProxmoxApiClient client, ProxmoxApiClient.VmLocation location, VolumeObjectTO root) {
+        if (!isHolderAccount(root.getAccountId())) {
+            return;
+        }
+        for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(location.getNode(), location.getVmid())).entrySet()) {
+            String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
+            if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && volumeId != null && Long.valueOf(location.getVmid()).equals(ownerVm(volumeId))
+                    && !volumeId.endsWith(":" + root.getPath())) {
+                giveBackToHolder(client, location, volumeId, root.getAccountId(), true);
+            }
+        }
+    }
+
+    /**
+     * Before a data volume is deleted: an instance that still lists its disk (the volume was detached from a stopped instance, which sends no command)
+     * must not keep an entry for it. Removing the entry removes the disk; a volume that no instance owns is not touched.
+     */
+    private void removeFromOwner(ProxmoxApiClient client, String volumeId) {
+        Long owner = ownerVm(volumeId);
+        ProxmoxApiClient.VmLocation location = owner == null ? null : client.findVm(owner);
+        if (location == null) {
+            return;
+        }
+        Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
+        String drive = ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(volumeId, ":"));
+        if (drive != null) {
+            if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) != null) {
+                throw new ProxmoxApiException("The volume " + volumeId + " is still on " + drive + " of the running VM " + owner);
+            }
+            client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", drive));
+            config = client.getVmConfig(location.getNode(), location.getVmid());
+        }
+        String entry = ProxmoxHolderVms.entryOf(config, volumeId);
+        if (entry != null) {
+            client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("delete", entry));
+            LOGGER.info("Removed {} of VM {} with the volume {}", entry, owner, volumeId);
+        }
+    }
+
+    /** The old disk is gone after a move: the holder VM's entry for it (adopted by a copy, step 2) and its aliases go too. Best effort. */
+    private void forgetOldVolume(ProxmoxApiClient client, long accountId, String oldVolumeId) {
+        try {
+            ProxmoxApiClient.VmLocation holder = client.findVm(ProxmoxVmConfig.holderVmId(accountId));
+            if (holder != null) {
+                ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
+                holders.dropDanglingEntry(holder, oldVolumeId);
+                holders.forgetAliases(holder, oldVolumeId);
+            }
+        } catch (ProxmoxApiException e) {
+            LOGGER.warn("The holder VM of account {} may still list {}: {}", accountId, oldVolumeId, e.getMessage());
+        }
+    }
+
+    /**
+     * The live move of an attached volume (CloudStack's "migrate volume" of a volume whose instance runs): Proxmox copies the disk while the VM runs and
+     * switches the drive (move_disk, lab M1). The answer carries the new path, which is "&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-&lt;n&gt;.qcow2" because the VM owns the copy;
+     * a data volume goes back to the holder when it is detached ({@link #detachDataVolume}).
+     */
+    Answer migrateVolume(MigrateVolumeCommand cmd) {
+        try {
+            ProxmoxApiClient client = clients.get();
+            if (StringUtils.isBlank(cmd.getAttachedVmName()) || cmd.getPool() == null) {
+                return new MigrateVolumeAnswer(cmd, false, "Proxmox moves a volume with MigrateVolumeCommand only while an instance uses it; a detached volume is copied", null);
+            }
+            ProxmoxApiClient.VmLocation location = client.findVmByName(cmd.getAttachedVmName());
+            if (location == null) {
+                return new MigrateVolumeAnswer(cmd, false, "Proxmox has no VM " + cmd.getAttachedVmName(), null);
+            }
+            Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
+            Long account = accountOfInstance(cmd.getAttachedVmName());
+            String drive = ProxmoxVmConfig.driveHolding(config, cmd.getVolumePath());
+            if (drive == null && isHolderAccount(account)) {
+                // a volume that was handed to the holder with an alias keeps the path CloudStack has
+                String resolved = new ProxmoxHolderVms(client, taskTimeoutSeconds).resolveByPath(account, cmd.getVolumePath());
+                drive = resolved == null ? null : ProxmoxVmConfig.driveHolding(config, StringUtils.substringAfter(resolved, ":"));
+            }
+            if (drive == null) {
+                return new MigrateVolumeAnswer(cmd, false, "The volume " + cmd.getVolumePath() + " is not on a drive of " + cmd.getAttachedVmName(), null);
+            }
+            String destStorage = ProxmoxStorageNames.storageId(cmd.getPool().getUuid());
+            String current = ProxmoxHolderVms.volumeIdOf(config.get(drive));
+            if (current.startsWith(destStorage + ":")) {
+                return new MigrateVolumeAnswer(cmd, false, "The volume " + cmd.getVolumePath() + " is on " + destStorage + " already", null);
+            }
+            client.waitForTask(client.moveDisk(location.getNode(), location.getVmid(), drive, destStorage), migrationTimeoutSeconds.getAsInt());
+            String moved = ProxmoxHolderVms.volumeIdOf(client.getVmConfig(location.getNode(), location.getVmid()).get(drive));
+            if (moved == null || !moved.startsWith(destStorage + ":")) {
+                return new MigrateVolumeAnswer(cmd, false, "Proxmox moved " + current + " but " + drive + " of " + cmd.getAttachedVmName() + " is not on " + destStorage, null);
+            }
+            LOGGER.info("Moved {} of {} from {} to {}", drive, cmd.getAttachedVmName(), current, moved);
+            if (isHolderAccount(account)) {
+                forgetOldVolume(client, account, current);
+            }
+            return new MigrateVolumeAnswer(cmd, true, "Moved " + current + " to " + moved, StringUtils.substringAfter(moved, ":"));
+        } catch (ProxmoxApiException e) {
+            LOGGER.error("Proxmox node {} could not move volume {}: {}", node, cmd.getVolumePath(), e.getMessage());
+            return new MigrateVolumeAnswer(cmd, false, e.getMessage(), null);
         }
     }
 
@@ -1268,6 +1445,7 @@ class ProxmoxVmHandler {
             waitFor(client, client.stopVm(location.getNode(), vmid));
             waitForVm(client, vmid, location.getNode(), "stop", taskTimeoutSeconds.getAsInt(), ProxmoxVmHandler::isStopped);
         }
+        giveBackDataDisks(client, location, volume);
         waitFor(client, client.destroyVm(location.getNode(), vmid));
         LOGGER.info("Destroyed Proxmox VM {} with its disk", vmid);
         return new Answer(cmd, true, "Destroyed Proxmox VM " + vmid);
@@ -1285,6 +1463,10 @@ class ProxmoxVmHandler {
         // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one;
         // a volume that was renamed without core hearing of it is found through the alias map
         ProxmoxApiClient.VmLocation holder = isHolderAccount(volume.getAccountId()) ? client.findVm(ProxmoxVmConfig.holderVmId(volume.getAccountId())) : null;
+        if (holder != null && client.getImageInfo(node, requested) == null) {
+            volumeId = holders.resolve(holder, requested);
+        }
+        removeFromOwner(client, volumeId);
         if (holder != null) {
             if (client.getImageInfo(node, requested) == null) {
                 volumeId = holders.resolve(holder, requested);
