@@ -1074,6 +1074,7 @@ class ProxmoxVmHandler {
                 String back = giveBackToHolder(client, location, resolved, volume.getAccountId(), true);
                 answer.setContextParam("volumePath", StringUtils.substringAfter(back, ":"));
                 forgetOldVolumeAlias(client, volume.getAccountId(), resolved);
+                forgetOldVolumeAlias(client, volume.getAccountId(), volumeId(volume));
             }
             return answer;
         } catch (ProxmoxApiException e) {
@@ -1242,6 +1243,21 @@ class ProxmoxVmHandler {
             if (current.startsWith(destStorage + ":")) {
                 return new MigrateVolumeAnswer(cmd, false, "The volume " + cmd.getVolumePath() + " is on " + destStorage + " already", null);
             }
+            // A data volume whose path names the account's holder keeps that path: after the move Proxmox names the disk after the instance, and a path
+            // that names an instance is wrong as soon as the instance is gone (its id can be given to another VM). The alias map says where the disk is
+            // now, under the new pool, and goes on saying it when the disk is handed back to the holder.
+            boolean keepPath = cmd.getVolumeType() == Volume.Type.DATADISK && isHolderAccount(account) && ownerVm(cmd.getVolumePath()) == null
+                    && ProxmoxVmConfig.vmIdOfVolumePath(cmd.getVolumePath()) != null;
+            ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
+            ProxmoxApiClient.VmLocation holder = null;
+            String stableId = destStorage + ":" + cmd.getVolumePath();
+            if (keepPath) {
+                holder = client.findVm(ProxmoxVmConfig.holderVmId(account));
+                if (holder == null) {
+                    holder = holders.ensureHolder(account, location.getNode());
+                }
+                holders.checkRoomForAlias(holder, stableId, destStorage + ":" + location.getVmid() + "/vm-" + location.getVmid() + "-disk-999.qcow2");
+            }
             client.waitForTask(client.moveDisk(location.getNode(), location.getVmid(), drive, destStorage), migrationTimeoutSeconds.getAsInt());
             String moved = ProxmoxHolderVms.volumeIdOf(client.getVmConfig(location.getNode(), location.getVmid()).get(drive));
             if (moved == null || !moved.startsWith(destStorage + ":")) {
@@ -1250,6 +1266,10 @@ class ProxmoxVmHandler {
             LOGGER.info("Moved {} of {} from {} to {}", drive, cmd.getAttachedVmName(), current, moved);
             if (isHolderAccount(account)) {
                 forgetOldVolume(client, account, current);
+            }
+            if (keepPath) {
+                holders.recordAlias(holder, stableId, moved);
+                return new MigrateVolumeAnswer(cmd, true, "Moved " + current + " to " + moved + ", the volume keeps its path " + cmd.getVolumePath(), cmd.getVolumePath());
             }
             return new MigrateVolumeAnswer(cmd, true, "Moved " + current + " to " + moved, StringUtils.substringAfter(moved, ":"));
         } catch (ProxmoxApiException e) {

@@ -673,3 +673,7 @@ Detach of a live-moved data volume: `IllegalArgumentException: Illegal character
 ### Phase 9, vmid reuse (2026-10-29): unit test
 
 Seen in lab T7 preparation: the path of a volume handed to the holder still names the destroyed instance's vmid. The alias map is now read before the image (design section 17); `anAliasWinsOverAnImageThatNowHasTheOldPathBecauseAnotherVmGotTheOldVmId`. Plugin total 467 pass. Not lab tested.
+
+### Phase 9, stable path of a live-moved data volume (2026-10-29): unit test
+
+`aLiveMoveOfADataVolumeKeepsItsHolderPathAndRecordsWhereTheDiskIs` (the answer is the holder path, the holder's description gets the alias). Plugin total 468 pass. To run in the lab: live move a data volume, check `listVolumes` path stays `9000000xx/...`, then T4, T5, T6 and the attach to another instance again.

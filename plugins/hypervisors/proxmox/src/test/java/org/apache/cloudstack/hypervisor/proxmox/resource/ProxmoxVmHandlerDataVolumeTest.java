@@ -809,5 +809,29 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("scsi1", holderPath));
         verify(client, never()).findVm(9204L);
     }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void aLiveMoveOfADataVolumeKeepsItsHolderPathAndRecordsWhereTheDiskIs() {
+        Map<String, String> vmConfig = config("scsi0", POOL + ":9204/vm-9204-disk-0.qcow2,size=8G", "scsi1", VOLUME_ID + ",size=5G");
+        theVmIs("running", vmConfig);
+        when(client.findVm(900000002L)).thenReturn(new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped"));
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(new HashMap<>());
+        org.mockito.Mockito.doAnswer(call -> {
+            vmConfig.put("scsi1", OTHER + ":9204/vm-9204-disk-1.qcow2,size=5G");
+            return "UPID:move";
+        }).when(client).moveDisk(NODE, 9204L, "scsi1", OTHER);
+        MigrateVolumeCommand cmd = liveMove(PATH, OTHER_UUID);
+        when(cmd.getVolumeType()).thenReturn(Volume.Type.DATADISK);
+
+        Answer answer = handler.migrateVolume(cmd);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals(PATH, ((MigrateVolumeAnswer) answer).getVolumePath());
+        ArgumentCaptor<Map<String, String>> written = ArgumentCaptor.forClass(Map.class);
+        verify(client, org.mockito.Mockito.atLeastOnce()).updateVmConfig(eq(NODE), eq(900000002L), written.capture());
+        assertTrue(written.getAllValues().stream().anyMatch(map -> map.containsKey("description")
+                && map.get("description").contains(OTHER + "|" + PATH + "|9204/vm-9204-disk-1.qcow2")));
+    }
 }
 
