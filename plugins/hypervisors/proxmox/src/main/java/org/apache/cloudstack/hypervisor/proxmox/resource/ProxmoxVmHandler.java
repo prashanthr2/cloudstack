@@ -32,6 +32,8 @@ import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
@@ -491,7 +493,7 @@ class ProxmoxVmHandler {
             Map<String, String> current = client.getVmConfig(node, vmid);
             moveRootDisk(options, current, rootVolumePath(vm), rootDrive, vm.getName());
             applyRootDriveOptions(options, current, vm, rootDrive);
-            Map<String, String> dataDrives = dataDrives(vm, rootDrive);
+            Map<String, String> dataDrives = dataDrives(client, vm, rootDrive);
             options.putAll(dataDrives);
             // a data volume that the VM has from an earlier start but that the command does not list was detached: it must not stay
             for (Map.Entry<String, String> existing : current.entrySet()) {
@@ -597,7 +599,7 @@ class ProxmoxVmHandler {
     }
 
     /** The drive and value for every data volume of a start command; fails on a slot that is used twice or that the controller does not have. */
-    private Map<String, String> dataDrives(VirtualMachineTO vm, String rootDrive) {
+    private Map<String, String> dataDrives(ProxmoxApiClient client, VirtualMachineTO vm, String rootDrive) {
         Map<String, String> drives = new LinkedHashMap<>();
         if (vm.getDisks() == null) {
             return drives;
@@ -611,7 +613,7 @@ class ProxmoxVmHandler {
             if (drive.equals(rootDrive) || drives.containsKey(drive)) {
                 throw new ProxmoxApiException("The drive " + drive + " of " + vm.getName() + " is used by two disks");
             }
-            drives.put(drive, volumeId(volume) + ProxmoxVmConfig.driveOptions(volume));
+            drives.put(drive, resolveVolumeId(client, volume) + ProxmoxVmConfig.driveOptions(volume));
         }
         return drives;
     }
@@ -622,6 +624,34 @@ class ProxmoxVmHandler {
             throw new ProxmoxApiException("The volume " + volume.getUuid() + " has no path on a primary storage");
         }
         return ProxmoxStorageNames.storageId(((PrimaryDataStoreTO) volume.getDataStore()).getUuid()) + ":" + volume.getPath();
+    }
+
+    private static final Pattern INSTANCE_NAME = Pattern.compile("^i-(\\d+)-\\d+-.*");
+
+    /** The account of an instance from its name "i-&lt;account&gt;-&lt;id&gt;-VM" (a resize command carries no account), or null. */
+    private static Long accountOfInstance(String instanceName) {
+        Matcher matcher = INSTANCE_NAME.matcher(StringUtils.defaultString(instanceName));
+        return matcher.matches() ? Long.valueOf(matcher.group(1)) : null;
+    }
+
+    private static boolean isHolderAccount(Long accountId) {
+        return accountId != null && accountId >= 1 && accountId <= ProxmoxVmConfig.MAX_ACCOUNT_ID;
+    }
+
+    /**
+     * The volume id that the path of a data volume stands for now. Core keeps the path it was given, and a volume that the plugin handed to the
+     * holder VM when no answer could carry the new path has another one (the alias map, design-phase9-storage-migration.md section 10). The image
+     * is looked for first, which is all a volume needs that was never renamed.
+     */
+    private String resolveVolumeId(ProxmoxApiClient client, String volumeId, Long accountId) {
+        if (!isHolderAccount(accountId) || client.getImageInfo(node, volumeId) != null) {
+            return volumeId;
+        }
+        return new ProxmoxHolderVms(client, taskTimeoutSeconds).resolve(accountId, volumeId);
+    }
+
+    private String resolveVolumeId(ProxmoxApiClient client, VolumeObjectTO volume) {
+        return resolveVolumeId(client, volumeId(volume), volume.getAccountId());
     }
 
     private static VolumeObjectTO rootVolume(VirtualMachineTO vm) {
@@ -934,14 +964,15 @@ class ProxmoxVmHandler {
                 return new AttachAnswer("Proxmox has no VM " + cmd.getVmName());
             }
             String drive = ProxmoxVmConfig.dataDrive(disk.getDiskSeq(), cmd.getControllerInfo());
+            String wanted = resolveVolumeId(client, volume);
             String existing = client.getVmConfig(location.getNode(), location.getVmid()).get(drive);
             if (existing != null) {
-                if (existing.contains(":" + volume.getPath())) {
+                if (existing.contains(":" + StringUtils.substringAfter(wanted, ":"))) {
                     return new AttachAnswer(disk);
                 }
                 return new AttachAnswer("The drive " + drive + " of " + cmd.getVmName() + " already holds another disk");
             }
-            String value = volumeId(volume) + ProxmoxVmConfig.driveOptions(volume);
+            String value = wanted + ProxmoxVmConfig.driveOptions(volume);
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, value));
             if (location.isRunning() && client.getRunningVmConfig(location.getNode(), location.getVmid()).get(drive) == null) {
                 client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap("revert", drive));
@@ -965,7 +996,8 @@ class ProxmoxVmHandler {
             if (location == null) {
                 return new DettachAnswer(disk);
             }
-            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()), volume.getPath());
+            String drive = ProxmoxVmConfig.driveHolding(client.getVmConfig(location.getNode(), location.getVmid()),
+                    StringUtils.substringAfter(resolveVolumeId(client, volume), ":"));
             if (drive == null) {
                 return new DettachAnswer(disk);
             }
@@ -995,7 +1027,9 @@ class ProxmoxVmHandler {
                 return new ResizeVolumeAnswer(cmd, false, "Proxmox can only resize a disk that is attached to an instance: attach the volume first, then resize it");
             }
             Map<String, String> config = client.getVmConfig(location.getNode(), location.getVmid());
-            String drive = ProxmoxVmConfig.driveHolding(config, cmd.getPath());
+            String resolved = cmd.getPool() == null ? cmd.getPath() : StringUtils.substringAfter(
+                    resolveVolumeId(client, ProxmoxStorageNames.storageId(cmd.getPool().getUuid()) + ":" + cmd.getPath(), accountOfInstance(cmd.getInstanceName())), ":");
+            String drive = ProxmoxVmConfig.driveHolding(config, resolved);
             if (drive == null) {
                 return new ResizeVolumeAnswer(cmd, false, "The volume " + cmd.getPath() + " is not on a drive of " + cmd.getInstanceName());
             }
@@ -1201,22 +1235,38 @@ class ProxmoxVmHandler {
      * refers to, so nothing here relies on it. An image that is gone already is a success.
      */
     private Answer deleteDataVolume(DeleteCommand cmd, VolumeObjectTO volume) {
-        String volumeId = volumeId(volume);
+        String requested = volumeId(volume);
+        String volumeId = requested;
         ProxmoxApiClient client = clients.get();
-        // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one
-        Long accountId = volume.getAccountId();
-        if (accountId != null && accountId >= 1 && accountId <= ProxmoxVmConfig.MAX_ACCOUNT_ID) {
-            ProxmoxApiClient.VmLocation holder = client.findVm(ProxmoxVmConfig.holderVmId(accountId));
+        ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
+        // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one;
+        // a volume that was renamed without core hearing of it is found through the alias map
+        ProxmoxApiClient.VmLocation holder = isHolderAccount(volume.getAccountId()) ? client.findVm(ProxmoxVmConfig.holderVmId(volume.getAccountId())) : null;
+        if (holder != null) {
+            if (client.getImageInfo(node, requested) == null) {
+                volumeId = holders.resolve(holder, requested);
+            }
+            holders.deleteListed(holder, volumeId);
+        }
+        try {
+            if (client.getImageInfo(node, volumeId) == null) {
+                return new Answer(cmd, true, "Proxmox has no disk image " + volumeId + ", nothing to delete");
+            }
+            waitFor(client, client.deleteImage(node, volumeId));
+            LOGGER.info("Deleted Proxmox data volume {}", volumeId);
+            return new Answer(cmd, true, "Deleted " + volumeId);
+        } finally {
             if (holder != null) {
-                new ProxmoxHolderVms(client, taskTimeoutSeconds).deleteListed(holder, volumeId);
+                try {
+                    holders.forgetAliases(holder, volumeId);
+                    if (!requested.equals(volumeId)) {
+                        holders.forgetAliases(holder, requested);
+                    }
+                } catch (ProxmoxApiException e) {
+                    LOGGER.warn("The aliases of {} stay on the holder VM {}: {}", volumeId, holder.getVmid(), e.getMessage());
+                }
             }
         }
-        if (client.getImageInfo(node, volumeId) == null) {
-            return new Answer(cmd, true, "Proxmox has no disk image " + volumeId + ", nothing to delete");
-        }
-        waitFor(client, client.deleteImage(node, volumeId));
-        LOGGER.info("Deleted Proxmox data volume {}", volumeId);
-        return new Answer(cmd, true, "Deleted " + volumeId);
     }
 
     /**

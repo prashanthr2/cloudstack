@@ -502,6 +502,8 @@ Not done: site-to-site VPN and remote access VPN were not run on the lab; redund
 - A data volume is deleted (`DeleteCommand`) as before, with one addition: when the account's holder VM (`900000000 + account id`, an empty VM that exists only from Phase 9 on) lists the volume as an `unusedN` entry, that entry is removed first (which removes the file and leaves no dangling entry), and the image is deleted afterwards if it is still there. The holder VM is only looked up, never created, by a delete.
 - The holder VM is created on first use (not by any command yet) with `protection=1`, the name `cs-holder-<account id>` and the tag `cloudstack-data`; it is never started. An administrator must not delete it or edit its disks (the protection stops an accidental destroy).
 
+- **Renamed volumes (alias map, built, nothing renames yet).** Every command that takes the path of a data volume (attach, start, detach, resize, delete) first looks for the image of that path; if it is not there it reads the alias map in the description of the account's holder VM (design-phase9-storage-migration.md section 11) and uses the volume's current id. A volume that was never renamed costs one extra read per command (the image lookup that was only made by delete before). Delete also removes the aliases of the volume. `GetVolumeStatsCommand` does not resolve aliases.
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

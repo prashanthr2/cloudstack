@@ -515,4 +515,65 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client, never()).deleteImage(anyString(), anyString());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
     }
+
+    // ---- renamed volumes: the alias map of the holder VM (Phase 9) ----
+
+    private static final String RENAMED = POOL + ":900000002/vm-900000002-disk-3.qcow2";
+
+    /** The volume's stored path no longer exists: the plugin handed it to the holder VM, which renamed it (alias recorded on the holder). */
+    private void theVolumeWasRenamed() {
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(null);
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped");
+        when(client.findVm(900000002L)).thenReturn(holder);
+        Map<String, String> holderConfig = new HashMap<>();
+        holderConfig.put("description", ProxmoxVolumeAliases.render("text", ProxmoxVolumeAliases.record(new HashMap<>(), VOLUME_ID, RENAMED)));
+        holderConfig.put("unused0", RENAMED);
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(holderConfig);
+    }
+
+    @Test
+    public void attachingARenamedVolumeUsesItsCurrentVolumeId() {
+        theVolumeWasRenamed();
+        theVmIs("stopped", config("scsi0", "x"));
+
+        assertTrue(handler.attach(new AttachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM, Collections.emptyMap())).getResult());
+
+        verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("scsi1", RENAMED));
+    }
+
+    @Test
+    public void detachingARenamedVolumeFindsItsDrive() {
+        theVolumeWasRenamed();
+        theVmIs("stopped", config("scsi0", "x", "scsi1", RENAMED + ",size=1G"));
+
+        assertTrue(handler.detach(new DettachCommand(dataDisk(volume(Volume.Type.DATADISK, GIB), 1), VM)).getResult());
+
+        verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "scsi1"));
+    }
+
+    @Test
+    public void deletingARenamedVolumeDeletesTheCurrentOneAndForgetsTheAlias() {
+        theVolumeWasRenamed();
+        when(client.getImageInfo(NODE, RENAMED)).thenReturn(new ProxmoxApiClient.ImageInfo(GIB, 1, "qcow2", "/x"), (ProxmoxApiClient.ImageInfo) null);
+        when(client.deleteImage(NODE, RENAMED)).thenReturn("UPID:pve1:1:2:3:imgdel:900000002:u:");
+
+        assertTrue(handler.delete(delete(volume(Volume.Type.DATADISK, GIB))).getResult());
+
+        verify(client).updateVmConfig(NODE, 900000002L, Collections.singletonMap("delete", "unused0"));
+    }
+
+    @Test
+    public void resizingARenamedVolumeFindsItsDriveThroughTheAlias() {
+        theVolumeWasRenamed();
+        theVmIs("running", config("scsi1", RENAMED + ",size=1G"));
+        when(client.resizeDisk(NODE, 9204L, "scsi1", "5G")).thenReturn("UPID:pve1:1:2:3:resize:9204:u:");
+        com.cloud.agent.api.to.StorageFilerTO pool = mock(com.cloud.agent.api.to.StorageFilerTO.class);
+        when(pool.getUuid()).thenReturn(POOL_UUID);
+
+        Answer answer = handler.resize(new ResizeVolumeCommand(PATH, pool, GIB, 5 * GIB, false, VM));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).resizeDisk(NODE, 9204L, "scsi1", "5G");
+    }
 }
+

@@ -163,6 +163,80 @@ final class ProxmoxHolderVms {
         return volumeId;
     }
 
+    // ---- aliases of renamed volumes (design-phase9-storage-migration.md, section 10) ----
+
+    private String descriptionOf(ProxmoxApiClient.VmLocation holder) {
+        return client.getVmConfig(holder.getNode(), holder.getVmid()).get("description");
+    }
+
+    private void writeAliases(ProxmoxApiClient.VmLocation holder, String description, Map<String, String> aliases) {
+        client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("description", ProxmoxVolumeAliases.render(description, aliases)));
+    }
+
+    /**
+     * What a volume id stands for now: the id it was renamed to, or the id itself. The account's holder VM is only looked up, never created, and a
+     * volume with no holder (nothing was ever renamed) is its own answer.
+     */
+    String resolve(long accountId, String volumeId) {
+        return resolve(client.findVm(ProxmoxVmConfig.holderVmId(accountId)), volumeId);
+    }
+
+    /** As above for a holder that is already known (null: the account has none). */
+    String resolve(ProxmoxApiClient.VmLocation holder, String volumeId) {
+        if (holder == null) {
+            return volumeId;
+        }
+        return ProxmoxVolumeAliases.resolve(ProxmoxVolumeAliases.parse(descriptionOf(holder)), volumeId);
+    }
+
+    /** Fails before a rename if the holder's description cannot take one more alias, so that no volume is renamed without a way back. */
+    void checkRoomForAlias(ProxmoxApiClient.VmLocation holder, String oldVolumeId, String expectedNewVolumeId) {
+        String description = descriptionOf(holder);
+        if (!ProxmoxVolumeAliases.hasRoomFor(description, ProxmoxVolumeAliases.parse(description), oldVolumeId, expectedNewVolumeId)) {
+            throw new ProxmoxApiException("The holder VM " + holder.getVmid() + " already lists as many renamed volumes as its description can hold; "
+                    + "detach volumes of this account while their instances are running, or ask an administrator to look at the holder VM");
+        }
+    }
+
+    /** Records that {@code oldVolumeId} is now {@code newVolumeId}. One retry: a rename without its alias would lose the volume for core. */
+    void recordAlias(ProxmoxApiClient.VmLocation holder, String oldVolumeId, String newVolumeId) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                String description = descriptionOf(holder);
+                writeAliases(holder, description, ProxmoxVolumeAliases.record(ProxmoxVolumeAliases.parse(description), oldVolumeId, newVolumeId));
+                LOGGER.info("Recorded the alias {} -> {} on the holder VM {}", oldVolumeId, newVolumeId, holder.getVmid());
+                return;
+            } catch (ProxmoxApiException e) {
+                if (attempt == 2) {
+                    LOGGER.error("The volume {} is now {} but the alias could not be recorded on the holder VM {}: {}", oldVolumeId, newVolumeId,
+                            holder.getVmid(), e.getMessage());
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /** Removes the aliases that start at or lead to the volume (it was deleted, or core stores its new path now). */
+    void forgetAliases(ProxmoxApiClient.VmLocation holder, String volumeId) {
+        String description = descriptionOf(holder);
+        Map<String, String> aliases = ProxmoxVolumeAliases.parse(description);
+        Map<String, String> remaining = ProxmoxVolumeAliases.forget(aliases, volumeId);
+        if (remaining.size() != aliases.size()) {
+            writeAliases(holder, description, remaining);
+        }
+    }
+
+    /**
+     * {@link #handBack} for a moment when core cannot be told the new path: the alias is checked for room first and recorded afterwards.
+     * Returns the new volume id.
+     */
+    String handBackWithAlias(ProxmoxApiClient.VmLocation holder, String instanceNode, long instanceVmid, String entry, String oldVolumeId) {
+        checkRoomForAlias(holder, oldVolumeId, oldVolumeId.substring(0, oldVolumeId.indexOf(':') + 1) + holder.getVmid() + "/vm-" + holder.getVmid() + "-disk-999.qcow2");
+        String newVolumeId = handBack(instanceNode, instanceVmid, entry, holder.getVmid());
+        recordAlias(holder, oldVolumeId, newVolumeId);
+        return newVolumeId;
+    }
+
     /**
      * Deletes a volume that the holder lists: removing its "unusedN" entry removes the file too, and leaves no dangling entry (a plain delete of
      * the image would). Returns false when the holder does not list it.

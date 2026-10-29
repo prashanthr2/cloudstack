@@ -636,3 +636,6 @@ Lab result (2026-10-24 and 25, 8c, VPC): the VPC tests pass: two tiers and their
 
 `move_disk` of a root disk and of a holder-owned data disk (stopped and live), the hand-over of a disk to and from an empty holder VM, the move of a holder VM to another node with an `unusedN` entry, adopting an existing holder volume, and `protection=1`: all pass with the token. Details and the commands: design-phase9-storage-migration.md section 8. Result for the design: a live move leaves the volume owned by the VM; a hand-over to the holder VM (the account number) works as a rename.
 
+### Phase 9, the alias map (2026-10-29): unit tests
+
+`ProxmoxVolumeAliasesTest` (7: parse/render, one-step lookup after a second rename, forget, capacity at 8000 characters), `ProxmoxHolderVmsTest` (+6: resolve, record keeps the text, forget, hand-over with alias, refusal before the rename when the description is full), `ProxmoxVmHandlerDataVolumeTest` (+4: attach, detach, delete and resize of a renamed volume). Plugin: **451 tests pass**. Not run on a lab (nothing renames a volume until the live move is built).

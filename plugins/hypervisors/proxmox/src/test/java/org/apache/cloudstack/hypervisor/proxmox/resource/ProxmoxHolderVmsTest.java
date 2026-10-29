@@ -208,4 +208,104 @@ public class ProxmoxHolderVmsTest {
 
         verify(client, never()).updateVmConfig(anyString(), eq(HOLDER), anyMap());
     }
+
+    // ---- aliases ----
+
+    private static final String OLD_ID = "cs-7fd5565c:9101/vm-9101-disk-0.qcow2";
+    private static final String NEW_ID = "cs-7fd5565c:900000002/vm-900000002-disk-3.qcow2";
+
+    private Map<String, String> holderWithAlias() {
+        Map<String, String> config = new LinkedHashMap<>();
+        config.put("description", ProxmoxVolumeAliases.render("text", ProxmoxVolumeAliases.record(new LinkedHashMap<>(), OLD_ID, NEW_ID)));
+        return config;
+    }
+
+    @Test
+    public void resolveAnswersWithTheRenamedVolume() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped");
+        when(client.findVm(HOLDER)).thenReturn(holder);
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(holderWithAlias());
+
+        assertEquals(NEW_ID, holders.resolve(2, OLD_ID));
+        assertEquals("cs-7fd5565c:1/vm-1-x.qcow2", holders.resolve(2, "cs-7fd5565c:1/vm-1-x.qcow2"));
+    }
+
+    @Test
+    public void resolveWithoutAHolderAnswersWithTheSameId() {
+        when(client.findVm(HOLDER)).thenReturn(null);
+
+        assertEquals(OLD_ID, holders.resolve(2, OLD_ID));
+    }
+
+    @Test
+    public void recordAliasWritesTheDescriptionAndKeepsTheText() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped");
+        Map<String, String> config = new LinkedHashMap<>();
+        config.put("description", "Holds the data volumes.");
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(config);
+
+        holders.recordAlias(holder, OLD_ID, NEW_ID);
+
+        ArgumentCaptor<Map<String, String>> written = captor();
+        verify(client).updateVmConfig(eq(NODE), eq(HOLDER), written.capture());
+        String description = written.getValue().get("description");
+        assertTrue(description.startsWith("Holds the data volumes.\n" + ProxmoxVolumeAliases.MARKER));
+        assertEquals(NEW_ID, ProxmoxVolumeAliases.parse(description).get(OLD_ID));
+    }
+
+    @Test
+    public void forgetAliasesWritesOnlyWhenSomethingChanges() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped");
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(holderWithAlias());
+
+        holders.forgetAliases(holder, "cs-7fd5565c:5/none");
+        verify(client, never()).updateVmConfig(anyString(), eq(HOLDER), anyMap());
+
+        holders.forgetAliases(holder, NEW_ID);
+        ArgumentCaptor<Map<String, String>> written = captor();
+        verify(client).updateVmConfig(eq(NODE), eq(HOLDER), written.capture());
+        assertTrue(ProxmoxVolumeAliases.parse(written.getValue().get("description")).isEmpty());
+    }
+
+    @Test
+    public void handBackWithAliasRenamesAndThenRecordsTheAlias() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped");
+        Map<String, String> before = new LinkedHashMap<>();
+        before.put("description", "text");
+        Map<String, String> after = new LinkedHashMap<>(before);
+        after.put("unused0", NEW_ID);
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(before, before, after, before);
+        when(client.reassignDisk(NODE, 9101, "scsi1", HOLDER, "unused0")).thenReturn("UPID:move");
+
+        assertEquals(NEW_ID, holders.handBackWithAlias(holder, NODE, 9101, "scsi1", OLD_ID));
+
+        verify(client).waitForTask("UPID:move", 60);
+        ArgumentCaptor<Map<String, String>> written = captor();
+        verify(client).updateVmConfig(eq(NODE), eq(HOLDER), written.capture());
+        assertEquals(NEW_ID, ProxmoxVolumeAliases.parse(written.getValue().get("description")).get(OLD_ID));
+    }
+
+    @Test
+    public void handBackWithAliasRefusesBeforeRenamingWhenTheDescriptionIsFull() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped");
+        Map<String, String> full = new LinkedHashMap<>();
+        StringBuilder filler = new StringBuilder("text");
+        while (filler.length() < ProxmoxVolumeAliases.MAX_LENGTH - 10) {
+            filler.append(" filler");
+        }
+        full.put("description", filler.toString());
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(full);
+        try {
+            holders.handBackWithAlias(holder, NODE, 9101, "scsi1", OLD_ID);
+            fail();
+        } catch (ProxmoxApiException e) {
+            assertTrue(e.getMessage().contains("renamed volumes"));
+        }
+        verify(client, never()).reassignDisk(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<Map<String, String>> captor() {
+        return ArgumentCaptor.forClass(Map.class);
+    }
 }
