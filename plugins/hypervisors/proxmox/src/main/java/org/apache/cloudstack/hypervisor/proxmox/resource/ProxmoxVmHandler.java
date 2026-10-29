@@ -1203,6 +1203,14 @@ class ProxmoxVmHandler {
     private Answer deleteDataVolume(DeleteCommand cmd, VolumeObjectTO volume) {
         String volumeId = volumeId(volume);
         ProxmoxApiClient client = clients.get();
+        // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one
+        Long accountId = volume.getAccountId();
+        if (accountId != null && accountId >= 1 && accountId <= ProxmoxVmConfig.MAX_ACCOUNT_ID) {
+            ProxmoxApiClient.VmLocation holder = client.findVm(ProxmoxVmConfig.holderVmId(accountId));
+            if (holder != null) {
+                new ProxmoxHolderVms(client, taskTimeoutSeconds).deleteListed(holder, volumeId);
+            }
+        }
         if (client.getImageInfo(node, volumeId) == null) {
             return new Answer(cmd, true, "Proxmox has no disk image " + volumeId + ", nothing to delete");
         }

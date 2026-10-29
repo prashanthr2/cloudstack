@@ -114,3 +114,13 @@ Principle: **core changes stay near zero** (only the functionality flag and the 
 | M2, M3 | Not run: the holder VM covers the offline copy (`move_disk` of an `unusedN` entry), and the code reading says the combined migration skips shared storage |
 
 Not yet shown: `move_disk` of an `unusedN` entry of the holder to another storage (the offline copy of a detached volume, 4.1), and what a purge of a holder does to a volume it *does* own (the holder must never be purged; `protection=1` guards it).
+
+
+## 9. Step 1 built (2026-10-28): the holder VM primitives
+
+`ProxmoxHolderVms` (unit tested, 14 tests; plugin total 434): `ensureHolder` (create the empty VM `900000000 + account` with `protection=1`, the tag `cloudstack-data` and a description, or move it to the node of the instance), `adopt` (list a volume as the first free `unusedN`, repeated calls reuse the entry, an error at 256), `handBack` (the instance's `unusedN` to the holder) and `handTo` (the holder's entry to an instance drive), both reading the new volume id back, `deleteListed`, and a lock per holder. New client calls: `reassignDisk` (`move_disk` with `target-vmid`) and `moveDisk` (`move_disk` with `storage`, `delete=1`).
+**Behaviour change now:** the delete of a data volume (`DeleteCommand`) first removes the volume's `unusedN` entry when the account's holder VM lists it (so no dangling entry is left), and then deletes the image if it is still there. Nothing lists volumes yet, so today nothing changes for existing volumes. Attach, detach and start are not changed yet.
+
+## 10. A problem found while building: the detach of a stopped instance sends no command
+
+Core sends `DettachCommand` only for a *running* instance (`VolumeApiServiceImpl.orchestrateDetachVolumeFromVM`: `sendCommand = vm.getState() == Running`, else the database only). After a live move the volume is owned by the instance, with a path of the form `<vmid>/vm-<vmid>-disk-<n>.qcow2`. If the instance is then stopped and the volume detached, **the plugin hears nothing**: the volume stays in the instance's configuration, owned by it, and at the next start or at the destruction of the instance the plugin has to hand it to the holder, **which renames the file, while CloudStack still stores the old path** (core takes a new path only from the answers to detach and migrate commands, not from a stop, a start or a delete). Options: see the discussion (decision E below).

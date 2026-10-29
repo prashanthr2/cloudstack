@@ -1088,6 +1088,31 @@ public class ProxmoxApiClient implements Closeable {
         return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/migrate", form));
     }
 
+    /**
+     * Hands a disk of one VM to another VM, which renames the volume to the target's id (lab M5: the file is renamed in place, not copied, and
+     * the source may be running when the disk is an "unusedN" entry). Both VMs must be on {@code node}. Returns the task id.
+     */
+    public String reassignDisk(String node, long vmid, String disk, long targetVmid, String targetDisk) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("disk", disk);
+        form.put("target-vmid", Long.toString(targetVmid));
+        form.put("target-disk", targetDisk);
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/move_disk", form));
+    }
+
+    /**
+     * Copies a disk of a VM, running or stopped, to another storage and removes the source (lab M1). The new volume is named
+     * "vm-&lt;vmid&gt;-disk-&lt;first free number&gt;" on the target, so the caller reads the configuration afterwards. Returns the task id.
+     */
+    public String moveDisk(String node, long vmid, String disk, String storage) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("disk", disk);
+        form.put("storage", storage);
+        form.put("format", "qcow2");
+        form.put("delete", "1");
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/move_disk", form));
+    }
+
     /** The state of a VM on one node ("running", "stopped" ...), or null when that node does not have the VM (it is elsewhere or gone). */
     public String getVmStatus(String node, long vmid) {
         try {

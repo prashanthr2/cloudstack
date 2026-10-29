@@ -497,6 +497,11 @@ Not done: VPC (tiers, ACLs, private gateways, VPN) and a public IP on another VL
 
 Not done: site-to-site VPN and remote access VPN were not run on the lab; redundant VPC routers are out of scope.
 
+## 20. Holder VMs and data volume delete (Phase 9, step 1 built; see design-phase9-storage-migration.md)
+
+- A data volume is deleted (`DeleteCommand`) as before, with one addition: when the account's holder VM (`900000000 + account id`, an empty VM that exists only from Phase 9 on) lists the volume as an `unusedN` entry, that entry is removed first (which removes the file and leaves no dangling entry), and the image is deleted afterwards if it is still there. The holder VM is only looked up, never created, by a delete.
+- The holder VM is created on first use (not by any command yet) with `protection=1`, the name `cs-holder-<account id>` and the tag `cloudstack-data`; it is never started. An administrator must not delete it or edit its disks (the protection stops an accidental destroy).
+
 ## Known gaps and open questions
 
 - A Proxmox node that joins later is not detected automatically; add the same address again to add it.

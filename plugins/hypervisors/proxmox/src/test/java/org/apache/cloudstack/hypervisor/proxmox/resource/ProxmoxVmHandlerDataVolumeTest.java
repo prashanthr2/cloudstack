@@ -409,7 +409,39 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client).waitForTask("UPID:pve1:1:2:3:imgdel:900000002:u:", 600);
         verify(client, never()).destroyVm(anyString(), anyLong());
         verify(client, never()).stopVm(anyString(), anyLong());
-        verify(client, never()).findVm(anyLong());
+        // the only VM looked up is the account's holder (Phase 9), never the VM that the path might be taken for
+        verify(client).findVm(900000002L);
+    }
+
+    @Test
+    public void aDataVolumeThatTheHolderVmListsIsDeletedWithItsEntry() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", "pve2", "stopped");
+        when(client.findVm(900000002L)).thenReturn(holder);
+        Map<String, String> holderConfig = new HashMap<>();
+        holderConfig.put("unused3", VOLUME_ID);
+        when(client.getVmConfig("pve2", 900000002L)).thenReturn(holderConfig);
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(null);
+
+        Answer answer = handler.delete(delete(volume(Volume.Type.DATADISK, GIB)));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).updateVmConfig("pve2", 900000002L, Collections.singletonMap("delete", "unused3"));
+        verify(client, never()).deleteImage(anyString(), anyString());
+    }
+
+    @Test
+    public void aListedVolumeWhoseFileIsStillThereAfterTheEntryWentIsDeletedAsAnImage() {
+        ProxmoxApiClient.VmLocation holder = new ProxmoxApiClient.VmLocation(900000002L, "cs-holder-2", NODE, "stopped");
+        when(client.findVm(900000002L)).thenReturn(holder);
+        Map<String, String> holderConfig = new HashMap<>();
+        holderConfig.put("unused3", VOLUME_ID);
+        when(client.getVmConfig(NODE, 900000002L)).thenReturn(holderConfig);
+        when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(new ProxmoxApiClient.ImageInfo(GIB, 1, "qcow2", "/x"));
+        when(client.deleteImage(NODE, VOLUME_ID)).thenReturn("UPID:pve1:1:2:3:imgdel:900000002:u:");
+
+        assertTrue(handler.delete(delete(volume(Volume.Type.DATADISK, GIB))).getResult());
+
+        verify(client).deleteImage(NODE, VOLUME_ID);
     }
 
     @Test
