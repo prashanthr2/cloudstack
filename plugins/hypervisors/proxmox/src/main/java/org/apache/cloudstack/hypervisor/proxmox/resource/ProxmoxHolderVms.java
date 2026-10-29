@@ -265,7 +265,13 @@ final class ProxmoxHolderVms {
         if (entry == null) {
             return false;
         }
-        client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("delete", entry));
+        // lab M9: Proxmox refuses to remove an unused disk of a VM with protection on ("protection mode enabled"), so it is off for this one change
+        client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("protection", "0"));
+        try {
+            client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("delete", entry));
+        } finally {
+            client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("protection", "1"));
+        }
         LOGGER.info("Deleted {} through {} of the holder VM {}", volumeId, entry, holder.getVmid());
         return true;
     }

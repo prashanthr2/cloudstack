@@ -201,6 +201,20 @@ public class ProxmoxHolderVmsTest {
     }
 
     @Test
+    public void protectionIsOffOnlyWhileTheEntryIsRemoved() {
+        Map<String, String> config = new LinkedHashMap<>();
+        config.put("unused7", VOLUME);
+        when(client.getVmConfig(NODE, HOLDER)).thenReturn(config);
+
+        holders.deleteListed(new ProxmoxApiClient.VmLocation(HOLDER, "h", NODE, "stopped"), VOLUME);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(client);
+        order.verify(client).updateVmConfig(NODE, HOLDER, Collections.singletonMap("protection", "0"));
+        order.verify(client).updateVmConfig(NODE, HOLDER, Collections.singletonMap("delete", "unused7"));
+        order.verify(client).updateVmConfig(NODE, HOLDER, Collections.singletonMap("protection", "1"));
+    }
+
+    @Test
     public void deleteListedDoesNothingForAVolumeThatIsNotListed() {
         when(client.getVmConfig(NODE, HOLDER)).thenReturn(new LinkedHashMap<>());
 

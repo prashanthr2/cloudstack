@@ -159,3 +159,7 @@ The source stays listed as a further `unusedK`, so a failed copy loses nothing; 
   - *delete of a data volume:* an instance that still lists it loses the drive and the entry, which removes the disk (refused while the drive is in a running VM).
 - **Behaviour change to settle:** at start, any disk of an instance that is not its root volume and not in the command, and that the instance owns, is treated as a data volume and handed to the holder (it cannot be told from a disk someone added by hand in Proxmox). Before this step such a disk was left alone.
 - **Lab checks to run before M-checks of step 3** (they decide whether a holder with `protection=1` works): see test-log "Phase 9, step 3".
+
+## 14. Lab M9 (2026-10-29): a protected holder
+
+On a VM with `protection=1`: `qm set <vm> --unused0 <A>:<vm>/<file>` works; `qm move-disk <vm> unused0 <B> --format qcow2 --delete 0` works (the copy is `<B>:<vm>/vm-<vm>-disk-0.qcow2` as `unused0`, the source stays as `unused1`); **`qm set <vm> --delete unused0` is refused: "can't remove unused disk ... protection mode enabled".** So the plugin switches `protection` off for the one change that removes an entry (`deleteListed`) and on again in `finally`. Not yet shown on a protected holder: the reassign (`target-vmid`) into and out of it (M5/M6 may have used an unprotected one).

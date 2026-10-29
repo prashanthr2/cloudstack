@@ -647,3 +647,7 @@ Lab result (2026-10-24 and 25, 8c, VPC): the VPC tests pass: two tiers and their
 ### Phase 9, step 3: live move and hand-overs (2026-10-29): unit tests
 
 `ProxmoxVmHandlerDataVolumeTest` (+4: live move answers the new path, live move to the same storage refused, detach of an instance-owned volume hands it to the holder and sets `volumePath`, delete of a volume a stopped instance still lists). Plugin total 458 pass, 0 fail. A bug found while writing: the start hook took the old root drive of a moved root disk for a stale data disk; the root volume is now told by path. Not run in the lab yet.
+
+### Phase 9, lab M9 (2026-10-29): protected holder, run on pve1 by hand
+
+Created `900000099` with `protection=1`, listed a volume as `unused0`, `move-disk` of `unused0` to the other NFS entry with `--delete 0` worked (copy as `unused0`, source as `unused1`); `--delete unused0` was refused: "protection mode enabled". Fix: `deleteListed` lifts protection around the removal (unit test `protectionIsOffOnlyWhileTheEntryIsRemoved`, plugin total 459 pass). The test VM `900000099` and its two volumes are still on the lab: `qm set 900000099 --protection 0 && qm destroy 900000099 --purge`, then remove `/mnt/<pool>/images/900000099` leftovers if any.
