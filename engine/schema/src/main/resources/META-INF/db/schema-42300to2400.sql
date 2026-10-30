@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS `cloud`.`instance_boot_group_details` (
 UPDATE `cloud`.`configuration` SET value = CONCAT(value, ',Proxmox') WHERE name = 'hypervisor.list' AND value NOT LIKE '%Proxmox%';
 
 -- Proxmox capabilities (no per-version rows: the default row applies to every Proxmox version)
-INSERT IGNORE INTO `cloud`.`hypervisor_capabilities`(uuid, hypervisor_type, hypervisor_version, max_guests_limit, security_group_enabled, max_data_volumes_limit, max_hosts_per_cluster, storage_motion_supported, vm_snapshot_enabled) VALUES (UUID(), 'Proxmox', 'default', 1000, 0, 30, 32, 0, 0);
+INSERT IGNORE INTO `cloud`.`hypervisor_capabilities`(uuid, hypervisor_type, hypervisor_version, max_guests_limit, security_group_enabled, max_data_volumes_limit, max_hosts_per_cluster, storage_motion_supported, vm_snapshot_enabled) VALUES (UUID(), 'Proxmox', 'default', 1000, 0, 30, 32, 1, 0);
 
 -- Guest OS mappings for Proxmox: the name is the Proxmox "ostype" (other, wxp, w2k, w2k3, w2k8, wvista, win7, win8, win10, win11, l24, l26, solaris)
 INSERT INTO `cloud`.`guest_os_hypervisor` (uuid, hypervisor_type, hypervisor_version, guest_os_name, guest_os_id, created, is_user_defined)

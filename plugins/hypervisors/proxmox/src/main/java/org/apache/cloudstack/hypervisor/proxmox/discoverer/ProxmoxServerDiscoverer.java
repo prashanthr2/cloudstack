@@ -24,7 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
+import javax.inject.Inject;
 import javax.naming.ConfigurationException;
 
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
@@ -39,6 +39,8 @@ import com.cloud.dc.ClusterVO;
 import com.cloud.exception.DiscoveryException;
 import com.cloud.host.HostVO;
 import com.cloud.hypervisor.Hypervisor;
+import com.cloud.hypervisor.HypervisorCapabilitiesVO;
+import com.cloud.hypervisor.dao.HypervisorCapabilitiesDao;
 import com.cloud.resource.Discoverer;
 import com.cloud.resource.DiscovererBase;
 import com.cloud.resource.ResourceStateAdapter;
@@ -55,6 +57,9 @@ import com.cloud.utils.UuidUtils;
 public class ProxmoxServerDiscoverer extends DiscovererBase implements Discoverer, ResourceStateAdapter {
 
     static final String CLUSTER_GUID_PREFIX = "proxmox-cluster:";
+
+    @Inject
+    HypervisorCapabilitiesDao hypervisorCapabilitiesDao;
 
     @Override
     public boolean configure(String name, Map<String, Object> params) throws ConfigurationException {
@@ -262,7 +267,37 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         if (ssCmd.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
             return null;
         }
+        ensureCapabilities(ssCmd.getHypervisorVersion());
         return _resourceMgr.fillRoutingHostVO(host, ssCmd, Hypervisor.HypervisorType.Proxmox, details, hostTags);
+    }
+
+    /**
+     * Core looks the capabilities of a host up by its exact version ("8.4.21") and does not fall back to "default" when it decides whether a volume or an
+     * instance can be moved to another storage, so each version a host reports needs its own row. It is made from the "default" row, with storage
+     * motion on (the plugin moves volumes and instances with Proxmox's move_disk and migration), when the host is added and whenever it connects.
+     * A failure here does not stop the host from connecting.
+     */
+    void ensureCapabilities(String version) {
+        if (hypervisorCapabilitiesDao == null || version == null || version.isEmpty()) {
+            return;
+        }
+        try {
+            if (hypervisorCapabilitiesDao.findByHypervisorTypeAndVersion(Hypervisor.HypervisorType.Proxmox, version) != null) {
+                return;
+            }
+            HypervisorCapabilitiesVO defaults = hypervisorCapabilitiesDao.findByHypervisorTypeAndVersion(Hypervisor.HypervisorType.Proxmox, "default");
+            if (defaults == null) {
+                logger.warn("There is no default capabilities row for Proxmox, so none is made for version {}", version);
+                return;
+            }
+            HypervisorCapabilitiesVO row = new HypervisorCapabilitiesVO(defaults);
+            row.setHypervisorVersion(version);
+            row.setStorageMotionSupported(true);
+            hypervisorCapabilitiesDao.persist(row);
+            logger.info("Added the hypervisor capabilities of Proxmox {} (storage motion supported)", version);
+        } catch (RuntimeException e) {
+            logger.warn("Could not add the hypervisor capabilities of Proxmox {}: {}", version, e.getMessage());
+        }
     }
 
     @Override

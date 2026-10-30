@@ -692,3 +692,7 @@ On the build with the stable data volume path (design section 18), alias-first l
 ### Phase 9, step 4 (2026-10-30): unit tests
 
 `ProxmoxDataMotionStrategyTest` (6: only two Proxmox hosts are handled; every volume that changes pool is moved, then the instance moves, volumes already on the destination pool are skipped and rows follow the answers; a failed volume move stops before the instance move; same host means volumes only; a destination that cannot receive fails before the move; a failed instance move is reported and rolled back). Plugin total 475 pass. Not run in the lab: it needs the `VmStorageMigration` flag (step 5).
+
+### Phase 9, step 5 (2026-10-30): unit tests
+
+`VmStorageMigration` claimed for Proxmox again (`HypervisorTypeFunctionalityTest`, 2), `ProxmoxServerDiscovererTest` (+3: a version without a row gets one with storage motion on, a version with a row is left alone, a failure does not stop the host). Plugin total 478 pass. Lab to run: T8 migrate an instance with a data volume to the other pool and another host; T9 migrate a router to another host.

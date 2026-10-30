@@ -127,3 +127,5 @@ How the changes outside `plugins/hypervisors/proxmox` could be split. Each PR is
 
 Not proposed as changes (reported only): items 1 to 12, 14, 15, 17, 20 to 22, 26 and 27 are observations for issues; items 26 (storage motion gate for `migrateSystemVm`) and 27 (`vpc_netusage.sh`) would be small fixes in their own PRs when the storage migration is done.
 
+
+28. **Core changes of the storage migration work (Phase 9), all small.** (a) `Hypervisor.java`: Proxmox claims `VmStorageMigration` (with `HypervisorTypeFunctionalityTest`), (b) the Proxmox `default` row of `hypervisor_capabilities` has `storage_motion_supported=1` (`schema-42300to2400.sql`). Observation for an issue: `VolumeApiServiceImpl.migrateVolume` and `HypervisorCapabilitiesDaoImpl.isStorageMotionSupported` look a host's capabilities up by its exact version and do not fall back to `default` (only `getCapabilities` does), so a hypervisor that reports a version with no row of its own cannot move volumes; the plugin adds a row per reported version (`ProxmoxServerDiscoverer.ensureCapabilities`).

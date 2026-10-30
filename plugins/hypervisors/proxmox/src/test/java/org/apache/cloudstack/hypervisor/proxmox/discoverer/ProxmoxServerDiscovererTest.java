@@ -34,6 +34,8 @@ import com.cloud.exception.DiscoveryException;
 import com.cloud.host.HostVO;
 import com.cloud.host.dao.HostDao;
 import com.cloud.hypervisor.Hypervisor;
+import com.cloud.hypervisor.HypervisorCapabilitiesVO;
+import com.cloud.hypervisor.dao.HypervisorCapabilitiesDao;
 import com.cloud.resource.ServerResource;
 
 public class ProxmoxServerDiscovererTest {
@@ -227,5 +229,46 @@ public class ProxmoxServerDiscovererTest {
                     && e.getMessage().contains("cloud0") && e.getMessage().contains("by hand"));
         }
         verify(client, never()).applyNetworkConfig(anyString(), anyInt());
+    }
+
+    private HypervisorCapabilitiesDao capabilitiesWithDefault() {
+        HypervisorCapabilitiesDao dao = mock(HypervisorCapabilitiesDao.class);
+        HypervisorCapabilitiesVO defaults = new HypervisorCapabilitiesVO(Hypervisor.HypervisorType.Proxmox, "default", 1000L, false, false);
+        defaults.setMaxDataVolumesLimit(30);
+        when(dao.findByHypervisorTypeAndVersion(Hypervisor.HypervisorType.Proxmox, "default")).thenReturn(defaults);
+        ReflectionTestUtils.setField(discoverer, "hypervisorCapabilitiesDao", dao);
+        return dao;
+    }
+
+    @Test
+    public void aHostVersionWithoutACapabilitiesRowGetsOneWithStorageMotionOn() {
+        HypervisorCapabilitiesDao dao = capabilitiesWithDefault();
+
+        discoverer.ensureCapabilities("8.4.21");
+
+        org.mockito.ArgumentCaptor<HypervisorCapabilitiesVO> row = org.mockito.ArgumentCaptor.forClass(HypervisorCapabilitiesVO.class);
+        verify(dao).persist(row.capture());
+        org.junit.Assert.assertEquals("8.4.21", row.getValue().getHypervisorVersion());
+        org.junit.Assert.assertTrue(row.getValue().isStorageMotionSupported());
+        org.junit.Assert.assertEquals(Integer.valueOf(30), row.getValue().getMaxDataVolumesLimit());
+    }
+
+    @Test
+    public void aVersionThatHasARowIsLeftAlone() {
+        HypervisorCapabilitiesDao dao = capabilitiesWithDefault();
+        when(dao.findByHypervisorTypeAndVersion(Hypervisor.HypervisorType.Proxmox, "8.4.21")).thenReturn(mock(HypervisorCapabilitiesVO.class));
+
+        discoverer.ensureCapabilities("8.4.21");
+
+        verify(dao, org.mockito.Mockito.never()).persist(org.mockito.ArgumentMatchers.any(HypervisorCapabilitiesVO.class));
+    }
+
+    @Test
+    public void aFailureToAddTheRowDoesNotStopTheHost() {
+        HypervisorCapabilitiesDao dao = capabilitiesWithDefault();
+        when(dao.persist(org.mockito.ArgumentMatchers.any(HypervisorCapabilitiesVO.class))).thenThrow(new RuntimeException("db down"));
+
+        discoverer.ensureCapabilities("8.4.21");
+        discoverer.ensureCapabilities(null);
     }
 }

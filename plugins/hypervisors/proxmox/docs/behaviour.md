@@ -523,3 +523,7 @@ Not done: site-to-site VPN and remote access VPN were not run on the lab; redund
 
 "Migrate volume" of a detached data volume copies it with Proxmox (`move_disk` of the holder VM's `unusedN` entry to the other storage), answers with the new path (Proxmox picks the name `<holder>/vm-<holder>-disk-<n>.qcow2`), and CloudStack then deletes the old volume. The holder VM keeps listing the volume. The root volume of a stopped instance and live moves are not done yet (Phase 9, steps 2 and 3).
 - A running instance's attached volume can be moved to another primary storage (live). Afterwards the instance owns the disk; detaching it hands it back to the account's holder VM and CloudStack is told the new path. Other cases (detach while stopped, start, destroy, attach elsewhere, delete) hand it back or remove it as described in design-phase9-storage-migration.md section 13. A disk of an instance that is neither its root volume nor in the start command is handed to the holder at start.
+
+## 22. Moving an instance with its volumes, and routers
+
+"Migrate instance with volume" works between Proxmox hosts: each volume that changes primary storage is moved while the instance runs, then the instance moves to the destination node (design-phase9-storage-migration.md section 20). A router, SSVM or CPVM can be migrated to another host (`migrateSystemVm`); the host's version has its own `hypervisor_capabilities` row, added by the plugin when the host connects. The root volume of a stopped instance cannot be moved to another storage yet.
