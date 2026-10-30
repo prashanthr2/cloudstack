@@ -681,3 +681,10 @@ Seen in lab T7 preparation: the path of a volume handed to the holder still name
 ### Phase 9, stale alias keys (2026-10-30): unit tests
 
 `ProxmoxVolumeAliasesTest` (+1, one changed: a second rename drops the stop on the way, an alias starting at an id that is in use again is dropped). Plugin total 469 pass. Lab: the holder of account 2 showed two lines for one volume before the fix; old volumes are being deleted, to re-check with a fresh volume (one line per volume expected).
+
+### Phase 9, lab rerun with the stable path (2026-10-30)
+
+On the build with the stable data volume path (design section 18), alias-first lookup (17) and the stale key fix (19):
+- **T2 (live move of a data volume): pass.** CloudStack still shows the holder path `900000002/vm-900000002-<uuid>.qcow2`; instance 122 has the root disk on pool A (`122/vm-122-disk-0.qcow2`) and the data disk on pool B (`122/vm-122-disk-0.qcow2`, the same path on another pool, which Proxmox's per-storage numbering allows); the holder's description has exactly one alias line, `<pool B>|<holder path>|122/vm-122-disk-0.qcow2`.
+- **T6 (destroy the instance, keep the volume): pass.**
+- **T7 (attach, detach, delete): pass.**
