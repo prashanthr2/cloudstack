@@ -696,3 +696,9 @@ On the build with the stable data volume path (design section 18), alias-first l
 ### Phase 9, step 5 (2026-10-30): unit tests
 
 `VmStorageMigration` claimed for Proxmox again (`HypervisorTypeFunctionalityTest`, 2), `ProxmoxServerDiscovererTest` (+3: a version without a row gets one with storage motion on, a version with a row is left alone, a failure does not stop the host). Plugin total 478 pass. Lab to run: T8 migrate an instance with a data volume to the other pool and another host; T9 migrate a router to another host.
+
+### Phase 9, lab T8 and T9 (2026-10-30)
+
+- **First try of T8** failed with "Unsupported hypervisor: Proxmox for VM migration": the lab was running a stale `cloud-api` jar (the commit with the `VmStorageMigration` flag was pulled but the `api` module was not rebuilt; a `javap` of `api/target/cloud-api-*.jar` showed `RootDiskSizeOverride` only). Rule for the lab: rebuild `api` when a commit touches it.
+- **T8 (migrate an instance with its volumes to the other pool and another host): pass.**
+- **T9 (migrate a router to another host, `migrateSystemVm`): pass** (open issue 37 closed).

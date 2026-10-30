@@ -1,6 +1,6 @@
 # Phase 9 design: storage migration (volumes, instances with their volumes, router and system VM migration)
 
-Status: **third version: plan agreed, lab checks M1 to M8 done (section 8); nothing built yet.** "V" means read in code (CloudStack in this repository; Proxmox in the mirrors under `promox-src`, `qemu-server` branch `master`). "U" means **unverified**: `pve-manager` (the storage content API) is not mirrored, or it has not been run; each U has a lab check in section 7.
+Status: **built and lab-verified (steps 1 to 5, sections 9 to 21; lab results in test-log.md: T1 to T9).** "V" means read in code (CloudStack in this repository; Proxmox in the mirrors under `promox-src`, `qemu-server` branch `master`). "U" means **unverified**: `pve-manager` (the storage content API) is not mirrored, or it has not been run; each U has a lab check in section 7.
 
 ## 1. Goal and scope
 
