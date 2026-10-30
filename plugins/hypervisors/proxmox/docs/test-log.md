@@ -688,3 +688,7 @@ On the build with the stable data volume path (design section 18), alias-first l
 - **T2 (live move of a data volume): pass.** CloudStack still shows the holder path `900000002/vm-900000002-<uuid>.qcow2`; instance 122 has the root disk on pool A (`122/vm-122-disk-0.qcow2`) and the data disk on pool B (`122/vm-122-disk-0.qcow2`, the same path on another pool, which Proxmox's per-storage numbering allows); the holder's description has exactly one alias line, `<pool B>|<holder path>|122/vm-122-disk-0.qcow2`.
 - **T6 (destroy the instance, keep the volume): pass.**
 - **T7 (attach, detach, delete): pass.**
+
+### Phase 9, step 4 (2026-10-30): unit tests
+
+`ProxmoxDataMotionStrategyTest` (6: only two Proxmox hosts are handled; every volume that changes pool is moved, then the instance moves, volumes already on the destination pool are skipped and rows follow the answers; a failed volume move stops before the instance move; same host means volumes only; a destination that cannot receive fails before the move; a failed instance move is reported and rolled back). Plugin total 475 pass. Not run in the lab: it needs the `VmStorageMigration` flag (step 5).
