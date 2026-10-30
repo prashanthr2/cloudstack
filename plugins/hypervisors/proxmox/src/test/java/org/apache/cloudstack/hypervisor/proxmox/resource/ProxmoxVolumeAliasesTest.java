@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -68,14 +69,27 @@ public class ProxmoxVolumeAliasesTest {
     }
 
     @Test
-    public void aSecondRenameKeepsEveryLookupToOneStep() {
+    public void aSecondRenameKeepsTheLookupToOneStepAndDropsTheStopOnTheWay() {
         String third = "cs-7fd5565c:900000002/vm-900000002-disk-5.qcow2";
         Map<String, String> aliases = ProxmoxVolumeAliases.record(new LinkedHashMap<>(), OLD, NEW);
 
         aliases = ProxmoxVolumeAliases.record(aliases, NEW, third);
 
         assertEquals(third, aliases.get(OLD));
-        assertEquals(third, aliases.get(NEW));
+        assertNull(aliases.get(NEW));
+    }
+
+    @Test
+    public void anAliasThatStartsAtAnIdThatIsInUseAgainIsDropped() {
+        // an earlier volume left "vm-121-disk-1" for the holder; a later volume of the VM is given that name again
+        String reused = "cs-7fd5565c:121/vm-121-disk-1.qcow2";
+        Map<String, String> aliases = ProxmoxVolumeAliases.record(new LinkedHashMap<>(), reused, NEW);
+
+        aliases = ProxmoxVolumeAliases.record(aliases, OLD, reused);
+
+        assertEquals(reused, aliases.get(OLD));
+        assertEquals(reused, ProxmoxVolumeAliases.resolve(aliases, OLD));
+        assertNull(aliases.get(reused));
     }
 
     @Test

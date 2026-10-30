@@ -677,3 +677,7 @@ Seen in lab T7 preparation: the path of a volume handed to the holder still name
 ### Phase 9, stable path of a live-moved data volume (2026-10-29): unit test
 
 `aLiveMoveOfADataVolumeKeepsItsHolderPathAndRecordsWhereTheDiskIs` (the answer is the holder path, the holder's description gets the alias). Plugin total 468 pass. To run in the lab: live move a data volume, check `listVolumes` path stays `9000000xx/...`, then T4, T5, T6 and the attach to another instance again.
+
+### Phase 9, stale alias keys (2026-10-30): unit tests
+
+`ProxmoxVolumeAliasesTest` (+1, one changed: a second rename drops the stop on the way, an alias starting at an id that is in use again is dropped). Plugin total 469 pass. Lab: the holder of account 2 showed two lines for one volume before the fix; old volumes are being deleted, to re-check with a fresh volume (one line per volume expected).

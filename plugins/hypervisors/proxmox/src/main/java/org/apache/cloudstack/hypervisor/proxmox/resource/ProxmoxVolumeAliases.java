@@ -111,14 +111,32 @@ final class ProxmoxVolumeAliases {
 
     /**
      * Records that {@code oldVolumeId} is now {@code newVolumeId}. Entries that pointed at the old id are changed to the new one, so a lookup is
-     * always one step.
+     * always one step. Two rules keep an alias from naming a disk that is not the volume's:
+     * <ul>
+     * <li>an entry that starts at the new id is dropped: the id was free (an earlier volume moved away from it) and now holds this volume;</li>
+     * <li>when some entry pointed at the old id, that entry is what CloudStack holds (a path that names the holder), so the old id was only a
+     * place on the way and is not kept as a key: Proxmox gives the same name (vm-9204-disk-1) to a later disk.</li>
+     * </ul>
      */
     static Map<String, String> record(Map<String, String> aliases, String oldVolumeId, String newVolumeId) {
         Map<String, String> result = new LinkedHashMap<>();
+        boolean pointedAtOld = false;
         for (Map.Entry<String, String> alias : aliases.entrySet()) {
-            result.put(alias.getKey(), alias.getValue().equals(oldVolumeId) ? newVolumeId : alias.getValue());
+            if (alias.getKey().equals(newVolumeId)) {
+                continue;
+            }
+            if (alias.getValue().equals(oldVolumeId)) {
+                pointedAtOld = true;
+                result.put(alias.getKey(), newVolumeId);
+            } else {
+                result.put(alias.getKey(), alias.getValue());
+            }
         }
-        result.put(oldVolumeId, newVolumeId);
+        if (pointedAtOld) {
+            result.remove(oldVolumeId);
+        } else {
+            result.put(oldVolumeId, newVolumeId);
+        }
         return result;
     }
 
