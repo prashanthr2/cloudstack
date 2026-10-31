@@ -106,3 +106,10 @@ Clean up afterwards: `sudo pveum user delete cltest@pve`, `sudo pveum role delet
 | X6 | **Pass.** `sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` gives `256 SHA256:x5aX... (ED25519)`, the form the plugin stores as the host key fingerprint |
 | X7 | **Not a real test**: with `NOPASSWD: ALL` the password on standard input was never asked for. To repeat with a sudoers line without `NOPASSWD` (`csadmin ALL=(ALL) ALL`) |
 | X8 | **Pass.** `ssh csadmin@<node> sudo -n id` over a non-interactive connection gives `uid=0(root)`; no terminal is needed (`requiretty` is not set) |
+
+## 7. Step 1 as built: the SSH layer (`org.apache.cloudstack.hypervisor.proxmox.ssh`)
+
+- `SshLink` (one connection: connect with a host key check, login with a key or a password, run a command with standard input) and `TrileadSshLink` (on the Trilead library CloudStack uses elsewhere; the fingerprint is `SHA256:` plus the base64 of the SHA-256 of the key blob without padding, the form `ssh-keygen -l` prints).
+- `ProxmoxSsh.open(target, links)`: key first, then password, as for a KVM host; the host key is compared with the one kept for the node (a changed key fails with a message that says what to do; the first connection reports the key to keep); no key and no password is refused with a message.
+- `ProxmoxSsh.sudo(...)`: root runs commands as they are; another user runs `sudo -n sh -c '<command>'` when `sudo -n true` works, else `sudo -S -p ''` with the login password as the first line of standard input; with neither, the message says to give the user `NOPASSWD` or the password in Add Host. `sudoOrFail` raises an exception with what the command printed. `writeFile` writes a root-owned file from standard input (the content is never on a command line) and sets its mode. `quote` writes a word for the shell.
+- Unit tests only (`ProxmoxSshTest`, 15 tests, with a fake link). **The real `TrileadSshLink` has not been used against a node yet**; the first lab use is Add Host (step 2). Lab checks X3 and X7 of section 6 are still to repeat.

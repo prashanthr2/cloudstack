@@ -702,3 +702,7 @@ On the build with the stable data volume path (design section 18), alias-first l
 - **First try of T8** failed with "Unsupported hypervisor: Proxmox for VM migration": the lab was running a stale `cloud-api` jar (the commit with the `VmStorageMigration` flag was pulled but the `api` module was not rebuilt; a `javap` of `api/target/cloud-api-*.jar` showed `RootDiskSizeOverride` only). Rule for the lab: rebuild `api` when a commit touches it.
 - **T8 (migrate an instance with its volumes to the other pool and another host): pass.**
 - **T9 (migrate a router to another host, `migrateSystemVm`): pass** (open issue 37 closed).
+
+### Phase 10, step 1: the SSH layer (2026-10-31): unit tests
+
+`ProxmoxSshTest` (15: key then password, accepted key needs no password, refused login message, key or password needed, first connection reports the host key, a changed host key fails, root commands as they are, `sudo -n`, `sudo -S` with the password on standard input, the NOPASSWD message, a failed command carries its output, file written from standard input, quoting, fingerprint form). Plugin total 494 pass. The real connection class is not run against a node yet (Add Host, step 2). Lab checks X1 to X8 of design-phase10-ssh-access.md section 6: X1, X2, X4, X5, X6, X8 pass; X3 and X7 to repeat.
