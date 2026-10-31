@@ -61,7 +61,7 @@ Decided with the user (2026-10-31):
 3. **Order:** SSH layer and Add Host first, then volume snapshots, then the template and ISO layout; instance snapshots whenever.
 
 Open:
-- **Privileges of the created API user (explained to the user, answer needed).** Proxmox grants rights as privileges collected in roles, and the token can do only what its roles allow. The plugin creates the user and token with the roles requirements.md already prescribes: the built-in `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, plus two small custom roles, `CloudStackHA` (`Sys.Audit`, `Sys.Console`) and `CloudStackNet` (`Sys.Modify`, to create the control bridge). The alternative is one broad built-in role (`PVEAdmin`), which is simpler and gives the token more than it needs. Proposal: the narrow set.
+- **Privileges of the created API user (decided: the narrow set).** Proxmox grants rights as privileges collected in roles, and the token can do only what its roles allow. The plugin creates the user and token with the roles requirements.md already prescribes: the built-in `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, plus two small custom roles, `CloudStackHA` (`Sys.Audit`, `Sys.Console`) and `CloudStackNet` (`Sys.Modify`, to create the control bridge). The alternative is one broad built-in role (`PVEAdmin`), which is simpler and gives the token more than it needs. Decided by the user (2026-10-31): the narrow set.
 - **How `sudo` asks for a password:** `sudo -n` (needs `NOPASSWD` for the user) or `sudo -S` with the login password. Proposal: support both, `NOPASSWD` recommended and documented, `sudo -S` with the Add Host password when there is none.
 
 ## 5. Plan
@@ -93,3 +93,16 @@ Then as `csadmin` (over `ssh csadmin@<node>`, not `su`, since the plugin connect
 | X8 | `sudo -n id` over a non-interactive `ssh csadmin@<node> sudo -n id` | no terminal needed (`requiretty`) |
 
 Clean up afterwards: `sudo pveum user delete cltest@pve`, `sudo pveum role delete CloudStackNetTest`, `sudo rm -f /etc/pve/priv/cltest_key`.
+
+### Results of the sudo checks (lab, node pve2, user `csadmin` with `NOPASSWD: ALL`, 2026-10-31)
+
+| # | Result |
+|---|---|
+| X1 | **Pass.** `sudo -n pveum user add` and `user token add --output-format json` work; the output is `{"full-tokenid":"cltest@pve!t1","info":{"privsep":"1"},"value":"<secret>"}`, so the secret is read from `value` |
+| X2 | **Pass.** `sudo -n pveum role add` and `acl modify` work |
+| X3 | **Not run properly** (the command was typed with `and` instead of `;`; the `ls` failed, the `tee` ran without an error but was not checked). To repeat: `sudo -n ls /etc/pve/priv; echo test \| sudo -n tee /etc/pve/priv/cltest_key > /dev/null; sudo -n cat /etc/pve/priv/cltest_key` |
+| X4 | **Pass.** `sudo -n qemu-img info` reads a volume on the NFS pool (root squash does not stop it through `sudo`) |
+| X5 | **Pass.** `sudo -n qemu-img snapshot -l` on a holder volume answers (an empty list: no snapshots) |
+| X6 | **Pass.** `sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` gives `256 SHA256:x5aX... (ED25519)`, the form the plugin stores as the host key fingerprint |
+| X7 | **Not a real test**: with `NOPASSWD: ALL` the password on standard input was never asked for. To repeat with a sudoers line without `NOPASSWD` (`csadmin ALL=(ALL) ALL`) |
+| X8 | **Pass.** `ssh csadmin@<node> sudo -n id` over a non-interactive connection gives `uid=0(root)`; no terminal is needed (`requiretty` is not set) |
