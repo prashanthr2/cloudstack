@@ -96,12 +96,16 @@ tried first, then the password. Proxmox's `root` login by key works on every nod
 
 With that login the plugin, over SSH:
 1. checks the node's SSH host key (kept with the host, and compared on later connections);
-2. makes the user `cloudstack@pve` and the roles below, and one API token per node it adds (`cs-<node name>`, with privilege separation), and gives the token its rights on the
-   user and on the token: `PVEAuditor` on `/`, `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, the role `CloudStackNet`
-   (`Sys.Modify`) on the node's own path without propagation, and, only when `proxmox.ha.manage` is on, the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/`
-   without propagation;
-3. keeps the token (as the host's user name and password, the password encrypted as before), and the SSH login and host key, with the host;
-4. from then on uses the API with the token. Deleting the host removes its token (best effort).
+2. makes the user `cloudstack@pve` and the roles below, and **one API token for the Proxmox cluster** (`cs-<cluster name>`, with privilege separation; users and tokens
+   belong to the whole cluster, so it works on every node), and gives the token its rights on the user and on the token: `PVEAuditor` on `/`, `PVEVMAdmin` on `/vms`,
+   `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, the role `CloudStackNet` (`Sys.Modify`) on the own path of each node it adds, without
+   propagation, and, only when `proxmox.ha.manage` is on, the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/` without propagation;
+3. keeps the token with the **CloudStack cluster** (`cluster_details`: `username` is the token id, `password` the secret, encrypted like a host's), and the SSH login
+   and host key with each host. A host added later in the same cluster reads the token there and makes no new one;
+4. from then on uses the API with the token. When the last Proxmox host of a cluster is deleted, the token is removed (best effort).
+
+If Proxmox stops accepting the cluster's token (it was removed, or its secret changed), the next Add Host makes a new one; hosts already added take it up when they
+reconnect (restart the management server, or disconnect and reconnect them).
 
 A node where the login does not work is not added, and the log says why. Hosts added with a token before this change must be deleted and added again.
 **Where SSH is used and where the API is used** is in design-phase10-ssh-access.md section 1; this file keeps the permissions each API call needs.

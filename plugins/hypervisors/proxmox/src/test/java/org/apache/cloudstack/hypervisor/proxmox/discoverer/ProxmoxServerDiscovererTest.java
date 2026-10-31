@@ -36,6 +36,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.cloud.dc.ClusterDetailsDao;
+import com.cloud.dc.ClusterDetailsVO;
 import com.cloud.dc.ClusterVO;
 import com.cloud.dc.dao.ClusterDao;
 import com.cloud.exception.DiscoveryException;
@@ -52,6 +54,7 @@ public class ProxmoxServerDiscovererTest {
     private final List<String> createdClients = new ArrayList<>();
     private final List<SshTarget> opened = new ArrayList<>();
     private final Map<String, ScriptedSshLink> links = new HashMap<>();
+    private final Map<String, String> clusterDetails = new HashMap<>();
     private ProxmoxApiClient client;
     private ProxmoxServerDiscoverer discoverer;
     private ClusterVO cluster;
@@ -75,6 +78,13 @@ public class ProxmoxServerDiscovererTest {
                 return ProxmoxSsh.open(target, () -> link);
             }
         };
+        ClusterDetailsDao clusterDetailsDao = mock(ClusterDetailsDao.class);
+        when(clusterDetailsDao.findDetail(anyLong(), anyString())).thenAnswer(call -> clusterDetails.containsKey(call.<String>getArgument(1))
+                ? new ClusterDetailsVO(call.getArgument(0), call.getArgument(1), clusterDetails.get(call.<String>getArgument(1))) : null);
+        when(clusterDetailsDao.findDetails(anyLong())).thenAnswer(call -> new HashMap<>(clusterDetails));
+        org.mockito.Mockito.doAnswer(call -> clusterDetails.put(call.getArgument(1), call.getArgument(2))).when(clusterDetailsDao).persist(anyLong(), anyString(), anyString());
+        org.mockito.Mockito.doAnswer(call -> clusterDetails.remove(call.<String>getArgument(1))).when(clusterDetailsDao).removeDetail(anyLong(), anyString());
+        ReflectionTestUtils.setField(discoverer, "clusterDetailsDao", clusterDetailsDao);
         ConfigurationDao configDao = mock(ConfigurationDao.class);
         when(configDao.getValue("ssh.privatekey")).thenReturn("MANAGEMENT-KEY");
         ReflectionTestUtils.setField(discoverer, "_configDao", configDao);
@@ -111,6 +121,9 @@ public class ProxmoxServerDiscovererTest {
                 String name = command.replaceAll(".*user token add cloudstack@pve (\\S+) .*", "$1");
                 return new ExecResult(0, "{\"full-tokenid\":\"cloudstack@pve!" + name + "\",\"value\":\"secret-" + tokens + "\"}", "");
             }
+            if (command.contains("pvesh get /cluster/status")) {
+                return new ExecResult(0, "[{\"type\":\"cluster\",\"name\":\"lab\",\"nodes\":3}]", "");
+            }
             return new ExecResult(0, "", "");
         };
         return link;
@@ -134,8 +147,8 @@ public class ProxmoxServerDiscovererTest {
             assertNotNull(entry.getKey());
             Map<String, String> details = entry.getValue();
             // these are rebuilt into the resource after a management server restart
-            assertTrue(details.get("username"), details.get("username").startsWith("cloudstack@pve!cs-pve"));
-            assertTrue(details.get("password").startsWith("secret-"));
+            assertNull("the token is kept with the cluster, not with the host", details.get("username"));
+            assertNull(details.get("password"));
             assertEquals("https://10.0.35.25:8006", details.get(ProxmoxResource.DETAIL_ENDPOINT));
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE));
             assertNotNull(details.get(ProxmoxResource.DETAIL_NODE_IP));
@@ -312,18 +325,41 @@ public class ProxmoxServerDiscovererTest {
     }
 
     @Test
-    public void eachNodeGetsItsOwnTokenAndTheTemporaryTokenIsRemoved() throws Exception {
-        Map<? extends ServerResource, Map<String, String>> found = find();
+    public void oneTokenServesTheWholeClusterAndIsKeptWithTheCluster() throws Exception {
+        find();
 
-        java.util.Set<String> usernames = new java.util.TreeSet<>();
-        for (Map<String, String> details : found.values()) {
-            usernames.add(details.get("username"));
-        }
-        assertEquals(new java.util.TreeSet<>(Arrays.asList("cloudstack@pve!cs-pve1", "cloudstack@pve!cs-pve2")), usernames);
+        assertEquals("cloudstack@pve!cs-lab", clusterDetails.get("username"));
+        assertEquals("secret-1", clusterDetails.get("password"));
+        assertEquals("one token, made once", 1, tokens);
+        assertEquals("the cluster is read with it", "cloudstack@pve!cs-lab=secret-1", createdClients.get(0));
         ScriptedSshLink login = links.get("10.0.35.25");
-        assertEquals("removed before it is made and again at the end", 2, login.commandsWith("user token remove cloudstack@pve cs-discovery").size());
-        assertTrue("the temporary token is removed at the end", login.commands.get(login.commands.size() - 1).contains("user token remove cloudstack@pve cs-discovery"));
-        assertTrue("the cluster is read with the temporary token", createdClients.get(0).startsWith("cloudstack@pve!cs-discovery="));
+        assertEquals(1, login.commandsWith("acl modify /nodes/pve1 ").size());
+        assertEquals(1, login.commandsWith("acl modify /nodes/pve2 ").size());
+        assertTrue(login.commandsWith("acl modify /nodes/pve3 ").isEmpty());
+    }
+
+    @Test
+    public void theTokenOfTheClusterIsReusedWhenAHostIsAddedLater() throws Exception {
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "kept-secret");
+
+        find();
+
+        assertEquals("no token was made", 0, tokens);
+        assertEquals("cloudstack@pve!cs-lab=kept-secret", createdClients.get(0));
+        assertEquals("kept-secret", clusterDetails.get("password"));
+    }
+
+    @Test
+    public void aTokenThatProxmoxNoLongerAcceptsIsReplaced() throws Exception {
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "old-secret");
+        when(client.getVersion()).thenThrow(new ProxmoxApiException("HTTP 401", 401, null)).thenReturn("8.4.21");
+
+        find();
+
+        assertEquals(1, tokens);
+        assertEquals("secret-1", clusterDetails.get("password"));
     }
 
     @Test
@@ -375,9 +411,10 @@ public class ProxmoxServerDiscovererTest {
         }
     }
 
-    @Test
-    public void deletingAHostRemovesItsToken() {
+    private com.cloud.host.HostVO hostToDelete() {
         com.cloud.host.HostVO host = mock(com.cloud.host.HostVO.class);
+        when(host.getId()).thenReturn(5L);
+        when(host.getClusterId()).thenReturn(2L);
         when(host.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
         when(host.getName()).thenReturn("pve2");
         Map<String, String> details = new HashMap<>();
@@ -387,13 +424,85 @@ public class ProxmoxServerDiscovererTest {
         details.put(ProxmoxResource.DETAIL_NODE_IP, "10.0.32.197");
         details.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, "SHA256:key9");
         when(host.getDetails()).thenReturn(details);
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "secret-1");
+        return host;
+    }
+
+    @Test
+    public void deletingTheLastHostOfTheClusterRemovesTheClustersToken() {
+        com.cloud.host.HostVO host = hostToDelete();
+        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host));
         ScriptedSshLink node = nodeLink();
         node.fingerprint = "SHA256:key9";
         links.put("10.0.32.197", node);
 
         discoverer.revokeToken(host);
 
-        assertEquals(1, node.commandsWith("user token remove cloudstack@pve cs-pve2").size());
+        assertEquals(1, node.commandsWith("user token remove cloudstack@pve cs-lab").size());
         assertEquals("SHA256:key9", opened.get(0).getPinnedFingerprint());
+        assertTrue("the cluster no longer keeps the token", clusterDetails.isEmpty());
+    }
+
+    @Test
+    public void deletingAHostWhenOthersRemainKeepsTheToken() {
+        com.cloud.host.HostVO host = hostToDelete();
+        com.cloud.host.HostVO other = mock(com.cloud.host.HostVO.class);
+        when(other.getId()).thenReturn(6L);
+        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host, other));
+
+        discoverer.revokeToken(host);
+
+        assertTrue(opened.isEmpty());
+        assertEquals("cloudstack@pve!cs-lab", clusterDetails.get("username"));
+    }
+
+    @Test
+    public void aTokenThatCannotBeRemovedDoesNotStopTheDelete() {
+        com.cloud.host.HostVO host = hostToDelete();
+        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host));
+        ScriptedSshLink node = nodeLink();
+        node.fingerprint = "SHA256:key9";
+        node.answers = command -> new ExecResult(1, "", "connection lost");
+        links.put("10.0.32.197", node);
+
+        discoverer.revokeToken(host);
+    }
+
+    private com.cloud.host.HostVO hostWithDetails(Map<String, String> details) {
+        com.cloud.host.HostVO host = mock(com.cloud.host.HostVO.class);
+        when(host.getClusterId()).thenReturn(2L);
+        when(host.getDataCenterId()).thenReturn(1L);
+        when(host.getGuid()).thenReturn("Proxmox:abc");
+        when(host.getDetails()).thenReturn(details);
+        return host;
+    }
+
+    @Test
+    public void aHostIsRebuiltWithTheTokenOfItsCluster() {
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "kept-secret");
+        Map<String, String> details = new HashMap<>();
+        details.put(ProxmoxResource.DETAIL_NODE, "pve1");
+
+        java.util.HashMap<String, Object> params = discoverer.buildConfigParams(hostWithDetails(details));
+
+        assertEquals("cloudstack@pve!cs-lab", params.get("username"));
+        assertEquals("kept-secret", params.get("password"));
+        assertEquals("pve1", params.get(ProxmoxResource.DETAIL_NODE));
+    }
+
+    @Test
+    public void aHostThatKeepsItsOwnTokenFromBeforeIsRebuiltWithIt() {
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "kept-secret");
+        Map<String, String> details = new HashMap<>();
+        details.put("username", "root@pam!old");
+        details.put("password", "own-secret");
+
+        java.util.HashMap<String, Object> params = discoverer.buildConfigParams(hostWithDetails(details));
+
+        assertEquals("root@pam!old", params.get("username"));
+        assertEquals("own-secret", params.get("password"));
     }
 }

@@ -30,7 +30,7 @@ import org.apache.commons.lang3.StringUtils;
  */
 public class ProxmoxSsh implements AutoCloseable {
     static final int CONNECT_TIMEOUT_MS = 20_000;
-    static final int DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+    public static final int DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 
     private final SshTarget target;
     private final SshLink link;
