@@ -53,16 +53,43 @@ Removing a host revokes its token (best effort). A host whose token was removed 
 
 A command that touches the node's filesystem runs on the node that holds the thing, like the API calls do: the host the CloudStack command was sent to. Storage that all nodes see (NFS) can be reached from any node, so a detached volume's command may run on the node the command arrived at.
 
-## 4. Open questions
+## 4. Decisions and open points
 
-1. **Token-only Add Host:** removed for new hosts as you said ("only username and password or SSH key"); existing hosts keep their token. Is that right, or should a token login stay as a documented alternative for people who will not give SSH?
-2. **SSH user:** always what is typed in Add Host (root by default), as KVM. A restricted user with `sudo` for named commands is possible later.
-3. **Privileges of the created role:** the minimum from requirements.md section 3 plus `Sys.Modify` for the bridge; I would write the exact list in the build step and test it with a fresh user.
-4. **Where the SSH login is kept for later use:** host details (the password encrypted, as KVM does); the key stays the global `ssh.privatekey`.
-5. **Order:** SSH layer and Add Host first (a small step, lab-testable by itself), then volume snapshots, then the template and ISO layout, instance snapshots whenever.
+Decided with the user (2026-10-31):
+1. **No token login as an alternative.** Add Host takes a username and password or an SSH key, and nothing else. A token-only host would have no SSH, so volume snapshots would not work for it and the template and ISO layout would have to keep creating one storage entry per account folder. Hosts are deleted and added again as a fresh start; no migration of existing token hosts.
+2. **The SSH user may be a non-root user, with `sudo`.** The documentation says that the user needs `sudo`. **Before building**, check in the lab that `sudo` can replace root for every host command the plugin runs (section 6); if one cannot be done through `sudo`, the documentation says so.
+3. **Order:** SSH layer and Add Host first, then volume snapshots, then the template and ISO layout; instance snapshots whenever.
+
+Open:
+- **Privileges of the created API user (explained to the user, answer needed).** Proxmox grants rights as privileges collected in roles, and the token can do only what its roles allow. The plugin creates the user and token with the roles requirements.md already prescribes: the built-in `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, plus two small custom roles, `CloudStackHA` (`Sys.Audit`, `Sys.Console`) and `CloudStackNet` (`Sys.Modify`, to create the control bridge). The alternative is one broad built-in role (`PVEAdmin`), which is simpler and gives the token more than it needs. Proposal: the narrow set.
+- **How `sudo` asks for a password:** `sudo -n` (needs `NOPASSWD` for the user) or `sudo -S` with the login password. Proposal: support both, `NOPASSWD` recommended and documented, `sudo -S` with the Add Host password when there is none.
 
 ## 5. Plan
 
 1. `ProxmoxSsh`: run a command on a node, copy a file, timeouts, host key check (CloudStack's `SSHCmdHelper` is already in the code base); unit tests with a fake connection.
 2. Add Host: key then password, create user, role and token, install the system VM key, store the login; revoke on removal; messages for each failure. Existing token hosts unchanged.
 3. Docs: requirements.md (Add Host, privileges, what SSH is used for), behaviour.md, this table kept current, tests, lab checks (add a host with a password, with a key, with a wrong password, with `PermitRootLogin` off; revoke).
+
+## 6. Lab checks for a non-root user with sudo (before building)
+
+On one node, create a user and give it `sudo` (first with `NOPASSWD: ALL`, later with the list of commands only):
+
+```bash
+adduser csadmin
+echo 'csadmin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/csadmin && chmod 440 /etc/sudoers.d/csadmin
+```
+
+Then as `csadmin` (over `ssh csadmin@<node>`, not `su`, since the plugin connects like that):
+
+| # | Command | Answers |
+|---|---|---|
+| X1 | `sudo -n pveum user add cltest@pve && sudo -n pveum user token add cltest@pve t1 --privsep 1 --output-format json` | can `pveum` create user and token, is the secret printed in a form we can read |
+| X2 | `sudo -n pveum role add CloudStackNetTest --privs "Sys.Modify" && sudo -n pveum acl modify / --users cltest@pve --roles CloudStackNetTest` | roles and ACLs through `sudo` |
+| X3 | `sudo -n ls /etc/pve/priv` and `echo test \| sudo -n tee /etc/pve/priv/cltest_key > /dev/null` | writing under `/etc/pve` (the cluster filesystem) through `sudo` |
+| X4 | `sudo -n qemu-img info /mnt/<pool uuid>/images/<some vmid>/<disk>.qcow2` on an NFS volume | reading a disk image through `sudo` on NFS (root squash can change the answer) |
+| X5 | `sudo -n qemu-img snapshot -l <detached volume file>` | listing snapshots, the first step of a volume snapshot |
+| X6 | `sudo -n ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` | reading the host key fingerprint |
+| X7 | the same X1 with `sudo` **without** `NOPASSWD` and `echo '<password>' \| sudo -S -p '' pveum user list` | `sudo -S` with a password on standard input |
+| X8 | `sudo -n id` over a non-interactive `ssh csadmin@<node> sudo -n id` | no terminal needed (`requiretty`) |
+
+Clean up afterwards: `sudo pveum user delete cltest@pve`, `sudo pveum role delete CloudStackNetTest`, `sudo rm -f /etc/pve/priv/cltest_key`.
