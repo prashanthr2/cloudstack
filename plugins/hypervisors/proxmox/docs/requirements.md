@@ -87,7 +87,29 @@ The certificate must also contain the address used to reach the node (its IP add
 names, or the hostname check fails (**to verify** for default Proxmox node certificates). If the nodes are reached by an
 address that is not in the certificate, either add that address to the certificate or leave verification off.
 
-## 3. API token
+## 3. Adding a host, and the API token
+
+**Since Phase 10 (design-phase10-ssh-access.md) Add Host takes a login, not a token.** Username and password are a Proxmox login that can run `pveum`: normally `root`,
+or another user that may use `sudo` (it needs `NOPASSWD` for `sudo -n`, or the plugin gives the password to `sudo -S`; the same user must exist on every node). The
+password may be left empty when the management server's key (the global setting `ssh.privatekey`, as for a KVM host) is in the node's `authorized_keys`: the key is
+tried first, then the password. Proxmox's `root` login by key works on every node once it is in `/etc/pve/priv/authorized_keys`, which the cluster shares.
+
+With that login the plugin, over SSH:
+1. checks the node's SSH host key (kept with the host, and compared on later connections);
+2. makes the user `cloudstack@pve` and the roles below, and one API token per node it adds (`cs-<node name>`, with privilege separation), and gives the token its rights on the
+   user and on the token: `PVEAuditor` on `/`, `PVEVMAdmin` on `/vms`, `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, the role `CloudStackNet`
+   (`Sys.Modify`) on the node's own path without propagation, and, only when `proxmox.ha.manage` is on, the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/`
+   without propagation;
+3. keeps the token (as the host's user name and password, the password encrypted as before), and the SSH login and host key, with the host;
+4. from then on uses the API with the token. Deleting the host removes its token (best effort).
+
+A node where the login does not work is not added, and the log says why. Hosts added with a token before this change must be deleted and added again.
+**Where SSH is used and where the API is used** is in design-phase10-ssh-access.md section 1; this file keeps the permissions each API call needs.
+
+The rest of this section describes the token and the permissions, which the plugin now sets up itself; the commands are what it runs, and what to do by hand for a node
+where you do not want to give an SSH login (such a host cannot be added any more: it is kept for reference).
+
+## 3a. API token (reference)
 
 CloudStack authenticates to Proxmox with an API token, not with a user password. A token can be revoked on its own, can be
 limited in what it may do, does not expire after a couple of hours like a login ticket, and works for accounts that use

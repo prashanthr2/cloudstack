@@ -706,3 +706,7 @@ On the build with the stable data volume path (design section 18), alias-first l
 ### Phase 10, step 1: the SSH layer (2026-10-31): unit tests
 
 `ProxmoxSshTest` (15: key then password, accepted key needs no password, refused login message, key or password needed, first connection reports the host key, a changed host key fails, root commands as they are, `sudo -n`, `sudo -S` with the password on standard input, the NOPASSWD message, a failed command carries its output, file written from standard input, quoting, fingerprint form). Plugin total 494 pass. The real connection class is not run against a node yet (Add Host, step 2). Lab checks X1 to X8 of design-phase10-ssh-access.md section 6: X1, X2, X4, X5, X6, X8 pass; X3 and X7 to repeat.
+
+### Phase 10, step 2: Add Host with a login (2026-10-31): unit tests
+
+`ProxmoxApiAccessTest` (8: token made and read, old token replaced, user and roles made or kept, every role given to user and token with its path, HA role only when HA is managed, a failure stops the setup, output that is not a token, revoke forgives a missing token) and `ProxmoxServerDiscovererTest` (+6: a token per node and the temporary one removed, the login and host key kept, no password kept when the key did the login, a node that refuses is skipped without a token, a refused login on the given address fails the add, delete removes the token). Plugin total 508 pass. Not run against a node yet.

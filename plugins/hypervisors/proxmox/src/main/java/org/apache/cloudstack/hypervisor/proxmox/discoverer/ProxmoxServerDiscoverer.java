@@ -32,6 +32,12 @@ import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxControlBridge;
 import org.apache.cloudstack.hypervisor.proxmox.resource.ProxmoxResource;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxApiAccess;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.TrileadSshLink;
+import org.apache.commons.lang3.StringUtils;
 
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
@@ -47,6 +53,7 @@ import com.cloud.resource.ResourceStateAdapter;
 import com.cloud.resource.ServerResource;
 import com.cloud.resource.UnableDeleteHostException;
 import com.cloud.utils.UuidUtils;
+import com.cloud.utils.crypt.DBEncryptionUtil;
 
 /**
  * Adds a Proxmox VE cluster to a CloudStack cluster. A single "add host" call with the API URL of any node
@@ -66,6 +73,12 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         super.configure(name, params);
         _resourceMgr.registerResourceStateAdapter(this.getClass().getSimpleName(), this);
         return true;
+    }
+
+    static final int SSH_PORT = 22;
+
+    protected ProxmoxSsh openSsh(SshTarget target) {
+        return ProxmoxSsh.open(target, () -> new TrileadSshLink(target.getHost(), target.getPort()));
     }
 
     protected ProxmoxApiClient createClient(String endpoint, String tokenId, String tokenSecret) {
@@ -90,6 +103,11 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         return "Proxmox:" + UuidUtils.nameUUIDFromBytes((proxmoxClusterName + "/" + nodeName).getBytes());
     }
 
+    /**
+     * Adding a host: the user name and password (or the management server's key, setting {@code ssh.privatekey}, with no password) are a login on the
+     * node, as for a KVM host. Over SSH the plugin makes the API user and one token per node it adds (ProxmoxApiAccess), keeps the host key of each node
+     * and the login, and from then on uses the API with the token. design-phase10-ssh-access.md.
+     */
     @Override
     public Map<? extends ServerResource, Map<String, String>> find(long dcId, Long podId, Long clusterId, URI uri,
             String username, String password, List<String> hostTags) throws DiscoveryException {
@@ -111,9 +129,35 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             throw new DiscoveryException(e.getMessage(), e);
         }
 
+        String privateKey = _configDao.getValue("ssh.privatekey");
+        ProxmoxSsh ssh;
+        try {
+            ssh = openSsh(new SshTarget(uri.getHost(), SSH_PORT, username, privateKey, password, null));
+        } catch (ProxmoxSshException e) {
+            logger.error("Unable to log in to the Proxmox node at {}: {}", uri.getHost(), e.getMessage());
+            throw new DiscoveryException(e.getMessage(), e);
+        }
+        try {
+            return discover(dcId, podId, clusterId, uri, endpoint, cluster, ssh, username, password, privateKey);
+        } catch (ProxmoxSshException e) {
+            logger.error("Unable to set up the Proxmox API access at {}: {}", uri.getHost(), e.getMessage());
+            throw new DiscoveryException(e.getMessage(), e);
+        } finally {
+            try {
+                ProxmoxApiAccess.revokeToken(ssh, ProxmoxApiAccess.DISCOVERY_TOKEN);
+            } catch (ProxmoxSshException e) {
+                logger.warn("The temporary token {} stays on the node: {}", ProxmoxApiAccess.DISCOVERY_TOKEN, e.getMessage());
+            }
+            ssh.close();
+        }
+    }
+
+    private Map<? extends ServerResource, Map<String, String>> discover(long dcId, Long podId, Long clusterId, URI uri, String endpoint, ClusterVO cluster,
+            ProxmoxSsh ssh, String username, String password, String privateKey) throws DiscoveryException {
+        ProxmoxApiAccess.Token discovery = ProxmoxApiAccess.createDiscoveryToken(ssh);
         List<ProxmoxApiClient.NodeInfo> nodes;
         String proxmoxClusterName;
-        try (ProxmoxApiClient client = createClient(endpoint, username, password)) {
+        try (ProxmoxApiClient client = createClient(endpoint, discovery.getId(), discovery.getSecret())) {
             String version = client.getVersion();
             logger.info("Connected to Proxmox VE {} at {}", version, endpoint);
             proxmoxClusterName = client.getClusterName();
@@ -151,10 +195,24 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 logger.info("Skipping Proxmox node {}: it is already added", nodeInfo.getName());
                 continue;
             }
-            ensureControlBridge(endpoint, username, password, nodeInfo.getName());
+            // the same login must work on every node: the host key of each node is kept, and a node that refuses the login is not added
+            String fingerprint;
+            boolean loginNode = uri.getHost().equals(nodeInfo.getIp());
+            if (loginNode) {
+                fingerprint = ssh.getHostKeyFingerprint();
+            } else {
+                try (ProxmoxSsh other = openSsh(new SshTarget(nodeInfo.getIp(), SSH_PORT, username, privateKey, password, null))) {
+                    fingerprint = other.getHostKeyFingerprint();
+                } catch (ProxmoxSshException e) {
+                    logger.warn("Skipping Proxmox node {}: the SSH login does not work there: {}", nodeInfo.getName(), e.getMessage());
+                    continue;
+                }
+            }
+            ProxmoxApiAccess.Token token = ProxmoxApiAccess.create(ssh, nodeInfo.getName(), ProxmoxConfig.HaManage.value());
+            ensureControlBridge(endpoint, token.getId(), token.getSecret(), nodeInfo.getName());
             Map<String, Object> params = new HashMap<>();
-            params.put("username", username);
-            params.put("password", password);
+            params.put("username", token.getId());
+            params.put("password", token.getSecret());
             params.put("zone", Long.toString(dcId));
             params.put("pod", Long.toString(podId));
             params.put("cluster", Long.toString(clusterId));
@@ -170,23 +228,30 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 resource.configure(nodeInfo.getName(), params);
             } catch (ConfigurationException e) {
                 logger.error("Unable to configure the resource for Proxmox node {}: {}", nodeInfo.getName(), e.getMessage());
+                ProxmoxApiAccess.revoke(ssh, nodeInfo.getName());
                 continue;
             }
             // Host details are all that is kept for a host; the resource is rebuilt from them after a management
-            // server restart. The "password" detail is encrypted by the host details DAO.
+            // server restart. The "password" detail (the token secret) is encrypted by the host details DAO; the SSH password is not
+            // under that name, so the plugin encrypts it itself.
             Map<String, String> details = new HashMap<>();
             details.put("guid", guid);
-            details.put("username", username);
-            details.put("password", password);
+            details.put("username", token.getId());
+            details.put("password", token.getSecret());
             details.put(ProxmoxResource.DETAIL_NODE, nodeInfo.getName());
             details.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             details.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
             details.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
+            details.put(ProxmoxResource.DETAIL_SSH_USER, username);
+            if (StringUtils.isNotEmpty(password)) {
+                details.put(ProxmoxResource.DETAIL_SSH_PASSWORD, DBEncryptionUtil.encrypt(password));
+            }
+            details.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, fingerprint);
             resources.put(resource, details);
         }
         if (resources.isEmpty()) {
             throw new DiscoveryException("No new online Proxmox nodes found at " + endpoint
-                    + ": every online node of the Proxmox cluster is already added");
+                    + ": every online node of the Proxmox cluster is already added, or the SSH login does not work on the others");
         }
         return resources;
     }
@@ -302,6 +367,34 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
 
     @Override
     public DeleteHostAnswer deleteHost(HostVO host, boolean isForced, boolean isForceDeleteStorage) throws UnableDeleteHostException {
+        revokeToken(host);
         return new DeleteHostAnswer(true);
+    }
+
+    /** Removes the API token that was made for the host. Best effort: a host that is deleted because its node is gone cannot be reached, and that does not stop the delete. */
+    void revokeToken(HostVO host) {
+        if (host.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
+            return;
+        }
+        try {
+            _hostDao.loadDetails(host);
+            Map<String, String> details = host.getDetails();
+            String sshUser = details == null ? null : details.get(ProxmoxResource.DETAIL_SSH_USER);
+            String node = details == null ? null : details.get(ProxmoxResource.DETAIL_NODE);
+            String address = details == null ? null : details.get(ProxmoxResource.DETAIL_NODE_IP);
+            if (StringUtils.isAnyBlank(sshUser, node, address)) {
+                return;
+            }
+            String encrypted = details.get(ProxmoxResource.DETAIL_SSH_PASSWORD);
+            String sshPassword = StringUtils.isEmpty(encrypted) ? null : DBEncryptionUtil.decrypt(encrypted);
+            try (ProxmoxSsh ssh = openSsh(new SshTarget(address, SSH_PORT, sshUser, _configDao.getValue("ssh.privatekey"), sshPassword,
+                    details.get(ProxmoxResource.DETAIL_SSH_FINGERPRINT)))) {
+                ProxmoxApiAccess.revoke(ssh, node);
+                logger.info("Removed the API token of Proxmox node {}", node);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("The API token of Proxmox host {} was not removed (remove it with: pveum user token remove {} {}): {}", host.getName(),
+                    ProxmoxApiAccess.USER, ProxmoxApiAccess.tokenName(host.getName()), e.getMessage());
+        }
     }
 }
