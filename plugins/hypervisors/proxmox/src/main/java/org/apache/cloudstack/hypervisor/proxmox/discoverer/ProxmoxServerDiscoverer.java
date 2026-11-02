@@ -252,6 +252,9 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             params.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             params.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
             params.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
+            // the resource checks a new SSH login against it (updateHostPassword with update_passwd_on_host); a resource that is rebuilt after a restart
+            // gets it from the host details
+            params.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, fingerprint);
 
             ProxmoxResource resource = new ProxmoxResource();
             try {

@@ -330,6 +330,16 @@ public class ProxmoxServerDiscovererTest {
     }
 
     @Test
+    public void theResourceOfANewHostKnowsTheSshHostKeyOfItsNode() throws Exception {
+        Map<? extends ServerResource, Map<String, String>> found = find();
+
+        for (Map.Entry<? extends ServerResource, Map<String, String>> entry : found.entrySet()) {
+            assertEquals(entry.getValue().get(ProxmoxResource.DETAIL_SSH_FINGERPRINT), ReflectionTestUtils.getField(entry.getKey(), "sshFingerprint"));
+            assertNotNull(entry.getValue().get(ProxmoxResource.DETAIL_SSH_FINGERPRINT));
+        }
+    }
+
+    @Test
     public void addHostPutsTheSystemVmLoginKeyIntoTheSettingWhenItIsEmpty() throws Exception {
         find();
 
