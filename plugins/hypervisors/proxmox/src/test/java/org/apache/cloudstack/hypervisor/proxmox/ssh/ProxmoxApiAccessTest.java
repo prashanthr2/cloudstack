@@ -88,7 +88,7 @@ public class ProxmoxApiAccessTest {
 
         ProxmoxApiAccess.grantNode(open(link), "cloudstack@pve!cs-lab", "pve1");
 
-        assertEquals(1, link.commandsWith("acl modify /nodes/pve1 --users cloudstack@pve --tokens 'cloudstack@pve!cs-lab' --roles CloudStackNet --propagate 0").size());
+        assertEquals(1, link.commandsWith("acl modify /nodes/pve1 --users cloudstack@pve --tokens 'cloudstack@pve!cs-lab' --roles PVEAuditor,CloudStackNet --propagate 0").size());
     }
 
     @Test

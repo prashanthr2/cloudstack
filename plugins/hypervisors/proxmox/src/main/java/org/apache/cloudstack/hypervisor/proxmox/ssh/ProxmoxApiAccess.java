@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public final class ProxmoxApiAccess {
     public static final String USER = "cloudstack@pve";
+    static final String AUDIT_ROLE = "PVEAuditor";
     static final String NET_ROLE = "CloudStackNet";
     static final String HA_ROLE = "CloudStackHA";
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -78,7 +79,7 @@ public final class ProxmoxApiAccess {
         ssh.sudo("pveum user token remove " + USER + " " + name, null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
         Token token = parse(ssh.sudoOrFail("pveum user token add " + USER + " " + name + " --privsep 1 --output-format json"));
         String id = token.getId();
-        grant(ssh, "/", "PVEAuditor", id, true);
+        grant(ssh, "/", AUDIT_ROLE, id, true);
         grant(ssh, "/vms", "PVEVMAdmin", id, true);
         grant(ssh, "/storage", "PVEDatastoreAdmin", id, true);
         grant(ssh, "/sdn/zones/localnetwork", "PVESDNUser", id, true);
@@ -88,9 +89,13 @@ public final class ProxmoxApiAccess {
         return token;
     }
 
-    /** Lets the token change the network of one node (to make the control bridge), on the node's own path without propagation. */
+    /**
+     * Lets the token change the network of one node (to make the control bridge), on the node's own path without propagation. Proxmox does not add
+     * the roles of a path to the ones it inherits: the roles given on a path replace them. The node path therefore gets the audit role again, or the
+     * token could no longer read the node's status.
+     */
     public static void grantNode(ProxmoxSsh ssh, String tokenId, String node) {
-        grant(ssh, "/nodes/" + node, NET_ROLE, tokenId, false);
+        grant(ssh, "/nodes/" + node, AUDIT_ROLE + "," + NET_ROLE, tokenId, false);
     }
 
     /** Removes the token by its id ("cloudstack@pve!cs-lab"); the user and the roles stay. A token that is gone already is not an error. */
