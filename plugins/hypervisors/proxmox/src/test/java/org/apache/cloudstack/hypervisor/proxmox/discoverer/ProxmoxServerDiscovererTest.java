@@ -411,11 +411,27 @@ public class ProxmoxServerDiscovererTest {
         }
     }
 
+    @Test
+    public void deleteHostAnswersForAProxmoxHostOnly() throws Exception {
+        com.cloud.host.HostVO other = mock(com.cloud.host.HostVO.class);
+        when(other.getType()).thenReturn(com.cloud.host.Host.Type.Routing);
+        when(other.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.KVM);
+        assertNull("another hypervisor's host is left to its own adapter", discoverer.deleteHost(other, false, false));
+
+        com.cloud.host.HostVO storage = mock(com.cloud.host.HostVO.class);
+        when(storage.getType()).thenReturn(com.cloud.host.Host.Type.SecondaryStorage);
+        when(storage.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
+        assertNull("a host that is not a hypervisor host is left to its own adapter", discoverer.deleteHost(storage, false, false));
+
+        assertTrue(discoverer.deleteHost(hostToDelete(), false, false).getIsContinue());
+    }
+
     private com.cloud.host.HostVO hostToDelete() {
         com.cloud.host.HostVO host = mock(com.cloud.host.HostVO.class);
         when(host.getId()).thenReturn(5L);
         when(host.getClusterId()).thenReturn(2L);
         when(host.getHypervisorType()).thenReturn(Hypervisor.HypervisorType.Proxmox);
+        when(host.getType()).thenReturn(com.cloud.host.Host.Type.Routing);
         when(host.getName()).thenReturn("pve2");
         Map<String, String> details = new HashMap<>();
         details.put(ProxmoxResource.DETAIL_SSH_USER, "root");

@@ -290,6 +290,9 @@ public class ExternalServerDiscoverer extends DiscovererBase implements Discover
 
     @Override
     public DeleteHostAnswer deleteHost(HostVO host, boolean isForced, boolean isForceDeleteStorage) throws UnableDeleteHostException {
+        if (host.getType() != Host.Type.Routing || host.getHypervisorType() != Hypervisor.HypervisorType.External) {
+            return null;
+        }
         return new DeleteHostAnswer(true);
     }
 }

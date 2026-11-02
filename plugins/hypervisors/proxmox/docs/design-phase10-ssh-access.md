@@ -145,3 +145,8 @@ The plugin was built and lab-tested only on Proxmox VE 8.4.21. Before adding Pro
 - a cluster with both 8 and 9 nodes (only meaningful during an upgrade).
 
 **Lab check on one Proxmox 9 node (own cluster, so the 8.4 cluster is not touched):** Add Host with root and password; one token `cs-<cluster>`; start a VM with a network (control bridge and bridge ACL); attach and detach a data volume; live volume migration (T8); HA enabled and disabled for a VM; delete the host removes the token. Record the results in `test-log.md`.
+
+## 10. First lab round (2026-11-02): two findings
+
+- **Add Host failed with HTTP 403 `Sys.Audit` on the node** after the control bridge was made: the node path got `CloudStackNet` alone, and Proxmox replaces the inherited roles with the ones set on a path. Fixed: `grantNode` gives `PVEAuditor` and `CloudStackNet` (section 8).
+- **Deleting the last host did not remove the token.** `ExternalServerDiscoverer.deleteHost` answered for every host and ended the dispatch before the Proxmox adapter was asked (upstream-notes 29). Fixed with a type guard in both adapters: the Proxmox adapter returns `null` for a host that is not a Proxmox routing host. Lab check to repeat: delete all hosts of the cluster, then `pveum user token list cloudstack@pve` is empty and the `username` and `password` cluster details are gone.

@@ -424,6 +424,10 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
 
     @Override
     public DeleteHostAnswer deleteHost(HostVO host, boolean isForced, boolean isForceDeleteStorage) throws UnableDeleteHostException {
+        // the first adapter that answers ends the dispatch, so an answer for another hypervisor's host would hide it from its own adapter
+        if (host.getType() != com.cloud.host.Host.Type.Routing || host.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
+            return null;
+        }
         revokeToken(host);
         return new DeleteHostAnswer(true);
     }
