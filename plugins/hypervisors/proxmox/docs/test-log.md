@@ -714,3 +714,7 @@ One API token for the Proxmox cluster, kept in the CloudStack cluster's details.
 ## Proxmox 9 compatibility (2026-11-02)
 
 Source comparison only, no lab run yet: see `design-phase10-ssh-access.md` section 9 (result: no change needed; the cluster and node calls, HA and the bridge ACL path are not in the mirrors and are the first things to check on a Proxmox 9 node).
+
+## Console of a system VM, 2026-11-02
+
+Console proxy VM 101 on pve3: `vncproxy` task ran on pve2 and ended `connection timed out`; pve3's `pveproxy` logged `connect to 'localhost:5900' failed: Connection refused`. User VM 103 on pve2 worked. Cause and fix: `design-phase10-ssh-access.md` section 10. Re-test pending.

@@ -194,6 +194,7 @@ public class ProxmoxResourceTest {
     @Test
     public void aConsoleRequestIsAnsweredWithTheNodesWebsocketAndTheTokenHeader() {
         when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(100, "i-2-10-VM", NODE, "running"));
+        when(client.atEndpoint("https://10.0.32.198:8006")).thenReturn(client);
         when(client.openConsole(NODE, 100L)).thenReturn(new ProxmoxApiClient.ConsoleSession(5900, "ticket", "password", "root@pam!cloudstack"));
 
         GetVmWebsocketConsoleAnswer answer = (GetVmWebsocketConsoleAnswer) resource.executeRequest(new GetVmWebsocketConsoleCommand("i-2-10-VM"));

@@ -88,6 +88,7 @@ public class ProxmoxVmHandlerTest {
     @Before
     public void setUp() {
         client = mock(ProxmoxApiClient.class);
+        when(client.atEndpoint(anyString())).thenReturn(client);
         handler = new ProxmoxVmHandler(() -> client, NODE, "10.0.32.198", 8006, () -> "PVEAPIToken=pveaudit@pam!cloudstack=s3cret", millis -> pauses++,
                 () -> 600);
     }
@@ -650,6 +651,8 @@ public class ProxmoxVmHandlerTest {
 
         assertTrue(answer.getDetails(), answer.getResult());
         assertEquals("wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/9204/vncwebsocket?port=5901&vncticket=t", answer.getUrl());
+        // the node that gets the console call opens the listener the websocket connects to: the call goes to the address in the URL
+        verify(client).atEndpoint("https://10.0.32.74:8006");
     }
 
     @Test

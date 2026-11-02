@@ -1562,7 +1562,9 @@ class ProxmoxVmHandler {
             if (address == null) {
                 return new GetVmWebsocketConsoleAnswer(cmd, "No address is known for Proxmox node " + location.getNode());
             }
-            ProxmoxApiClient.ConsoleSession session = client.openConsole(location.getNode(), location.getVmid());
+            // the node that gets this call opens the listener, so the call goes to the node whose address the websocket will use
+            ProxmoxApiClient.ConsoleSession session = client.atEndpoint(String.format("https://%s:%d", address, apiPort))
+                    .openConsole(location.getNode(), location.getVmid());
             if (StringUtils.isBlank(session.getPassword())) {
                 return new GetVmWebsocketConsoleAnswer(cmd, "Proxmox returned no VNC password for " + cmd.getVmName());
             }

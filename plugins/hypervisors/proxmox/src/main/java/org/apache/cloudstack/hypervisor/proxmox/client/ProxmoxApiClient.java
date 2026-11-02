@@ -104,6 +104,17 @@ public class ProxmoxApiClient implements Closeable {
         this.httpClient = httpClient;
     }
 
+    /** A view of this client that talks to one address only (no failover), with the same token and connection settings. It does not own the connection. */
+    public ProxmoxApiClient atEndpoint(String baseUrl) {
+        return new ProxmoxApiClient(this, baseUrl);
+    }
+
+    private ProxmoxApiClient(ProxmoxApiClient parent, String baseUrl) {
+        this.baseUrls = Collections.singletonList(StringUtils.removeEnd(baseUrl, "/"));
+        this.authHeader = parent.authHeader;
+        this.httpClient = parent.httpClient;
+    }
+
     private static CloseableHttpClient buildHttpClient(boolean verifyTls, int connectTimeoutMs, int readTimeoutMs) {
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectTimeout(connectTimeoutMs)
@@ -830,8 +841,9 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Opens a console session for a running VM, for a websocket (the node waits for one connection for a few seconds). The call has to go to
-     * the node that holds the VM.
+     * Opens a console session for a running VM, for a websocket (the node waits for one connection for a few seconds). The node that receives
+     * this call opens the listener the websocket must connect to (it reaches the VM's own node by SSH), so the websocket has to go to the same
+     * node: send the call with a client that talks to that one node, see {@link #atEndpoint}.
      */
     public ConsoleSession openConsole(String node, long vmid) {
         Map<String, String> form = new LinkedHashMap<>();
