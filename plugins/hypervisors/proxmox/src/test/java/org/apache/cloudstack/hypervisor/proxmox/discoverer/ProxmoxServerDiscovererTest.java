@@ -491,7 +491,7 @@ public class ProxmoxServerDiscovererTest {
     @Test
     public void deletingTheLastHostOfTheClusterRemovesTheClustersToken() {
         com.cloud.host.HostVO host = hostToDelete();
-        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host));
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L));
         ScriptedSshLink node = nodeLink();
         node.fingerprint = "SHA256:key9";
         links.put("10.0.32.197", node);
@@ -506,9 +506,7 @@ public class ProxmoxServerDiscovererTest {
     @Test
     public void deletingAHostWhenOthersRemainKeepsTheToken() {
         com.cloud.host.HostVO host = hostToDelete();
-        com.cloud.host.HostVO other = mock(com.cloud.host.HostVO.class);
-        when(other.getId()).thenReturn(6L);
-        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host, other));
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L, 6L));
 
         discoverer.revokeToken(host);
 
@@ -519,13 +517,68 @@ public class ProxmoxServerDiscovererTest {
     @Test
     public void aTokenThatCannotBeRemovedDoesNotStopTheDelete() {
         com.cloud.host.HostVO host = hostToDelete();
-        when(hostDao.listByClusterAndHypervisorType(2L, Hypervisor.HypervisorType.Proxmox)).thenReturn(Arrays.asList(host));
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L));
         ScriptedSshLink node = nodeLink();
         node.fingerprint = "SHA256:key9";
         node.answers = command -> new ExecResult(1, "", "connection lost");
         links.put("10.0.32.197", node);
 
         discoverer.revokeToken(host);
+    }
+
+    @Test
+    public void theLoginAnUpdateHostPasswordStoredIsUsedToRemoveTheToken() {
+        com.cloud.host.HostVO host = hostToDelete();
+        host.getDetails().put("username", "csadmin");
+        host.getDetails().put("password", "new-password");
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L));
+        ScriptedSshLink node = nodeLink();
+        node.fingerprint = "SHA256:key9";
+        links.put("10.0.32.197", node);
+
+        discoverer.revokeToken(host);
+
+        assertEquals("csadmin", opened.get(0).getUser());
+        assertEquals("new-password", opened.get(0).getPassword());
+        assertEquals(1, node.commandsWith("user token remove cloudstack@pve cs-lab").size());
+    }
+
+    @Test
+    public void aHostThatIsNotRunningStillCountsAsAnotherHostOfTheCluster() {
+        com.cloud.host.HostVO host = hostToDelete();
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L, 7L));
+
+        discoverer.revokeToken(host);
+
+        assertTrue(opened.isEmpty());
+        assertEquals("cloudstack@pve!cs-lab", clusterDetails.get("username"));
+    }
+
+    @Test
+    public void theClustersTokenIsUsedAndAHostsOwnUsernameAndPasswordAreAnSshLoginNotAToken() {
+        clusterDetails.put("username", "cloudstack@pve!cs-lab");
+        clusterDetails.put("password", "kept-secret");
+        Map<String, String> details = new HashMap<>();
+        details.put("username", "csadmin");
+        details.put("password", "ssh-password");
+
+        java.util.HashMap<String, Object> params = discoverer.buildConfigParams(hostWithDetails(details));
+
+        assertEquals("cloudstack@pve!cs-lab", params.get("username"));
+        assertEquals("kept-secret", params.get("password"));
+    }
+
+    @Test
+    public void theSshLoginIsTheOneUpdateHostPasswordStoredOtherwiseTheOneFromAddHost() {
+        Map<String, String> added = new HashMap<>();
+        added.put(ProxmoxResource.DETAIL_SSH_USER, "root");
+        assertEquals("root", ProxmoxServerDiscoverer.sshLoginOf(added)[0]);
+        assertNull("a login by key has no password", ProxmoxServerDiscoverer.sshLoginOf(added)[1]);
+
+        added.put("username", "csadmin");
+        added.put("password", "new-password");
+        assertEquals("csadmin", ProxmoxServerDiscoverer.sshLoginOf(added)[0]);
+        assertEquals("new-password", ProxmoxServerDiscoverer.sshLoginOf(added)[1]);
     }
 
     private com.cloud.host.HostVO hostWithDetails(Map<String, String> details) {
@@ -552,9 +605,7 @@ public class ProxmoxServerDiscovererTest {
     }
 
     @Test
-    public void aHostThatKeepsItsOwnTokenFromBeforeIsRebuiltWithIt() {
-        clusterDetails.put("username", "cloudstack@pve!cs-lab");
-        clusterDetails.put("password", "kept-secret");
+    public void aHostThatKeepsItsOwnTokenFromBeforeIsRebuiltWithItWhenTheClusterHasNone() {
         Map<String, String> details = new HashMap<>();
         details.put("username", "root@pam!old");
         details.put("password", "own-secret");

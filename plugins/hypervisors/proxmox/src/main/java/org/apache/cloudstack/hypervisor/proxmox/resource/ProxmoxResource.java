@@ -28,6 +28,10 @@ import org.apache.cloudstack.api.ApiConstants;
 import org.apache.cloudstack.hypervisor.proxmox.ProxmoxConfig;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.TrileadSshLink;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CopyCommand;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
@@ -123,6 +127,7 @@ public class ProxmoxResource implements ServerResource {
     protected String guid;
     protected String node;
     protected String nodeIp;
+    protected String sshFingerprint;
     protected String endpoint;
     protected List<String> endpoints = new ArrayList<>();
     protected String tokenId;
@@ -146,6 +151,7 @@ public class ProxmoxResource implements ServerResource {
         guid = (String) params.get("guid");
         node = (String) params.get(DETAIL_NODE);
         nodeIp = (String) params.get(DETAIL_NODE_IP);
+        sshFingerprint = (String) params.get(DETAIL_SSH_FINGERPRINT);
         tokenId = (String) params.get("username");
         tokenSecret = (String) params.get("password");
         endpoint = (String) params.get(DETAIL_ENDPOINT);
@@ -409,27 +415,26 @@ public class ProxmoxResource implements ServerResource {
     }
 
     /**
-     * Sent after the token of a host has been changed with updateHostPassword (when "update_passwd_on_host" is set). Nothing is
-     * changed on the Proxmox node (a token's secret cannot be changed there): the running connection is told to use the new
-     * token, after checking that Proxmox accepts it. Without this command the new token is picked up the next time the host
-     * reconnects.
+     * Sent after updateHostPassword with update_passwd_on_host. For Proxmox the username and password of a host are its SSH login (the API token is made
+     * by the plugin and kept with the cluster, and is not changed here). Nothing is changed on the node: the login is checked with the node, so that a
+     * wrong password is reported now and not when the first command that needs a shell fails. The login is stored by CloudStack before this command.
      */
     private Answer execute(UpdateHostPasswordCommand cmd) {
-        ProxmoxApiClient candidate = createClient(cmd.getUsername(), cmd.getNewPassword());
-        try {
-            candidate.getNodeStatus(node);
-        } catch (ProxmoxApiException e) {
-            candidate.close();
-            String reason = describeTokenFailure(e);
-            logger.warn("The new API token for Proxmox node {} was not accepted: {}", node, reason);
-            return new Answer(cmd, false, reason);
+        if (StringUtils.isAnyBlank(nodeIp, sshFingerprint)) {
+            return new Answer(cmd, false, "Proxmox node " + node + " has no stored SSH host key: it was added before SSH logins were kept; delete the host and add it again");
         }
-        tokenId = cmd.getUsername();
-        tokenSecret = cmd.getNewPassword();
-        // The previous client is not closed here because a ping on another thread may still be using it.
-        client = candidate;
-        logger.info("Proxmox node {} now uses the updated API token", node);
-        return new Answer(cmd, true, "The connection to Proxmox node " + node + " uses the new API token");
+        SshTarget target = new SshTarget(nodeIp, ProxmoxSsh.DEFAULT_PORT, cmd.getUsername(), null, cmd.getNewPassword(), sshFingerprint);
+        try (ProxmoxSsh ssh = openSsh(target)) {
+            logger.info("The SSH login {} works on Proxmox node {}", cmd.getUsername(), node);
+            return new Answer(cmd, true, "The SSH login " + cmd.getUsername() + " works on Proxmox node " + node);
+        } catch (ProxmoxSshException e) {
+            logger.warn("The new SSH login for Proxmox node {} was not accepted: {}", node, e.getMessage());
+            return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    protected ProxmoxSsh openSsh(SshTarget target) {
+        return ProxmoxSsh.open(target, () -> new TrileadSshLink(target.getHost(), target.getPort()));
     }
 
     /**
@@ -552,18 +557,6 @@ public class ProxmoxResource implements ServerResource {
             return new GetStorageStatsAnswer(cmd, status.getTotalBytes(), status.getUsedBytes());
         } catch (ProxmoxApiException e) {
             return new GetStorageStatsAnswer(cmd, e.getMessage());
-        }
-    }
-
-    /** The reason a token was refused, in words an operator can act on. It never contains the token. */
-    static String describeTokenFailure(ProxmoxApiException e) {
-        switch (e.getStatusCode()) {
-            case 401:
-                return "Proxmox rejected the API token (HTTP 401): the token id or the secret is wrong, or the token was removed or has expired";
-            case 403:
-                return "Proxmox accepted the API token but it does not have the permissions CloudStack needs (HTTP 403)";
-            default:
-                return "The new API token could not be checked with Proxmox: " + e.getMessage();
         }
     }
 

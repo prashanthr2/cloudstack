@@ -39,7 +39,7 @@ public class ProxmoxApiAccessTest {
     public void aTokenIsMadeForTheClusterAndItsIdAndSecretAreRead() {
         ScriptedSshLink link = node();
 
-        ProxmoxApiAccess.Token token = ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+        ProxmoxApiAccess.Token token = ProxmoxApiAccess.createClusterToken(open(link), "lab");
 
         assertEquals("cloudstack@pve!cs-lab", token.getId());
         assertEquals("17357352-5a28-4716-bd13-de375e83dbd4", token.getSecret());
@@ -50,7 +50,7 @@ public class ProxmoxApiAccessTest {
     public void anOldTokenOfTheSameNameIsRemovedBeforeTheNewOneIsMade() {
         ScriptedSshLink link = node();
 
-        ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+        ProxmoxApiAccess.createClusterToken(open(link), "lab");
 
         int removed = link.commands.indexOf("pveum user token remove cloudstack@pve cs-lab");
         assertTrue(removed >= 0);
@@ -63,7 +63,7 @@ public class ProxmoxApiAccessTest {
         link.answers = command -> command.contains("user token add") ? new ExecResult(0, TOKEN_JSON, "")
                 : command.contains("user add") || command.contains("role add") ? new ExecResult(255, "", "user 'cloudstack@pve' already exists") : new ExecResult(0, "", "");
 
-        ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+        ProxmoxApiAccess.createClusterToken(open(link), "lab");
 
         assertEquals(1, link.commandsWith("pveum user add cloudstack@pve").size());
     }
@@ -72,13 +72,12 @@ public class ProxmoxApiAccessTest {
     public void everyRoleIsGivenToTheUserAndTheTokenWithItsPath() {
         ScriptedSshLink link = node();
 
-        ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+        ProxmoxApiAccess.createClusterToken(open(link), "lab");
 
-        for (String grant : new String[] {"acl modify / --users cloudstack@pve --tokens", "PVEAuditor", "acl modify /vms", "PVEVMAdmin", "acl modify /storage", "PVEDatastoreAdmin",
+        for (String grant : new String[] {"acl modify / --users cloudstack@pve --tokens 'cloudstack@pve!cs-lab' --roles PVEAuditor", "acl modify /vms", "PVEVMAdmin", "acl modify /storage", "PVEDatastoreAdmin",
             "acl modify /sdn/zones/localnetwork", "PVESDNUser"}) {
             assertEquals(grant, 1, link.commandsWith(grant).size());
         }
-        assertTrue(link.commandsWith("CloudStackHA").isEmpty());
         assertTrue("the network right is given per node", link.commandsWith("/nodes/").isEmpty());
     }
 
@@ -92,10 +91,10 @@ public class ProxmoxApiAccessTest {
     }
 
     @Test
-    public void theHaRoleIsGrantedOnlyWhenCloudStackManagesHa() {
+    public void theHaRoleIsAlwaysGivenOnTheRootPathWithoutPropagation() {
         ScriptedSshLink link = node();
 
-        ProxmoxApiAccess.createClusterToken(open(link), "lab", true);
+        ProxmoxApiAccess.createClusterToken(open(link), "lab");
 
         assertEquals(1, link.commandsWith("role add CloudStackHA --privs 'Sys.Audit Sys.Console'").size());
         assertEquals(1, link.commandsWith("acl modify / --users cloudstack@pve --tokens 'cloudstack@pve!cs-lab' --roles CloudStackHA --propagate 0").size());
@@ -106,7 +105,7 @@ public class ProxmoxApiAccessTest {
         ScriptedSshLink link = node();
         link.answers = command -> command.contains("user add") ? new ExecResult(1, "", "permission denied") : new ExecResult(0, "", "");
         try {
-            ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+            ProxmoxApiAccess.createClusterToken(open(link), "lab");
             fail();
         } catch (ProxmoxSshException e) {
             assertTrue(e.getMessage(), e.getMessage().contains("permission denied"));
@@ -118,7 +117,7 @@ public class ProxmoxApiAccessTest {
         ScriptedSshLink link = node();
         link.answers = command -> command.contains("user token add") ? new ExecResult(0, "not json", "") : new ExecResult(0, "", "");
         try {
-            ProxmoxApiAccess.createClusterToken(open(link), "lab", false);
+            ProxmoxApiAccess.createClusterToken(open(link), "lab");
             fail();
         } catch (ProxmoxSshException e) {
             assertTrue(e.getMessage(), e.getMessage().contains("not a token"));

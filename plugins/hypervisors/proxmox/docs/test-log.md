@@ -736,3 +736,7 @@ After commits 2a1880f95d (audit role kept on the node path) and 1532997c74 (DELE
 Run later the same day (commits 010df3f826, 6a8e038f43, 7642ac48d5; the management server's key from `ssh.publickey`, hidden from the UI, was added to `/root/.ssh/authorized_keys`; the System SSH Key choice and the empty password needed the UI and `verifyHostCredentials` changes): the system VM login key made by Add Host, key-only login, and the wrong password and non-root `csadmin` with sudo checks all **passed** (reported by the user as "all 3 worked").
 
 Not run yet: Proxmox 9.
+
+## Update Host password as the SSH login, and the HA role always given (2026-11-02, not run yet)
+
+Lab checks are in `design-phase10-ssh-access.md` section 13. The token rotation rows (f, h, k) of the Phase 1 lab round above describe the earlier model, in which the administrator made the token by hand; they are history.

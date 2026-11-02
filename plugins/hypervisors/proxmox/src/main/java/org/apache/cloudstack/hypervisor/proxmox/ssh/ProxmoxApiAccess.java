@@ -65,15 +65,15 @@ public final class ProxmoxApiAccess {
 
     /**
      * Makes the user and roles when they are missing, replaces the cluster's token with a new one and gives it its rights. Users and tokens belong to the
-     * whole Proxmox cluster, so one token serves every node. {@code manageHa} adds the role for Proxmox HA (a wide right, only when CloudStack is to
-     * manage HA). The right to change a node's network is given per node, with {@link #grantNode}, as nodes are added.
+     * whole Proxmox cluster, so one token serves every node. The role for Proxmox HA ({@code Sys.Audit} and {@code Sys.Console}) is always given, on the
+     * root path without propagation, so that turning on the setting proxmox.ha.manage later needs no new token: HA checks the root path itself, while a
+     * console on a node is checked on the node's own path, which that grant does not reach (requirements.md section 3). The right to change a node's
+     * network is given per node, with {@link #grantNode}, as nodes are added.
      */
-    public static Token createClusterToken(ProxmoxSsh ssh, String clusterName, boolean manageHa) {
+    public static Token createClusterToken(ProxmoxSsh ssh, String clusterName) {
         ensure(ssh, "pveum user add " + USER + " --comment 'CloudStack'", "already exists");
         ensure(ssh, "pveum role add " + NET_ROLE + " --privs 'Sys.Modify'", "already exists");
-        if (manageHa) {
-            ensure(ssh, "pveum role add " + HA_ROLE + " --privs 'Sys.Audit Sys.Console'", "already exists");
-        }
+        ensure(ssh, "pveum role add " + HA_ROLE + " --privs 'Sys.Audit Sys.Console'", "already exists");
         String name = tokenName(clusterName);
         // a token that is left from an earlier cluster of the same name has a secret nobody has: it is replaced
         ssh.sudo("pveum user token remove " + USER + " " + name, null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
@@ -83,9 +83,7 @@ public final class ProxmoxApiAccess {
         grant(ssh, "/vms", "PVEVMAdmin", id, true);
         grant(ssh, "/storage", "PVEDatastoreAdmin", id, true);
         grant(ssh, "/sdn/zones/localnetwork", "PVESDNUser", id, true);
-        if (manageHa) {
-            grant(ssh, "/", HA_ROLE, id, false);
-        }
+        grant(ssh, "/", HA_ROLE, id, false);
         return token;
     }
 

@@ -5604,8 +5604,8 @@ public class ManagementServerImpl extends MutualExclusiveIdsManagerBase implemen
         }
 
         if (host.getHypervisorType() == HypervisorType.Proxmox) {
-            throw new InvalidParameterValueException("Single host update is not supported by Proxmox hypervisors, because the API token is "
-                    + "shared by the whole Proxmox cluster. Please try again informing the Cluster ID.");
+            throw new InvalidParameterValueException("Single host update is not supported by Proxmox hypervisors, because the same SSH login "
+                    + "is used on every node of the Proxmox cluster. Please try again informing the Cluster ID.");
         }
 
         if (!supportedHypervisors.contains(host.getHypervisorType())) {

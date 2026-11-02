@@ -120,7 +120,7 @@ Clean up afterwards: `sudo pveum user delete cltest@pve`, `sudo pveum role delet
 - `ProxmoxServerDiscoverer.find`: logs in to the given address (the management key first, then the password). The token comes from the cluster's details when the CloudStack cluster has one; otherwise it is made (the name is the Proxmox cluster's, read with `pvesh get /cluster/status`, or the node's name when it is not in a cluster) and kept there. If Proxmox answers 401 to a kept token, a new one is made. Each online node that is not added yet: the same login is made on it (a node that refuses is skipped and logged), its host key is kept, it gets `CloudStackNet` on its path, the control bridge is made with the token, and the resource is returned with the token (as `username` and `password`) and the host details `sshuser`, `sshpassword` (encrypted by the plugin with `DBEncryptionUtil`, since core encrypts only a detail named `password`) and `sshfingerprint`.
 - `buildConfigParams` (the discoverer overrides it, no core change): a host is rebuilt after a restart from its details plus the cluster's `username` and `password`; a host that still has its own (added before this change) keeps it.
 - `deleteHost`: when the host is the last Proxmox host of its CloudStack cluster, the token is removed over SSH and the cluster's details `username` and `password` are deleted; best effort.
-- Not built yet: the use of the stored login by a feature (the first is volume snapshots), Update Host password for the new details, and giving the HA role when `proxmox.ha.manage` is turned on after hosts were added.
+- Not built yet: the use of the stored login by a feature (the first is volume snapshots).
 - Tests: `ProxmoxApiAccessTest` (9), `ProxmoxServerDiscovererTest` (24): 515 plugin tests pass. **Not run against a node.**
 
 ## 9. Proxmox VE 9: comparison with the source (2026-11-02)
@@ -166,3 +166,28 @@ Add Host makes the key pair for the login from a node to a system VM and puts it
 The Add Host form showed "Authentication Method" with the single choice Password for a Proxmox cluster: `ui/src/views/infra/HostAdd.vue` offered the SSH key button for KVM only. One condition changed (`['KVM', 'Proxmox']`); the form already sends an empty password for that choice, which the plugin reads as "use the management server's key" (`ssh.privatekey`). Part of the UI row (H) of the pull request plan in upstream-notes.md. Needs the UI to be rebuilt (`npm run build` in `ui/`, or the dev server) to show.
 
 The form then failed with API error 431 `Username and Password need to be provided.`: `ResourceManagerImpl.discoverHostsFull` exempts only KVM from the password check. Proxmox is exempted the same way (`verifyHostCredentials`, upstream-notes 30), the one core change of the SSH key choice. A password is still required, as before, for every other hypervisor.
+
+## 13. Update Host password and the HA role (2026-11-02)
+
+Two open points of this phase, decided with the user.
+
+**The HA role is always given.** `createClusterToken` no longer takes `manageHa`: the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) is made and granted on `/` without propagation
+at every token creation, so turning `proxmox.ha.manage` on later needs no new token. The grant does not reach a node's console (checked on the node's own path; lab-confirmed in Phase 5
+that `termproxy` is refused), but that check stays in the lab list, and is still to be done on Proxmox 9. A token made before this change does not have the role: delete and add the hosts again.
+
+**`updateHostPassword` is the SSH login.** With the token made by the plugin, the only credential the administrator gives is the SSH login, so that is what Update Host password changes
+(option 1B). Without it, the new username and password that core stores for each host (`username`, `password` in `host_details`) would have overridden the cluster's token at the next reconnect
+and every host would have got HTTP 401, which was a defect of the move of the token to the cluster. Built:
+- `ProxmoxServerDiscoverer.buildConfigParams` builds the resource with the cluster's token whenever the cluster has one; a host's own `username` and `password` are then not the token. A host from
+  before the move, in a cluster with no token, keeps its own.
+- `ProxmoxServerDiscoverer.sshLoginOf(details)`: the login stored by an update (`username`, `password`) when there is one, else `sshuser` and `sshpassword`. `revokeToken` uses it.
+- `ProxmoxResource` answers `UpdateHostPasswordCommand` (sent with `update_passwd_on_host=true`) by opening an SSH connection to its node with the new login, pinned to the stored host key, and reports
+  the reason when it fails. The API connection is not touched; `describeTokenFailure` is gone.
+- `revokeToken` counts every host of the cluster (`listIdsByClusterId`), not only the running ones: with every host in maintenance, deleting the first would have removed the token while the others remained.
+- Core: only the text of the single-host refusal in `ManagementServerImpl` changed (the same login on every node, not a shared token).
+- Tests: `ProxmoxServerDiscovererTest` (+4, 2 changed), `ProxmoxResourceTest` (3 replace 3), `ProxmoxApiAccessTest`. Plugin total 522.
+
+Lab checks: (1) `cmk update hostpassword clusterid=<id> username=root password=<current>` without the flag: hosts stay Up after a reconnect (Force Reconnect), VMs keep running; (2) with
+`update_passwd_on_host=true` and the correct password: success; with a wrong one: the call fails with "refused" and no password in the message; (3) change the root password on every node, run the update, then
+delete all hosts: the token is removed (the new login was used); (4) single-host update is refused with the new text; (5) turn `proxmox.ha.manage` on and start a VM with an HA offering on a cluster added after this
+change: the HA resource is created with no extra grant; (6) the node console refusal check from requirements.md section "Permissions for HA management" still answers `Permission check failed (/nodes/<node>, Sys.Console)`.

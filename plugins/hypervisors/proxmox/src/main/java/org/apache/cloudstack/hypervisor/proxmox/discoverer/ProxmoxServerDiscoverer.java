@@ -84,7 +84,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         return true;
     }
 
-    static final int SSH_PORT = 22;
+    static final int SSH_PORT = ProxmoxSsh.DEFAULT_PORT;
 
     protected ProxmoxSsh openSsh(SshTarget target) {
         return ProxmoxSsh.open(target, () -> new TrileadSshLink(target.getHost(), target.getPort()));
@@ -168,7 +168,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         for (int attempt = 1; ; attempt++) {
             if (StringUtils.isAnyBlank(tokenId, tokenSecret)) {
                 String name = proxmoxClusterNameOf(ssh);
-                ProxmoxApiAccess.Token token = ProxmoxApiAccess.createClusterToken(ssh, name, ProxmoxConfig.HaManage.value());
+                ProxmoxApiAccess.Token token = ProxmoxApiAccess.createClusterToken(ssh, name);
                 tokenId = token.getId();
                 tokenSecret = token.getSecret();
                 madeToken = true;
@@ -351,12 +351,13 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         HashMap<String, Object> params = super.buildConfigParams(host);
         if (host.getClusterId() != null) {
             Map<String, String> clusterDetails = clusterDetailsDao.findDetails(host.getClusterId());
-            for (String key : new String[] {"username", "password"}) {
-                // a host added before the token moved to the cluster keeps its own
-                if (!params.containsKey(key) && clusterDetails.get(key) != null) {
-                    params.put(key, clusterDetails.get(key));
-                }
+            if (clusterDetails.get("username") != null && clusterDetails.get("password") != null) {
+                // The token is the cluster's. A host's own username and password are then an SSH login that updateHostPassword stored (core keeps it
+                // under those names), never the token.
+                params.put("username", clusterDetails.get("username"));
+                params.put("password", clusterDetails.get("password"));
             }
+            // a host added before the token moved to the cluster has its own token and keeps it
         }
         return params;
     }
@@ -458,13 +459,30 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
      * The API token belongs to the cluster, so it is removed, over SSH, with the cluster's details, only when the host that is deleted is the last
      * Proxmox host of its CloudStack cluster. Best effort: a host that is deleted because its node is gone cannot be reached, and that does not stop the delete.
      */
+    /**
+     * The SSH login of a host, as {user, password} (the password is null for a login by key): the one an updateHostPassword stored, which core keeps
+     * under the host details username and password (the password already decrypted, as the details DAO gives it), else the one given at Add Host
+     * (sshuser and sshpassword, which the plugin encrypts itself).
+     */
+    static String[] sshLoginOf(Map<String, String> details) {
+        if (details == null) {
+            return new String[] {null, null};
+        }
+        if (StringUtils.isNotBlank(details.get("username")) && StringUtils.isNotBlank(details.get("password"))) {
+            return new String[] {details.get("username"), details.get("password")};
+        }
+        String encrypted = details.get(ProxmoxResource.DETAIL_SSH_PASSWORD);
+        return new String[] {details.get(ProxmoxResource.DETAIL_SSH_USER), StringUtils.isEmpty(encrypted) ? null : DBEncryptionUtil.decrypt(encrypted)};
+    }
+
     void revokeToken(HostVO host) {
         if (host.getHypervisorType() != Hypervisor.HypervisorType.Proxmox || host.getClusterId() == null) {
             return;
         }
         try {
-            for (HostVO other : _hostDao.listByClusterAndHypervisorType(host.getClusterId(), Hypervisor.HypervisorType.Proxmox)) {
-                if (other.getId() != host.getId()) {
+            // every host of the cluster counts, also one that is in maintenance or not connected (the list of running hosts would not show it)
+            for (Long otherId : _hostDao.listIdsByClusterId(host.getClusterId())) {
+                if (otherId != host.getId()) {
                     return;
                 }
             }
@@ -474,11 +492,11 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             }
             _hostDao.loadDetails(host);
             Map<String, String> details = host.getDetails();
-            String sshUser = details == null ? null : details.get(ProxmoxResource.DETAIL_SSH_USER);
             String address = details == null ? null : details.get(ProxmoxResource.DETAIL_NODE_IP);
+            String[] login = sshLoginOf(details);
+            String sshUser = login[0];
+            String sshPassword = login[1];
             if (!StringUtils.isAnyBlank(sshUser, address)) {
-                String encrypted = details.get(ProxmoxResource.DETAIL_SSH_PASSWORD);
-                String sshPassword = StringUtils.isEmpty(encrypted) ? null : DBEncryptionUtil.decrypt(encrypted);
                 try (ProxmoxSsh ssh = openSsh(new SshTarget(address, SSH_PORT, sshUser, _configDao.getValue("ssh.privatekey"), sshPassword,
                         details.get(ProxmoxResource.DETAIL_SSH_FINGERPRINT)))) {
                     ProxmoxApiAccess.revokeToken(ssh, tokenDetail.getValue());

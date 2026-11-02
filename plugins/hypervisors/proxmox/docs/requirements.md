@@ -99,7 +99,7 @@ With that login the plugin, over SSH:
 2. makes the user `cloudstack@pve` and the roles below, and **one API token for the Proxmox cluster** (`cs-<cluster name>`, with privilege separation; users and tokens
    belong to the whole cluster, so it works on every node), and gives the token its rights on the user and on the token: `PVEAuditor` on `/`, `PVEVMAdmin` on `/vms`,
    `PVEDatastoreAdmin` on `/storage`, `PVESDNUser` on `/sdn/zones/localnetwork`, the role `CloudStackNet` (`Sys.Modify`) on the own path of each node it adds, without
-   propagation, and, only when `proxmox.ha.manage` is on, the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/` without propagation;
+   propagation, and always the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/` without propagation (see "Permissions for HA management" for why that is safe and why it is always given);
 3. keeps the token with the **CloudStack cluster** (`cluster_details`: `username` is the token id, `password` the secret, encrypted like a host's), and the SSH login
    and host key with each host. A host added later in the same cluster reads the token there and makes no new one;
 4. from then on uses the API with the token. When the last Proxmox host of a cluster is deleted, the token is removed (best effort).
@@ -119,103 +119,12 @@ CloudStack authenticates to Proxmox with an API token, not with a user password.
 limited in what it may do, does not expire after a couple of hours like a login ticket, and works for accounts that use
 two-factor authentication.
 
-When adding a host:
-
-| Field | Value |
-|---|---|
-| Username | the token id: `user@realm!tokenname`, for example `cloudstack@pve!cs` |
-| Password | the token secret (a UUID, shown by Proxmox only once when the token is created) |
-
-### Creating a token
-
-Run on a Proxmox node. A dedicated user with a token whose rights are limited with privilege separation is recommended.
-Grant the role to the token as well as to the user: for a privilege-separated token, Proxmox computes the owning user's permissions
-and **intersects** them with the token's (pve-access-control, `RPCEnvironment::permissions`; `root@pam` is the exception), so
-the token only gets what **both** have. A token that had only the user's role got no access, and the setup with the role on both
-worked. The commands below are the Proxmox VE 8 syntax. The
-lab used the `pam` realm (`pveaudit@pam!cloudstack`); `@pve`, Proxmox's own user database, is the usual choice for a
-service account because no matching operating system account is needed on every node. Tokens do not use a password, so
-either realm works.
-
-```bash
-pveum user add cloudstack@pve
-pveum user token add cloudstack@pve cs --privsep 1
-pveum acl modify / --users cloudstack@pve --roles PVEAuditor
-pveum acl modify / --tokens 'cloudstack@pve!cs' --roles PVEAuditor
-```
-
-For a quick lab, a token of `root@pam` with privilege separation turned off also works but gives CloudStack full control
-of the cluster; do not use that outside a lab.
-
-### Permissions
-
-What the plugin calls, and what it therefore needs. **Verified on Proxmox VE 8.4** with a user and a privilege-separated
-token that were both given the built-in `PVEAuditor` role at `/` (`pveum acl list` showed one entry of type `user` and one
-of type `token`, both with propagate on):
-
-| API call | Used for | Result with `PVEAuditor` |
-|---|---|---|
-| `GET /version` | check the connection when adding a cluster | 200 (works for any valid token) |
-| `GET /cluster/status` | list nodes, node addresses, cluster name | 200 (403 without privileges) |
-| `GET /nodes` | fallback for a standalone node | 200 (names only without privileges) |
-| `GET /nodes/{node}/status` | CPU, memory, version, health check, statistics | real values (empty without privileges) |
-| `GET /nodes/{node}/qemu` | VMs on a node, for the power state report | lists the VMs (a test VM created with `qm create` showed up) |
-
-At this stage everything is read-only and the built-in `PVEAuditor` role (it contains `Sys.Audit` and `VM.Audit`) is enough.
-### Permissions for primary storage (Phase 2; from the Proxmox source, create and delete confirmed on the lab)
-
-| API call | Used for | Privilege (expected) |
-|---|---|---|
-| `GET /storage` | find the pool's entry | `Datastore.Audit` or `Datastore.AllocateSpace` on the entry (a caller without either gets an **empty list**; `PVEAuditor` has `Datastore.Audit`) |
-| `POST /storage` | create the entry | `Datastore.Allocate` on `/storage` (part of `PVEDatastoreAdmin`; not in `PVEAuditor`) |
-| `DELETE /storage/{id}` | remove the entry | `Datastore.Allocate` on `/storage` |
-| `GET /nodes/{node}/storage/{id}/status` | state and capacity on a node | `Datastore.Audit` or `Datastore.AllocateSpace` on the entry |
-
-Confirmed on the lab with a privilege-separated token: with only `PVEAuditor` creating storage is refused (403); `PVEDatastoreAdmin` on
-`/storage` for the token alone is still refused; with the role on the **user as well** as the token, create and delete work.
-
-Privileges are granted through a **role** on a **path**, not one by one; for the storage calls give the token a role that contains
-`Datastore.Allocate` (the built-in `PVEDatastoreAdmin`) on `/storage`, for example
-`pveum acl modify /storage --tokens '<token id>' --roles PVEDatastoreAdmin` **and** the same for the owning user
-(`--users <user>`). The privileges for VMs, templates, networks, the console and migration are in the next section,
-and those for managing Proxmox HA from CloudStack in the one after.
-
-**A token without permissions looks half-working.** `version` and `nodes` answer 200, `cluster/status` answers 403, node
-status comes back without CPU and memory, and the VM list is empty. If adding a cluster fails with `HTTP 403`, or hosts show
-no capacity, check that the role was granted to the **token** itself (`pveum acl list` shows one line for the user and one
-for the token); a privilege-separated token never gets more than it is granted directly.
-
-### Permissions for VMs, templates, networks, the console and migration (Phases 3 to 5; confirmed on the lab)
-
-Give **both the user and the token** (a privilege-separated token gets only what both have) these roles:
-
-| Role | Path | Used for |
-|---|---|---|
-| `PVEVMAdmin` | `/vms` | create, configure, start, stop, move and destroy VMs; `VM.Console` (the console); `VM.Migrate` (migration) |
-| `PVEDatastoreAdmin` | `/storage` | the primary storage entry and the secondary storage entries (templates) |
-| `PVESDNUser` | `/sdn/zones/localnetwork` | attach a VM to a bridge (`SDN.Use` on `/sdn/zones/localnetwork/<bridge>/<vlan tag>`; without it a NIC is refused) |
-
-```bash
-pveum acl modify /vms --users <user> --tokens '<user>!<token>' --roles PVEVMAdmin
-pveum acl modify /storage --users <user> --tokens '<user>!<token>' --roles PVEDatastoreAdmin
-pveum acl modify /sdn/zones/localnetwork --users <user> --tokens '<user>!<token>' --roles PVESDNUser
-```
-
-Migration, the console and everything else CloudStack does by default need nothing more than this. Migrating a VM with the token does not need
-root: only the options `force`, `migration_type` and `migration_network` are root-only, and the plugin never sends them (lab check L1).
-
-### Data volumes (Phase 7): reserved VM ids and the permissions they need (lab D1 to D12, 2026-10-21)
-
-**The VM ids 900000001 to 999999999 are reserved for CloudStack.** The data volumes of an account are disk images owned by the vmid `900000000 + <account id>`, a number that is never a VM, so that they survive the
-deletion of instances. **Never create a VM with an id in that range, and do not set the cluster's `next-id` range (Datacenter > Options) there.** Destroying a VM that has such an id with the option "Destroy unreferenced
-disks owned by guest" would remove that account's volumes.
-
-No permission beyond the previous sections is needed: with the roles `PVEVMAdmin` on `/vms` and `PVEDatastoreAdmin` on `/storage` the token can allocate an image for a holder id, use it in any VM (`Datastore.Allocate` on the
-storage, or `Datastore.Audit` on the storage and `VM.Config.Disk` on `/vms/<holder>`), hot-plug and unplug it, resize it and delete it. The token needs `Datastore.Allocate` (in `PVEDatastoreAdmin`) to delete an image.
+Add Host does not take a token (see section 3): the plugin makes the token and keeps it with the CloudStack cluster. The rest of this section is reference: what the token is
+and what it may do, for anyone who looks at it in Proxmox.
 
 ### Permissions for HA management from CloudStack (optional; global setting `proxmox.ha.manage`, Phase 5)
 
-**By default CloudStack does not manage Proxmox HA, and the token needs nothing beyond the previous section.** The global setting `proxmox.ha.manage`
+**By default CloudStack does not manage Proxmox HA.** The plugin gives the token the HA role at Add Host whether or not the setting is on (see the security note below for why that does not reach the nodes' consoles), so turning the setting on later needs no new token and no change in Proxmox. The global setting `proxmox.ha.manage`
 is **off**; then the HA flag of a compute offering has **no effect** on a VM in Proxmox, and an administrator makes VMs highly available in Proxmox itself
 (`ha-manager add vm:<id>`, or Datacenter > HA). Proxmox HA restarts such VMs after a node failure, and CloudStack follows them (see behaviour.md, section 6).
 
@@ -229,7 +138,7 @@ roles above the HA API answers `HTTP 403`:
 | create or remove a resource | `Sys.Console` on `/` | `Permission check failed (/, Sys.Console)` |
 
 **Security note:** `Sys.Console` is Proxmox's privilege for **console access to the node itself** (the Shell button), a much wider right than managing VMs, and
-the HA API needs it. Grant it only if you want CloudStack to manage HA, and keep the grant as narrow as possible: a role with only these two privileges, on `/`
+the HA API needs it. The plugin gives it with the grant as narrow as possible, always: a role with only these two privileges, on `/`
 and **without propagation** (the HA API checks `/` itself, while node console access is checked on the node's own path, which a non-propagating entry at `/` does
 not reach; **confirmed on Proxmox VE 8.4.21**, and you can check it on yours with the call below):
 
@@ -362,54 +271,34 @@ ssh -i /etc/pve/priv/cloudstack_systemvm -p 3922 root@<control address of the VM
 - **Privileges.** Nothing beyond the roles already listed: the interfaces are added and removed with `VM.Config.Network`, which `PVEVMAdmin` has (lab S6).
 - The router's own scripts run through the guest agent like those of the other system VMs, and the **login keys** (see "Logging in to a system VM from a node") work for routers too.
 
-### How the secret is stored
+### How the token and the SSH login are stored
 
-The token id and secret are saved with each host under the host detail keys `username` and `password`. The `password` key
-is encrypted by the shared host details DAO when database encryption is enabled, exactly as for the VMware, XenServer,
-Hyper-V and OVM plugins, which store their passwords under the same key. With encryption off (a default development
-setup) it is stored as plain text, as for those plugins.
+- **The API token** is kept with the CloudStack cluster, in `cluster_details`: `username` is the token id (`cloudstack@pve!cs-<cluster>`), `password` the secret.
+  Every host of the cluster reads it from there when it connects. Database encryption, when it is on, covers a detail named `password`, as for the other plugins.
+- **The SSH login** is kept with each host, in `host_details`: `sshuser`, `sshpassword` (encrypted by the plugin; absent for a login by key) and `sshfingerprint`
+  (the node's SSH host key). The plugin uses it for what the API cannot do (see design-phase10-ssh-access.md section 1), and to remove the token when the last host
+  of a cluster is deleted.
 
-### Changing the token of hosts that are already added
+### Changing the SSH login of hosts that are already added
 
-A Proxmox token belongs to the whole Proxmox cluster, while CloudStack keeps one copy of it per host. Recreating the token
-in Proxmox therefore invalidates every host's copy at once, and all of them have to be updated together. Use CloudStack's
-`updateHostPassword` **with the cluster id**: the token id goes in `username` and the token secret in `password`.
+CloudStack's `updateHostPassword` changes the login the plugin keeps for the hosts of a cluster. For Proxmox the username and password it takes are the **SSH login**
+(what Add Host asked for), never the API token: the token is made and kept by the plugin and is not given or changed by hand.
 
-- **Single-host updates are refused for Proxmox** (including the UI "Change password" action on one host), with a message
-  asking for the cluster id. This is the same as for XenServer pools, and it prevents a half-updated cluster.
-- **Same token id, new secret (rotation).** A token id is unique per user, so a new secret for the same id means deleting
-  the token and creating it again. **The old secret stops working at once, so the hosts go to `Alert` and then
-  `Disconnected` before CloudStack can be updated**; that is expected. Recreate the token in Proxmox under the same id
-  (`pveum user token remove cloudstack@pve cs`, then `pveum user token add cloudstack@pve cs --privsep 1`, and give the new
-  token its permissions again), then store the new secret for the whole cluster:
+```bash
+cmk update hostpassword clusterid=<cloudstack-cluster-id> username=root password=<new-password>
+```
 
-  ```bash
-  cmk update hostpassword clusterid=<cloudstack-cluster-id> username='cloudstack@pve!cs' password=<new-secret>
-  ```
-
-  The hosts pick the new token up at the next reconnect scan (see behaviour.md, section 5a) and return to `Up`, within about
-  90 seconds by default. The value is **not checked** when it is stored: if it is wrong the hosts stay `Disconnected` and
-  the management server log shows the Proxmox reason (for example HTTP 401). Run the call again with the correct secret.
-- **A stored token is only used when a host (re)connects.** A connected host keeps the token it started with in memory; the
-  update changes the stored details only. While the old token is still valid in Proxmox the hosts therefore stay `Up` on it,
-  and a wrong secret stored by mistake stays hidden until the next reconnect or management server restart, when the hosts fail
-  with it. To apply a stored token at once, use the host action **Force Reconnect** (`reconnectHost`), or restart the
-  management server. After the old token has been revoked this happens by itself, because the failing pings trigger a
-  reconnect.
-- **`update_passwd_on_host=true` is not for the rotation above.** With it, each host's running connection is told to use the
-  new token after Proxmox has accepted it (nothing is changed on the Proxmox node). That only works for hosts that are
-  connected, which they are not once the old token has been revoked. It is useful only while the old token is still valid.
-- **Every host must be connected** for `update_passwd_on_host=true`; a host that is `Alert` or `Disconnected` makes the call
-  fail with "The host is not connected" (the new value has been stored by then, see the next point).
-- **The new value is stored first, then checked.** CloudStack saves the new username and password for all hosts of the cluster
-  before it asks each host to use them. If the call fails (a wrong secret, or a host that is not connected) the stored value
-  is already the new one, and a host that reconnects uses it. After a failed call run it again with the correct secret.
-- **The reason for a failure is in the error message**, for example "Proxmox rejected the API token (HTTP 401): the token id or
-  the secret is wrong, or the token was removed or has expired", "... does not have the permissions CloudStack needs
-  (HTTP 403)", or "The host is not connected; wait until it is Up and try again". The secret is never part of a message.
-- **A different token id or user is not supported by this operation**: CloudStack requires the username to match the stored
-  one and refuses otherwise ("The username is not same for the hosts"). To change the id, disable and remove the hosts and
-  add them again.
+- **With the cluster id only.** A single-host update is refused for Proxmox (including the UI "Change password" action on one host), because the same login is used on
+  every node of the cluster.
+- **What it stores.** CloudStack saves the username and password for every host of the cluster (core behaviour, as for KVM and XenServer). The plugin then uses them
+  as the SSH login in place of the ones from Add Host, and never as the API token.
+- **`update_passwd_on_host=true`** makes each host's resource check the new login with its node (the stored host key is checked, then the password): a refused password
+  fails the call with the node's reason, and the message never contains the password. Nothing is changed on the Proxmox node: change the password there first (for
+  example `passwd` on every node), then run this. The value is stored before it is checked, as for every hypervisor, so after a failed call run it again with the correct one.
+- **Without the flag** nothing is checked; the login is used the next time a command needs a shell on a node.
+- **A login by key** is replaced by a password login when this is run; to go back to the key, add the host again.
+- **Rotating the API token** is not an operation of its own: delete the hosts of the cluster (the token is removed with the last one) and add them again (a new token is
+  made). A token that Proxmox stops accepting is replaced by the next Add Host (section 3).
 
 ## 4. Proxmox cluster
 

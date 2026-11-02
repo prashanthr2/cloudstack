@@ -190,35 +190,25 @@ Handled: `ReadyCommand`, `CheckHealthCommand`, `PingTestCommand`, `CheckNetworkC
 `MigrateCommand`, `CheckVirtualMachineCommand`. Every other command is answered with an "unsupported" result, so missing
 functionality fails loudly instead of being accepted silently.
 
-## 8. Changing the token of added hosts
+## 8. Changing the SSH login of added hosts
 
 **Code:** `ManagementServerImpl` (`updateHostPassword`), `ResourceManagerImpl` (`updateClusterPassword`, failure message),
-`ProxmoxResource` (`UpdateHostPasswordCommand`, `describeTokenFailure`)
+`ProxmoxServerDiscoverer` (`buildConfigParams`, `sshLoginOf`, `revokeToken`), `ProxmoxResource` (`UpdateHostPasswordCommand`)
 
-- CloudStack's `updateHostPassword` stores a new username/password for a host, or for every host of a cluster when given a
-  cluster id. It only accepted KVM and XenServer; Proxmox is added to that list.
-- **A Proxmox token belongs to the whole Proxmox cluster**, but CloudStack keeps one copy per host, so a single-host update
-  would leave the other hosts holding a revoked secret. A single-host update is therefore refused for Proxmox, with a message
-  asking for the cluster id, as `ManagementServerImpl` already does for XenServer pools.
-- The operation requires the username to equal the stored one, so it rotates the **secret** of a token id. A different token id
-  or user needs the hosts to be removed and added again.
-- With `update_passwd_on_host=true` CloudStack also sends `UpdateHostPasswordCommand` to each host's resource. For KVM that
-  changes the root password on the host. For Proxmox nothing can be changed on the node, so the resource instead checks the
-  new token with Proxmox and, if accepted, switches the running connection to it (a rejected token is reported and the old
-  one stays in use). Without the flag the new token is used from the next reconnect.
-- CloudStack stores the new value for all hosts **before** the per-host step, so a failed call leaves the new (possibly wrong)
-  value stored; the call has to be repeated with the correct one.
-- In the one supported rotation (same token id) Proxmox forces the old token to be deleted before the new secret exists, so the
-  hosts are already disconnected when CloudStack is updated. The normal call is therefore the one **without**
-  `update_passwd_on_host` (store, then the hosts reconnect with it); the flag only helps while the old token is still valid.
-- The stored value is not validated. **Decision:** this is how CloudStack core already behaves for every hypervisor, so it is left
-  as it is (changing core behaviour would widen the scope of the pull request) and documented in requirements.md. It is listed
-  in [upstream-notes.md](upstream-notes.md) as something to raise with the project separately.
-- **Failure messages carry the reason the host gave.** `ResourceManagerImpl` used to reply with a fixed sentence whatever
-  went wrong; it now appends the host's reason, says when the host is not connected, and says that the new credentials were
-  already saved. The Proxmox resource turns a 401 into "Proxmox rejected the API token ..." and a 403 into "does not have the
-  permissions CloudStack needs". This applies to every hypervisor that answers `UpdateHostPasswordCommand` with details.
-- The password is stored encrypted when database encryption is on, like at add time.
+Since Phase 10 the username and password CloudStack holds for a Proxmox host are its **SSH login**; the API token is made by the plugin and kept in `cluster_details`
+(requirements.md section 3).
+- `updateHostPassword` accepts Proxmox and needs the **cluster id**: a single-host update is refused, because the same login is used on every node.
+- Core stores the new username and password for every host of the cluster as `username` and `password` in `host_details` (the second is encrypted by the details DAO).
+  The plugin treats them as the SSH login (`sshLoginOf`: these when present, else `sshuser` and `sshpassword`) and never as the token: `buildConfigParams` always builds
+  the resource with the cluster's token when the cluster has one. The login is used when the last host of a cluster is deleted (`revokeToken`) and by the SSH features.
+- With `update_passwd_on_host=true` each host's resource opens an SSH connection to its node with the new login, pinned to the stored host key, and answers
+  with success or the node's reason (a refused login, a changed host key). Nothing is changed on the node. A host without a stored host key (added before SSH logins)
+  is answered with "delete the host and add it again". The API connection is not touched.
+- Core stores the new value **before** the per-host step, so a failed call leaves the new (possibly wrong) value stored; run it again with the correct one. This is how
+  core behaves for every hypervisor.
+- The token is not rotated by this call. To rotate it, delete the hosts and add them again.
+- **The last host of a cluster** is found among every host of the cluster, also one in maintenance or disconnected (a list of running hosts would let the token be removed
+  while a host that is in maintenance remains).
 
 ## 9. Primary storage (NFS, cluster scope)
 

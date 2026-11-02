@@ -102,6 +102,12 @@ public class ProxmoxResourceTest {
             protected void pause(long millis) {
                 // do not wait in tests
             }
+
+            @Override
+            protected org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh openSsh(org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget target) {
+                sshTargets.add(target);
+                return org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh.open(target, () -> sshNode);
+            }
         };
         Map<String, Object> params = new HashMap<>();
         params.put("zone", "1");
@@ -113,6 +119,7 @@ public class ProxmoxResourceTest {
         params.put(ProxmoxResource.DETAIL_NODE, NODE);
         params.put(ProxmoxResource.DETAIL_NODE_IP, "10.0.32.198");
         params.put(ProxmoxResource.DETAIL_ENDPOINT, "https://10.0.35.25:8006");
+        params.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, "SHA256:node");
         resource.configure(NODE, params);
     }
 
@@ -257,39 +264,57 @@ public class ProxmoxResourceTest {
         assertFalse(resource.executeRequest(new PingTestCommand("169.254.0.1", "10.1.1.5")).getResult());
     }
 
+    private final java.util.List<org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget> sshTargets = new java.util.ArrayList<>();
+    private org.apache.cloudstack.hypervisor.proxmox.ssh.ScriptedSshLink sshNode = new org.apache.cloudstack.hypervisor.proxmox.ssh.ScriptedSshLink();
+
     @Test
-    public void aNewTokenThatProxmoxAcceptsIsUsedFromNowOn() {
-        when(newClient.getNodeStatus(NODE)).thenReturn(new ProxmoxApiClient.NodeStatus(1, 1, 1L, 1L, 0L, 1L, 0, null));
-        when(newClient.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(100, "i-2-10-VM", "running")));
+    public void aNewSshLoginThatTheNodeAcceptsIsConfirmedAndTheApiTokenIsLeftAlone() {
+        sshNode.fingerprint = "SHA256:node";
         when(client.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(200, "i-2-20-VM", "running")));
 
-        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("root@pam!cloudstack", "new-secret", "10.0.32.74"));
+        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("csadmin", "new-password", "10.0.32.74"));
 
-        assertTrue(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("csadmin", sshTargets.get(0).getUser());
+        assertEquals("new-password", sshTargets.get(0).getPassword());
+        assertEquals("10.0.32.198", sshTargets.get(0).getHost());
+        assertEquals("the host key stored at Add Host is checked", "SHA256:node", sshTargets.get(0).getPinnedFingerprint());
         PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
-        assertTrue("the ping must now go through the new token", ping.getHostVmStateReport().containsKey("i-2-10-VM"));
-        assertFalse(ping.getHostVmStateReport().containsKey("i-2-20-VM"));
+        assertTrue("the API connection still uses the cluster's token", ping.getHostVmStateReport().containsKey("i-2-20-VM"));
+        verify(newClient, org.mockito.Mockito.never()).getNodeStatus(anyString());
     }
 
     @Test
-    public void aNewTokenThatProxmoxRejectsIsNotAdoptedAndTheOldOneKeepsWorking() {
-        when(rejectedClient.getNodeStatus(NODE)).thenThrow(new ProxmoxApiException("HTTP 401", 401, null));
-        when(client.listVms(NODE)).thenReturn(Arrays.asList(new ProxmoxApiClient.VmInfo(200, "i-2-20-VM", "running")));
+    public void aNewSshLoginThatTheNodeRefusesIsReported() {
+        sshNode.fingerprint = "SHA256:node";
+        sshNode.acceptsPassword = false;
 
-        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("root@pam!cloudstack", "bad-secret", "10.0.32.74"));
+        Answer answer = resource.executeRequest(new UpdateHostPasswordCommand("csadmin", "bad-password", "10.0.32.74"));
 
         assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("rejected the API token"));
-        PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
-        assertTrue(ping.getHostVmStateReport().containsKey("i-2-20-VM"));
-        verify(rejectedClient).close();
+        assertTrue(answer.getDetails(), answer.getDetails().contains("refused"));
+        assertFalse("the answer does not repeat the password", answer.getDetails().contains("bad-password"));
     }
 
     @Test
-    public void aRefusedTokenIsExplainedInWordsAnOperatorCanActOn() {
-        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("x", 401, null)).contains("id or the secret is wrong"));
-        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("x", 403, null)).contains("permissions"));
-        assertTrue(ProxmoxResource.describeTokenFailure(new ProxmoxApiException("Unable to reach the API")).contains("Unable to reach the API"));
+    public void aHostWithoutAStoredSshHostKeyCannotHaveItsLoginChecked() throws ConfigurationException {
+        ProxmoxResource old = new ProxmoxResource();
+        Map<String, Object> params = new HashMap<>();
+        params.put("zone", "1");
+        params.put("pod", "2");
+        params.put("cluster", "3");
+        params.put("guid", "Proxmox:old");
+        params.put("username", "cloudstack@pve!cs-lab");
+        params.put("password", "secret");
+        params.put(ProxmoxResource.DETAIL_NODE, NODE);
+        params.put(ProxmoxResource.DETAIL_NODE_IP, "10.0.32.198");
+        params.put(ProxmoxResource.DETAIL_ENDPOINT, "https://10.0.35.25:8006");
+        old.configure(NODE, params);
+
+        Answer answer = old.executeRequest(new UpdateHostPasswordCommand("csadmin", "new-password", "10.0.32.74"));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("delete the host and add it again"));
     }
 
     // ---- primary storage
