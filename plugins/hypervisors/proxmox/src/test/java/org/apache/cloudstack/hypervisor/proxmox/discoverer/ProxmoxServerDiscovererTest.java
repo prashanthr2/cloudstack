@@ -60,6 +60,8 @@ public class ProxmoxServerDiscovererTest {
     private ClusterVO cluster;
     private ClusterDao clusterDao;
     private HostDao hostDao;
+    private ConfigurationDao configDao;
+    private static final String LOGIN_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderKeyForTests+/ cloudstack-systemvm";
 
     @Before
     public void setUp() {
@@ -85,7 +87,7 @@ public class ProxmoxServerDiscovererTest {
         org.mockito.Mockito.doAnswer(call -> clusterDetails.put(call.getArgument(1), call.getArgument(2))).when(clusterDetailsDao).persist(anyLong(), anyString(), anyString());
         org.mockito.Mockito.doAnswer(call -> clusterDetails.remove(call.<String>getArgument(1))).when(clusterDetailsDao).removeDetail(anyLong(), anyString());
         ReflectionTestUtils.setField(discoverer, "clusterDetailsDao", clusterDetailsDao);
-        ConfigurationDao configDao = mock(ConfigurationDao.class);
+        configDao = mock(ConfigurationDao.class);
         when(configDao.getValue("ssh.privatekey")).thenReturn("MANAGEMENT-KEY");
         ReflectionTestUtils.setField(discoverer, "_configDao", configDao);
         cluster = mock(ClusterVO.class);
@@ -120,6 +122,9 @@ public class ProxmoxServerDiscovererTest {
                 tokens++;
                 String name = command.replaceAll(".*user token add cloudstack@pve (\\S+) .*", "$1");
                 return new ExecResult(0, "{\"full-tokenid\":\"cloudstack@pve!" + name + "\",\"value\":\"secret-" + tokens + "\"}", "");
+            }
+            if (command.startsWith("cat ") && command.contains("cloudstack_systemvm.pub")) {
+                return new ExecResult(0, LOGIN_KEY + "\n", "");
             }
             if (command.contains("pvesh get /cluster/status")) {
                 return new ExecResult(0, "[{\"type\":\"cluster\",\"name\":\"lab\",\"nodes\":3}]", "");
@@ -322,6 +327,44 @@ public class ProxmoxServerDiscovererTest {
 
         discoverer.ensureCapabilities("8.4.21");
         discoverer.ensureCapabilities(null);
+    }
+
+    @Test
+    public void addHostPutsTheSystemVmLoginKeyIntoTheSettingWhenItIsEmpty() throws Exception {
+        find();
+
+        verify(configDao).update("proxmox.systemvm.ssh.key", LOGIN_KEY);
+    }
+
+    @Test
+    public void theAdministratorsKeysStayWhenTheLoginKeyIsAdded() throws Exception {
+        when(configDao.getValue("proxmox.systemvm.ssh.key")).thenReturn("ssh-rsa AAAAB3Admin me@work");
+
+        find();
+
+        verify(configDao).update("proxmox.systemvm.ssh.key", "ssh-rsa AAAAB3Admin me@work|" + LOGIN_KEY);
+    }
+
+    @Test
+    public void aSettingThatHasTheLoginKeyIsNotChanged() throws Exception {
+        when(configDao.getValue("proxmox.systemvm.ssh.key")).thenReturn(LOGIN_KEY);
+
+        find();
+
+        verify(configDao, org.mockito.Mockito.never()).update(anyString(), anyString());
+    }
+
+    @Test
+    public void aLoginKeyThatCannotBeMadeDoesNotStopTheHostFromBeingAdded() throws Exception {
+        ScriptedSshLink node = nodeLink();
+        java.util.function.Function<String, ExecResult> normal = node.answers;
+        node.answers = command -> command.contains("cloudstack_systemvm") || command.startsWith("test -f") ? new ExecResult(1, "", "Permission denied") : normal.apply(command);
+        links.put("10.0.35.25", node);
+
+        find();
+
+        verify(configDao, org.mockito.Mockito.never()).update(anyString(), anyString());
+        assertEquals("cloudstack@pve!cs-lab", clusterDetails.get("username"));
     }
 
     @Test

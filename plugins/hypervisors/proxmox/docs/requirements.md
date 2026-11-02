@@ -326,14 +326,16 @@ connects to the VM's control address (`169.254.x.y`, shown as the control NIC of
 **Why a key of your own is needed.** A system VM trusts only the management server's public key (`ssh.publickey`). On a KVM host CloudStack copies the matching private key to the host at host add, over SSH. For Proxmox CloudStack has no SSH access to the nodes and does not
 copy the management server's private key anywhere. Instead **you create a key pair for troubleshooting and give CloudStack its public half**; CloudStack adds that public key to every system VM and router it starts.
 
-**Set up, once per CloudStack installation** (any size of cluster: one key, one setting):
+**Automatic set-up (Add Host).** Since Phase 10 Add Host does the set-up below itself, because it has root (or sudo) on the nodes: it makes the key pair `/etc/pve/priv/cloudstack_systemvm` when that file does not exist (a pair that is there is used, never replaced; a private key without its `.pub` file gets its public key derived), and adds the public key to the setting `proxmox.systemvm.ssh.key`, after any keys that are there already (keys of administrators stay; a key that is in the setting is not added twice). The system VMs and routers started **after** that accept the key: restart the ones that run already. If the pair cannot be made (for example the write to `/etc/pve/priv` is refused), the host is still added, the management server log says why, and the manual steps below still work.
+
+**Set up by hand, once per CloudStack installation** (needed only when the automatic set-up did not run or you want another key; any size of cluster: one key, one setting):
 
 1. On **any** Proxmox node, as root, create the key pair in Proxmox's cluster-wide private directory. Proxmox replicates `/etc/pve/priv` to every node of the cluster, current and future, and keeps it readable by root only, so the private key is then on all nodes:
    ```bash
    ssh-keygen -t ed25519 -N "" -C "cloudstack-systemvm" -f /etc/pve/priv/cloudstack_systemvm
    cat /etc/pve/priv/cloudstack_systemvm.pub
    ```
-   The second command prints one line, `ssh-ed25519 AAAA... cloudstack-systemvm`. **Not yet confirmed on a lab:** that `/etc/pve/priv` accepts a new file with that name. If it does not, create the pair in `/root/.ssh/` on one node and copy the private file (mode 600, owner root) to the same
+   The second command prints one line, `ssh-ed25519 AAAA... cloudstack-systemvm`. Lab-confirmed on 8.4 for a key made by hand. If `/etc/pve/priv` does not accept a new file on your system, create the pair in `/root/.ssh/` on one node and copy the private file (mode 600, owner root) to the same
    place on every node yourself; nothing else changes.
 2. Put that line into the global setting **`proxmox.systemvm.ssh.key`** (Global Settings in the UI, or `cmk update configuration name=proxmox.systemvm.ssh.key value="ssh-ed25519 AAAA... cloudstack-systemvm"`). The value is the public key only: never the contents of the file without `.pub`.
    Several public keys can be given, separated by `|` (for example one per administrator). The setting is dynamic: no restart of the management server is needed.

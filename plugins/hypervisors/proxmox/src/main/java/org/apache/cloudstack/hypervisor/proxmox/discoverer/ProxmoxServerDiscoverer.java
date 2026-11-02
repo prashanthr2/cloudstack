@@ -37,6 +37,7 @@ import org.apache.cloudstack.hypervisor.proxmox.ssh.ExecResult;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxApiAccess;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSystemVmKey;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.TrileadSshLink;
 import org.apache.commons.lang3.StringUtils;
@@ -200,6 +201,8 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             clusterDetailsDao.persist(cluster.getId(), "password", tokenSecret);
         }
 
+        installSystemVmLoginKey(ssh);
+
         // Any node answers for the whole cluster, so remember every node's address: the one given first, then the
         // others, to carry on when the node used for the API goes down.
         Set<String> endpointSet = new LinkedHashSet<>();
@@ -278,6 +281,25 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                     + ": every online node of the Proxmox cluster is already added, or the SSH login does not work on the others");
         }
         return resources;
+    }
+
+    /**
+     * Makes the key pair for the login from a node to a system VM when it does not exist (in /etc/pve/priv, so on every node of the cluster) and adds its
+     * public key to the setting proxmox.systemvm.ssh.key, keeping the keys that are there. The key reaches a system VM when CloudStack starts it. A
+     * problem is logged and does not stop the host from being added: it only affects the troubleshooting login, which can still be set up by hand.
+     */
+    private void installSystemVmLoginKey(ProxmoxSsh ssh) {
+        try {
+            String key = ProxmoxSystemVmKey.ensure(ssh);
+            String name = ProxmoxConfig.SystemVmSshKey.key();
+            String merged = ProxmoxSystemVmKey.addTo(_configDao.getValue(name), key);
+            if (merged != null) {
+                _configDao.update(name, merged);
+                logger.info("Added the public key of {} to the setting {}: system VMs and routers started from now on accept it", ProxmoxSystemVmKey.PRIVATE_KEY, name);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("The key for the login from a Proxmox node to a system VM was not set up (set it up by hand, see the requirements): {}", e.getMessage());
+        }
     }
 
     /**
