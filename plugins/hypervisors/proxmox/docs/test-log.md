@@ -733,4 +733,6 @@ After commits 2a1880f95d (audit role kept on the node path) and 1532997c74 (DELE
 | Add the hosts again after the delete | Pass |
 | Consoles of system VMs and user VMs | Pass (after 23d6f61d22) |
 
-Not run yet: key-only login, wrong password, non-root `csadmin` with sudo, Proxmox 9.
+Run later the same day (commits 010df3f826, 6a8e038f43, 7642ac48d5; the management server's key from `ssh.publickey`, hidden from the UI, was added to `/root/.ssh/authorized_keys`; the System SSH Key choice and the empty password needed the UI and `verifyHostCredentials` changes): the system VM login key made by Add Host, key-only login, and the wrong password and non-root `csadmin` with sudo checks all **passed** (reported by the user as "all 3 worked").
+
+Not run yet: Proxmox 9.
