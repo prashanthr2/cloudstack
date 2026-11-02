@@ -736,6 +736,22 @@ public class ResourceManagerImpl extends ManagerBase implements ResourceManager,
                 null, null, null, false, null);
     }
 
+    /**
+     * A host needs a username and a password, except where an SSH key can be used instead of the password: for KVM and Proxmox the management
+     * server's key is tried first, and the password may be empty.
+     */
+    static void verifyHostCredentials(final String hypervisorType, final String username, final String password) {
+        if (HypervisorType.KVM.toString().equalsIgnoreCase(hypervisorType) || HypervisorType.Proxmox.toString().equalsIgnoreCase(hypervisorType)) {
+            if (StringUtils.isBlank(username)) {
+                throw new InvalidParameterValueException("Username need to be provided.");
+            }
+        } else {
+            if (StringUtils.isBlank(username) || StringUtils.isBlank(password)) {
+                throw new InvalidParameterValueException("Username and Password need to be provided.");
+            }
+        }
+    }
+
     private List<HostVO> discoverHostsFull(final Long dcId, final Long podId, Long clusterId, final String clusterName,
                String url, String username, String password, final String hypervisorType, final List<String> hostTags,
                List<String> storageAccessGroups, final Map<String, String> params, final boolean deferAgentCreation,
@@ -787,15 +803,7 @@ public class ResourceManagerImpl extends ManagerBase implements ResourceManager,
         }
         List<String> skipList = Arrays.asList(HypervisorType.VMware.name().toLowerCase(Locale.ROOT), Type.SecondaryStorage.name().toLowerCase(Locale.ROOT));
         if (!skipList.contains(hypervisorType.toLowerCase(Locale.ROOT))) {
-            if (HypervisorType.KVM.toString().equalsIgnoreCase(hypervisorType)) {
-                if (StringUtils.isBlank(username)) {
-                    throw new InvalidParameterValueException("Username need to be provided.");
-                }
-            } else {
-                if (StringUtils.isBlank(username) || StringUtils.isBlank(password)) {
-                    throw new InvalidParameterValueException("Username and Password need to be provided.");
-                }
-            }
+            verifyHostCredentials(hypervisorType, username, password);
         }
 
         ClusterVO cluster = null;

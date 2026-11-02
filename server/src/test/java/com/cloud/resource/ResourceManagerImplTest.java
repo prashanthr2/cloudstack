@@ -1428,4 +1428,25 @@ public class ResourceManagerImplTest {
         Assert.assertFalse(message, message.contains("Reason given by the host"));
         Assert.assertTrue(message, message.contains("make sure you are still able to connect to your hosts"));
     }
+    @Test
+    public void hostCredentialsMayLeaveThePasswordEmptyOnlyWhereAnSshKeyCanBeUsed() {
+        ResourceManagerImpl.verifyHostCredentials("KVM", "root", "");
+        ResourceManagerImpl.verifyHostCredentials("Proxmox", "root", "");
+        ResourceManagerImpl.verifyHostCredentials("proxmox", "root", null);
+        ResourceManagerImpl.verifyHostCredentials("Proxmox", "root", "secret");
+        for (String hypervisor : new String[] {"KVM", "Proxmox"}) {
+            try {
+                ResourceManagerImpl.verifyHostCredentials(hypervisor, "", "secret");
+                Assert.fail("a username is always needed");
+            } catch (InvalidParameterValueException e) {
+                Assert.assertEquals("Username need to be provided.", e.getMessage());
+            }
+        }
+        try {
+            ResourceManagerImpl.verifyHostCredentials("XenServer", "root", "");
+            Assert.fail("no SSH key choice for this hypervisor");
+        } catch (InvalidParameterValueException e) {
+            Assert.assertEquals("Username and Password need to be provided.", e.getMessage());
+        }
+    }
 }

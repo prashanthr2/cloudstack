@@ -164,3 +164,5 @@ Add Host makes the key pair for the login from a node to a system VM and puts it
 ## 12. Add Host form: the SSH key choice (2026-11-02)
 
 The Add Host form showed "Authentication Method" with the single choice Password for a Proxmox cluster: `ui/src/views/infra/HostAdd.vue` offered the SSH key button for KVM only. One condition changed (`['KVM', 'Proxmox']`); the form already sends an empty password for that choice, which the plugin reads as "use the management server's key" (`ssh.privatekey`). Part of the UI row (H) of the pull request plan in upstream-notes.md. Needs the UI to be rebuilt (`npm run build` in `ui/`, or the dev server) to show.
+
+The form then failed with API error 431 `Username and Password need to be provided.`: `ResourceManagerImpl.discoverHostsFull` exempts only KVM from the password check. Proxmox is exempted the same way (`verifyHostCredentials`, upstream-notes 30), the one core change of the SSH key choice. A password is still required, as before, for every other hypervisor.
