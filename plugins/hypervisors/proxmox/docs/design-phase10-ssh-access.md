@@ -122,3 +122,26 @@ Clean up afterwards: `sudo pveum user delete cltest@pve`, `sudo pveum role delet
 - `deleteHost`: when the host is the last Proxmox host of its CloudStack cluster, the token is removed over SSH and the cluster's details `username` and `password` are deleted; best effort.
 - Not built yet: the install of the management key for the system VM login (step 2b, needs a lab check that `chmod` works on `/etc/pve/priv`), the use of the stored login by a feature (the first is volume snapshots), Update Host password for the new details, and giving the HA role when `proxmox.ha.manage` is turned on after hosts were added.
 - Tests: `ProxmoxApiAccessTest` (9), `ProxmoxServerDiscovererTest` (24): 515 plugin tests pass. **Not run against a node.**
+
+## 9. Proxmox VE 9: comparison with the source (2026-11-02)
+
+The plugin was built and lab-tested only on Proxmox VE 8.4.21. Before adding Proxmox 9 hosts, every API call and `pveum` command the plugin uses was compared with the Proxmox VE 9 source mirrors in `promox-src` (`qemu-server` 9.2.11, `pve-storage` 9.1.13, `pve-access-control` 9.1.2, `pve-common` 9.2.3). This is reading only: nothing was run on a Proxmox 9 node. **Result: no difference found that needs a change in the plugin.**
+
+| Area | What was compared | Result on 9 |
+|---|---|---|
+| `move_disk` | `storage`, `format`, `delete`, `target-vmid`, `target-disk`; refusal of a disk with snapshots when the source is deleted; disk names | same parameters; same refusal ("you can't move a disk with snapshots and delete the source"); names still `vm-<vmid>-disk-<n>`, so the holder VM and alias logic apply |
+| `migrate` | `target`, `online`, `force`, `targetstorage`; the pre-check call | same |
+| VM power and config | `status/shutdown` (`forceStop`, `timeout`), `status/stop` (`overrule-shutdown`), `vncproxy` (`websocket`), `config?current=1`, delete with `purge` | same |
+| Storage entries | dir and NFS options `content-dirs`, `is_mountpoint`, `create-subdirs`, `create-base-path`, `shared`; the `import` content type | same. New option `snapshot-as-volume-chain` exists (fixed at creation); the plugin does not set it |
+| Disk create | content API `filename`, `vmid`, `format`, `size` | same |
+| Roles and privileges | `PVEVMAdmin`, `PVEDatastoreAdmin`, `PVESDNUser`, `PVEAuditor`, `Sys.Modify`, `Sys.Audit`, `Sys.Console` | all still exist. 9 dropped `VM.Monitor`, split `VM.GuestAgent.*` and added `VM.Replicate`; the plugin names none of them, the built-in roles carry the right ones |
+| Token | `pveum user token add` with `--privsep` and `--output-format json` | same |
+| SSH | host and key algorithms of Debian 13 OpenSSH against the Trilead library (`build-217-jenkins-27`: Curve25519, ECDH, ED25519, ECDSA, RSA) | expected to work; confirm on a node |
+
+**Not checked (not in the mirrors; confirm on a Proxmox 9 node):**
+- cluster and node calls: `/version`, `/cluster/status`, `/cluster/resources`, `/cluster/nextid`, node status, tasks, node network create, apply and revert (the control bridge);
+- HA: 9 added HA rules; the plugin uses only the HA resources call (`/cluster/ha/resources`, no group);
+- the ACL path `/sdn/zones/localnetwork` that lets the token use bridges (the check is in `pve-guest-common`, not mirrored);
+- a cluster with both 8 and 9 nodes (only meaningful during an upgrade).
+
+**Lab check on one Proxmox 9 node (own cluster, so the 8.4 cluster is not touched):** Add Host with root and password; one token `cs-<cluster>`; start a VM with a network (control bridge and bridge ACL); attach and detach a data volume; live volume migration (T8); HA enabled and disabled for a VM; delete the host removes the token. Record the results in `test-log.md`.

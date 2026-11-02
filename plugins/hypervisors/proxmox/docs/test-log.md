@@ -710,3 +710,7 @@ On the build with the stable data volume path (design section 18), alias-first l
 ### Phase 10, step 2: Add Host with a login (2026-10-31): unit tests
 
 One API token for the Proxmox cluster, kept in the CloudStack cluster's details. `ProxmoxApiAccessTest` (9: token made and read, old token replaced first, user and roles kept, every role given to user and token with its path, the node right on the node's own path, HA role only when HA is managed, a failure stops the setup, output that is not a token, revoke by id forgives a missing token) and `ProxmoxServerDiscovererTest` (one token serves the cluster and is kept with it, a later add reuses it, a token Proxmox no longer accepts is replaced, the login and host key are kept per host, no password kept when the key did the login, a node that refuses is skipped, a refused login on the given address fails the add, the last host deleted removes the token and the cluster's details, other hosts left keep it, a token that cannot be removed does not stop the delete, a host is rebuilt with the cluster's token or keeps its own). Plugin total 515 pass. Not run against a node yet.
+
+## Proxmox 9 compatibility (2026-11-02)
+
+Source comparison only, no lab run yet: see `design-phase10-ssh-access.md` section 9 (result: no change needed; the cluster and node calls, HA and the bridge ACL path are not in the mirrors and are the first things to check on a Proxmox 9 node).
