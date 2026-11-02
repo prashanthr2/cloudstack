@@ -717,4 +717,20 @@ Source comparison only, no lab run yet: see `design-phase10-ssh-access.md` secti
 
 ## Console of a system VM, 2026-11-02
 
-Console proxy VM 101 on pve3: `vncproxy` task ran on pve2 and ended `connection timed out`; pve3's `pveproxy` logged `connect to 'localhost:5900' failed: Connection refused`. User VM 103 on pve2 worked. Cause and fix: `design-phase10-ssh-access.md` section 10. Re-test pending.
+Console proxy VM 101 on pve3: `vncproxy` task ran on pve2 and ended `connection timed out`; pve3's `pveproxy` logged `connect to 'localhost:5900' failed: Connection refused`. User VM 103 on pve2 worked. Cause and fix: `design-phase10-ssh-access.md` section 10. Re-tested after commit 23d6f61d22 (2026-11-02): the console of the console proxy VM, the secondary storage VM and user VMs all open. **Pass.**
+
+## Phase 10 Add Host and token, lab round (2026-11-02, Proxmox 8.4.21, three nodes)
+
+After commits 2a1880f95d (audit role kept on the node path) and 1532997c74 (DELETE_HOST guards):
+
+| Check | Result |
+|---|---|
+| Add Host with root and password finds every online node; one token `cs-<cluster>` in `pveum user token list cloudstack@pve` | Pass |
+| `cluster_details` holds `username` (token id) and `password` (secret) | Pass |
+| Start a VM with the token | Pass |
+| Restart the management server: hosts reconnect (cluster token merged into the host's resource parameters) | Pass |
+| Delete all hosts of the cluster: token removed on Proxmox, cluster details gone | Pass (after the guards) |
+| Add the hosts again after the delete | Pass |
+| Consoles of system VMs and user VMs | Pass (after 23d6f61d22) |
+
+Not run yet: key-only login, wrong password, non-root `csadmin` with sudo, Proxmox 9.
