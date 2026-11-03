@@ -750,18 +750,23 @@ Lab checks are in `design-phase10-ssh-access.md` sections 13 and 14, run after c
 | 5. `proxmox.ha.manage=true` with an HA offering: the VM is added to HA (`ha-manager`/`/cluster/ha/resources` shows it), no 403 | **Pass** |
 | 6. `POST /nodes/<node>/termproxy` as the token is refused | **Pass**: HTTP 403 `Permission check failed (/nodes/<node>, Sys.Console)`. A first try showed HTTP 401 only because bash history expansion turned `\!` into a literal backslash in the token id (`set +H` fixes it); it proved nothing and was repeated |
 
-## Instance snapshots (2026-11-03, built, not run yet)
+## Instance snapshots (2026-11-03, Proxmox 8.4.21, NFS qcow2, commit 6a4481a6bc)
 
-Needs `UPDATE cloud.hypervisor_capabilities SET vm_snapshot_enabled=1 WHERE hypervisor_type='Proxmox' AND hypervisor_version='default';` on an existing database, then a restart of the management server. Pull, rebuild `plugins/hypervisors/proxmox` and `client`, restart.
+Needs `UPDATE cloud.hypervisor_capabilities SET vm_snapshot_enabled=1 WHERE hypervisor_type='Proxmox' AND hypervisor_version='default';` on an existing database, then a restart of the management server. "Disk-only" below means an **instance snapshot without memory** (`snapshotmemory=false`, taken on the instance's Snapshots tab); the Snapshot button of a volume is a different feature, not supported (see the note after the table).
 
-| # | Check | Expected |
+| # | Check | Result |
 |---|---|---|
-| IS1 | Stopped instance with a data volume: create an instance snapshot (UI or `createVMSnapshot`) | the snapshot is Ready; `qm listsnapshot <vmid>` shows it; `qm config <vmid> --snapshot <name>` lists both drives |
-| IS2 | Write a file in the instance, then take a disk-only snapshot while it **runs**, write another file | Ready; no `vmstate` in the snapshot config |
-| IS3 | Running instance: snapshot with memory (`snapshotmemory=true`) | Ready; `images/<vmid>/vm-<vmid>-state-<name>.raw` exists |
-| IS4 | Revert to the memory snapshot of IS3 while running | the instance is running with the state of the snapshot (a file written after it is gone); CloudStack shows Running |
-| IS5 | Stop the instance, revert to the disk-only snapshot of IS2 | the instance stays stopped, start it: the first file is there, the second is not |
-| IS6 | Delete one snapshot, then the others | `qm listsnapshot` shrinks; the state file of IS3 is gone; the CloudStack list is empty |
-| IS7 | Take two snapshots, then destroy and expunge the instance, keeping the data volume | `qemu-img snapshot -l <data volume file>` lists none; the data volume is still there and can be attached to another instance |
-| IS8 | Same as IS7 but expunge the instance **with** the data volume | the VM and the data file are both gone; no error in `jetty.log` |
-| IS9 | Try attach or detach of a volume, and a storage migration, while the instance has snapshots | refused by core, with its message |
+| IS1 | Stopped instance with a data volume: create an instance snapshot | **Pass.** Ready; `qm listsnapshot 103` lists `i-2-94-VM_VS_20261103143733` with the description; `qm config 103 --snapshot ...` lists `scsi0` and the data volume `scsi1` |
+| IS2 | Instance snapshot **without memory on a running instance**, after writing a file, then another file | **Pass.** Ready; the snapshot config has no `vmstate`; the instance kept running |
+| IS3 | Running instance: snapshot with memory | **Pass.** Ready; `images/103/vm-103-state-i-2-94-VM_VS_20261103145019.raw` (481,862,656 bytes for 512 MB of RAM) beside `vm-103-disk-0.qcow2` |
+| IS4 | Revert to the memory snapshot while running | **Pass** (reported as working; no output kept) |
+| IS5 | Stop the instance, revert to a snapshot without memory | **Pass.** The instance stayed stopped and started fine. (A first attempt looked like a lost partition because the revert had gone to the first snapshot, taken before the partition existed; the revert was right) |
+| IS6 | Delete the snapshots one by one | **Pass.** `qm listsnapshot` went from three snapshots to two to none, and the state file of IS3 was removed (only `vm-103-disk-0.qcow2` is left in `images/103/`) |
+| IS7 | Two snapshots, expunge the instance and keep the data volume | **Pass.** `qemu-img snapshot -l` of the data volume file afterwards lists only `s2` and `s3` (11:11, from the manual `qm snapshot` tests before this build); none of the `i-2-94-VM_VS_...` snapshots the instance had on that disk is left. The two old ones are not ours to remove: no instance owned them any more |
+| IS8 | Same, expunge the instance with the data volume | **Pass** (reported) |
+| IS9 | Storage migration while the instance has snapshots | **Refused by core** with `Instance with Instance Snapshots cannot be migrated with storage, please remove all Instance Snapshots`, as expected. Attach, detach and resize were not tried (core refuses them with its own texts) |
+
+Notes:
+- **Volume snapshots are not supported.** The Snapshot button of a data volume ends in `Unsupported command issued: org.apache.cloudstack.storage.command.CreateObjectCommand` (`DefaultSnapshotStrategy.takeSnapshot`), core's generic text. That was the "failure" of a first IS2 attempt; it was not an instance snapshot.
+- Core refuses to resize a volume of an instance that has instance snapshots (`VolumeApiServiceImpl.validateNoVmSnapshots`), even though Proxmox itself allows it.
+- Not measured: the growth of a data volume that carries snapshots, and a snapshot with memory of a larger instance (time).
