@@ -102,7 +102,7 @@ With that login the plugin, over SSH:
    propagation, and always the role `CloudStackHA` (`Sys.Audit`, `Sys.Console`) on `/` without propagation (see "Permissions for HA management" for why that is safe and why it is always given);
 3. keeps the token with the **CloudStack cluster** (`cluster_details`: `username` is the token id, `password` the secret, encrypted like a host's), and the SSH login
    and host key with each host. A host added later in the same cluster reads the token there and makes no new one;
-4. from then on uses the API with the token. When the last Proxmox host of a cluster is deleted, the token is removed (best effort).
+4. from then on uses the API with the token. When the last Proxmox host of a cluster is deleted, the token is removed and, if the user `cloudstack@pve` has no other token, the user (with its entries in the access control list) and the roles `CloudStackNet` and `CloudStackHA` as well (best effort: a failure is a warning in the management server log with the command to run by hand).
 
 If Proxmox stops accepting the cluster's token (it was removed, or its secret changed), the next Add Host makes a new one; hosts already added take it up when they
 reconnect (restart the management server, or disconnect and reconnect them).

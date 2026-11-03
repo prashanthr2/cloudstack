@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.ssh;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -132,5 +133,47 @@ public class ProxmoxApiAccessTest {
         ProxmoxApiAccess.revokeToken(open(link), "cloudstack@pve!cs-lab");
 
         assertEquals(1, link.commandsWith("pveum user token remove cloudstack@pve cs-lab").size());
+    }
+    @Test
+    public void theUserAndTheRolesAreRemovedWhenTheUserHasNoTokenLeft() {
+        ScriptedSshLink link = node();
+        link.answers = command -> command.contains("token list") ? new ExecResult(0, "[]\n", "") : new ExecResult(0, "", "");
+
+        assertTrue(ProxmoxApiAccess.removeUserWhenUnused(open(link)));
+
+        assertEquals(1, link.commandsWith("pveum user delete cloudstack@pve").size());
+        assertEquals(1, link.commandsWith("pveum role delete CloudStackNet").size());
+        assertEquals(1, link.commandsWith("pveum role delete CloudStackHA").size());
+    }
+
+    @Test
+    public void aUserThatHasAnotherTokenIsKeptWithItsRoles() {
+        ScriptedSshLink link = node();
+        link.answers = command -> command.contains("token list") ? new ExecResult(0, "[{\"tokenid\":\"mine\",\"privsep\":1}]", "") : new ExecResult(0, "", "");
+
+        assertFalse(ProxmoxApiAccess.removeUserWhenUnused(open(link)));
+
+        assertTrue(link.commandsWith("user delete").isEmpty());
+        assertTrue(link.commandsWith("role delete").isEmpty());
+    }
+
+    @Test
+    public void aUserAndRolesThatAreGoneAlreadyAreNotAnError() {
+        ScriptedSshLink link = node();
+        link.answers = command -> command.contains("token list") ? new ExecResult(2, "", "user 'cloudstack@pve' does not exist")
+                : command.contains("role delete") ? new ExecResult(2, "", "role 'CloudStackNet' does not exist") : new ExecResult(0, "", "");
+
+        assertTrue(ProxmoxApiAccess.removeUserWhenUnused(open(link)));
+
+        assertTrue(link.commandsWith("user delete").isEmpty());
+    }
+
+    @Test(expected = ProxmoxSshException.class)
+    public void aFailureToDeleteTheUserIsReported() {
+        ScriptedSshLink link = node();
+        link.answers = command -> command.contains("token list") ? new ExecResult(0, "[]", "") : command.contains("user delete") ? new ExecResult(1, "", "permission denied")
+                : new ExecResult(0, "", "");
+
+        ProxmoxApiAccess.removeUserWhenUnused(open(link));
     }
 }

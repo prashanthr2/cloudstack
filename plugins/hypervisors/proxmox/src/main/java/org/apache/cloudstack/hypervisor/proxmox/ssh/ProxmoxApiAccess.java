@@ -105,6 +105,38 @@ public final class ProxmoxApiAccess {
         }
     }
 
+    /**
+     * Removes the user and the roles the plugin made, when the user has no token left (a token of that user that an administrator made keeps them).
+     * Deleting the user also removes its entries in the access control list. Run after {@link #revokeToken}, when the last host of a cluster goes.
+     *
+     * @return true when the user and the roles were removed (or were gone), false when a token of the user remains
+     */
+    public static boolean removeUserWhenUnused(ProxmoxSsh ssh) {
+        ExecResult tokens = ssh.sudo("pveum user token list " + USER + " --output-format json", null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+        boolean userExists = tokens.isSuccess();
+        if (!userExists && !tokens.describeFailure().contains("does not exist")) {
+            throw new ProxmoxSshException("The tokens of " + USER + " could not be listed: " + tokens.describeFailure());
+        }
+        if (userExists) {
+            String listing = StringUtils.trimToEmpty(tokens.getStdout());
+            try {
+                if (!listing.isEmpty() && MAPPER.readTree(listing).size() > 0) {
+                    return false;
+                }
+            } catch (IOException e) {
+                throw new ProxmoxSshException("Proxmox printed something that is not a token list: " + StringUtils.abbreviate(listing, 200), e);
+            }
+            ssh.sudoOrFail("pveum user delete " + USER);
+        }
+        for (String role : new String[] {NET_ROLE, HA_ROLE}) {
+            ExecResult result = ssh.sudo("pveum role delete " + role, null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+            if (!result.isSuccess() && !result.describeFailure().contains("does not exist")) {
+                throw new ProxmoxSshException("The role " + role + " could not be removed: " + result.describeFailure());
+            }
+        }
+        return true;
+    }
+
     static Token parse(String output) {
         try {
             JsonNode json = MAPPER.readTree(output);

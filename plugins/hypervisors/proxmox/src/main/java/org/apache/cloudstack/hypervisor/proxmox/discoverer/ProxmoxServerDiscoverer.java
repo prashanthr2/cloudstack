@@ -504,6 +504,16 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                         details.get(ProxmoxResource.DETAIL_SSH_FINGERPRINT)))) {
                     ProxmoxApiAccess.revokeToken(ssh, tokenDetail.getValue());
                     logger.info("Removed the API token {} of the last Proxmox host of the cluster", tokenDetail.getValue());
+                    try {
+                        if (ProxmoxApiAccess.removeUserWhenUnused(ssh)) {
+                            logger.info("Removed the Proxmox user {} and its roles: the cluster has no CloudStack host left", ProxmoxApiAccess.USER);
+                        } else {
+                            logger.info("The Proxmox user {} has another token and is kept with its roles", ProxmoxApiAccess.USER);
+                        }
+                    } catch (RuntimeException e) {
+                        logger.warn("The Proxmox user {} and its roles were not removed (remove them with: pveum user delete {}): {}", ProxmoxApiAccess.USER,
+                                ProxmoxApiAccess.USER, e.getMessage());
+                    }
                 }
             }
             clusterDetailsDao.removeDetail(host.getClusterId(), "username");

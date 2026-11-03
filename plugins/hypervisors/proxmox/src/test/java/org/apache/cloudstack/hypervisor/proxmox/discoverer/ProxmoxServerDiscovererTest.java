@@ -509,6 +509,8 @@ public class ProxmoxServerDiscovererTest {
         discoverer.revokeToken(host);
 
         assertEquals(1, node.commandsWith("user token remove cloudstack@pve cs-lab").size());
+        assertEquals("the user goes with the token when it has none left", 1, node.commandsWith("pveum user delete cloudstack@pve").size());
+        assertEquals(1, node.commandsWith("pveum role delete CloudStackNet").size());
         assertEquals("SHA256:key9", opened.get(0).getPinnedFingerprint());
         assertTrue("the cluster no longer keeps the token", clusterDetails.isEmpty());
     }
@@ -551,6 +553,21 @@ public class ProxmoxServerDiscovererTest {
         assertEquals("csadmin", opened.get(0).getUser());
         assertEquals("new-password", opened.get(0).getPassword());
         assertEquals(1, node.commandsWith("user token remove cloudstack@pve cs-lab").size());
+    }
+
+    @Test
+    public void aFailureToRemoveTheUserDoesNotKeepTheClustersTokenDetails() {
+        com.cloud.host.HostVO host = hostToDelete();
+        when(hostDao.listIdsByClusterId(2L)).thenReturn(Arrays.asList(5L));
+        ScriptedSshLink node = nodeLink();
+        node.fingerprint = "SHA256:key9";
+        java.util.function.Function<String, ExecResult> normal = node.answers;
+        node.answers = command -> command.contains("user delete") ? new ExecResult(1, "", "permission denied") : normal.apply(command);
+        links.put("10.0.32.197", node);
+
+        discoverer.revokeToken(host);
+
+        assertTrue(clusterDetails.isEmpty());
     }
 
     @Test
