@@ -1,7 +1,7 @@
 # Open issues (to go over at the end)
 
 Parked items, with what is known and what decides each one. Closed items are removed when they are closed (the test log keeps the history).
-Last updated 2026-10-25 (items 19 to 39 added).
+Last updated 2026-11-03 (item 40 and the later work for snapshots added).
 
 ## Decisions waiting for you
 
@@ -52,11 +52,14 @@ None at the moment.
 | 37 | **Router, SSVM, CPVM migration to another host (`migrateSystemVm`): closed in Phase 9** | The functionality `VmStorageMigration` is claimed for Proxmox again (one line in `Hypervisor.java`, with its test) and the discoverer adds the `hypervisor_capabilities` row (storage motion on) for every version a host reports, because core looks the row up by the exact version. Lab: a router was migrated (T9, 2026-10-30). | Phase 9 step 5 |
 | 38 | **`PatchSystemVmCommand` and `SetHostParamsCommand` are not implemented** | The "patch system VM" API and the check after a management server upgrade answer "unsupported" for a Proxmox system VM; patching happens at every start only. The code of the start (`ProxmoxSystemVms`) can be reused. Decide whether an upgrade by restarting the system VMs is enough |
 | 39 | **No warning at a later connect when the control bridge has disappeared** | Designed (design-phase8 4.7 step 5) but not built. A start of a system VM on that node fails with a clear message, so the effect is a later failure instead of an early warning |
+| 40 | **Secrets are in the database as plain text unless database encryption is on** | The SSH password (`host_details.sshpassword`), the API token secret (`cluster_details.password`) and the `ssh.privatekey` setting are encrypted only when the management server runs with database encryption (`DBEncryptionUtil` returns its input otherwise); the lab does not. Same as the passwords of every other hypervisor; production needs encryption on (the volume snapshot design adds the SSH login to the resource, which makes this matter more) |
 
 ## Later work (not started)
 
 - System VMs and virtual routers on Proxmox.
-- Snapshots (VM and volume), backup.
+- Volume snapshots: designed in design-phase10-volume-snapshots.md (take, back up, delete, volume from snapshot, revert); not built. Instance snapshots are done.
+- **Template from a volume snapshot, and template from a volume** (decided 2026-11-03 to leave out of the volume snapshot round): needs the template layout redesign first (the template path on secondary storage and its `template.properties`); today the plugin answers "not supported" for both.
+- Backup (CloudStack's backup framework or Proxmox's own tools; not looked at).
 - Removing storage entries that are no longer used (items 8).
 - A way for a hypervisor plugin to declare its own VM settings instead of the hard-coded list in core (upstream-notes.md, 16).
 - Everything in upstream-notes.md (items 1 to 18) is to be turned into separate, minimal pull requests; the core changes are kept as small as they are for that reason.

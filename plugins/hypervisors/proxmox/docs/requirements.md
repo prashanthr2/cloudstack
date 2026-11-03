@@ -275,7 +275,7 @@ ssh -i /etc/pve/priv/cloudstack_systemvm -p 3922 root@<control address of the VM
 
 - **The API token** is kept with the CloudStack cluster, in `cluster_details`: `username` is the token id (`cloudstack@pve!cs-<cluster>`), `password` the secret.
   Every host of the cluster reads it from there when it connects. Database encryption, when it is on, covers a detail named `password`, as for the other plugins.
-- **The SSH login** is kept with each host, in `host_details`: `sshuser`, `sshpassword` (encrypted by the plugin; absent for a login by key) and `sshfingerprint`
+- **The SSH login** is kept with each host, in `host_details`: `sshuser`, `sshpassword` (encrypted by the plugin when the management server's database encryption is on, plain text otherwise; absent for a login by key) and `sshfingerprint`
   (the node's SSH host key). The plugin uses it for what the API cannot do (see design-phase10-ssh-access.md section 1), and to remove the token when the last host
   of a cluster is deleted.
 
