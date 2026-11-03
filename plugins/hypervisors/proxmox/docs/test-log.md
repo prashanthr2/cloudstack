@@ -737,6 +737,15 @@ Run later the same day (commits 010df3f826, 6a8e038f43, 7642ac48d5; the manageme
 
 Not run yet: Proxmox 9.
 
-## Update Host password as the SSH login, and the HA role always given (2026-11-02, not run yet)
+## Update Host password as the SSH login, the HA role always given, and the user cleanup (2026-11-03, Proxmox 8.4.21, three nodes)
 
-Lab checks are in `design-phase10-ssh-access.md` section 13. The token rotation rows (f, h, k) of the Phase 1 lab round above describe the earlier model, in which the administrator made the token by hand; they are history.
+Lab checks are in `design-phase10-ssh-access.md` sections 13 and 14, run after commits 12de235c17 (the resource gets the SSH host key) and 2d8d59b27b (user and roles removed with the last host). The token rotation rows (f, h, k) of the Phase 1 lab round above describe the earlier model, in which the administrator made the token by hand; they are history.
+
+| Check | Result |
+|---|---|
+| 1. `updateHostPassword` without `update_passwd_on_host`: the login is stored, the hosts stay Up after a reconnect | **Pass** (2026-11-02) |
+| 2. `updateHostPassword` with `update_passwd_on_host=true`, right and wrong password, on hosts added with a key | **Pass** (the first run failed with "no stored SSH host key"; fixed by 12de235c17, hosts re-added) |
+| 3. Delete all hosts: the token, the user `cloudstack@pve` and the roles `CloudStackNet` and `CloudStackHA` are gone | **Pass** |
+| 4. A single-host `updateHostPassword` is refused with the new text (the same SSH login is used on every node) | **Pass** (2026-11-02) |
+| 5. `proxmox.ha.manage=true` with an HA offering: the VM is added to HA (`ha-manager`/`/cluster/ha/resources` shows it), no 403 | **Pass** |
+| 6. `POST /nodes/<node>/termproxy` as the token is refused | **Pass**: HTTP 403 `Permission check failed (/nodes/<node>, Sys.Console)`. A first try showed HTTP 401 only because bash history expansion turned `\!` into a literal backslash in the token id (`set +H` fixes it); it proved nothing and was repeated |
