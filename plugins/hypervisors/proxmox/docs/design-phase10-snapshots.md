@@ -1,6 +1,6 @@
 # Phase 10 design: snapshots
 
-Status: **first version, for discussion; nothing built.** "V" means read in code (CloudStack in this repository, Proxmox in the mirrors under `promox-src`), "U" means unverified, with a lab check in section 5.
+Status: **option A built (2026-11-03), unit tested (553 plugin tests), not yet run on the lab; see section 6. Option B is a later round.** "V" means read in code (CloudStack in this repository, Proxmox in the mirrors under `promox-src`), "U" means unverified, with a lab check in section 5.
 
 ## 1. Two features that CloudStack calls snapshots
 
@@ -36,6 +36,12 @@ Questions:
 2. **Running instance, disk only:** should that work? It needs a plugin strategy (a subclass of `DefaultVMSnapshotStrategy` with another `canHandle`, a bean in the plugin like the data motion strategy), small. Or only memory snapshots for running instances, which is what the default strategy gives with no extra code.
 3. **For B level 3, is node access acceptable** (SSH key from a setting, as the guest agent access is today)? If not, B stays a limit.
 
+## 4a. Decisions (2026-11-03)
+
+1. **A first, B later.** Instance snapshots are built now; volume snapshots are decided in a later round.
+2. **A disk-only snapshot of a running instance works:** a plugin strategy with its own `canHandle` (`vmstate=0`, crash consistent).
+3. **SSH plus `qemu-img` is acceptable for B level 3**, using the SSH login Add Host stores (Phase 10). B is designed after A is lab-verified.
+
 ## 5. Lab checks before building A
 
 | # | Check | Answers |
@@ -46,3 +52,21 @@ Questions:
 | S4 | with a snapshot present: `qm move-disk <vmid> scsi0 <other pool> --delete 1` | confirms the refusal (so core's refusal is right and the plugin's message must say so) |
 | S5 | with a snapshot present on the instance: `qm destroy <vmid> --purge` | whether the VM and its snapshots go (the destroy hook hands data volumes to the holder first: with snapshots they cannot be handed over) |
 | S6 | `qm config` after S1 | does the snapshot section list the data drive, and what does a rollback do to the drive lines |
+
+## 6. Lab results (2026-11-03, Proxmox 8.4.21, NFS qcow2) and what was built
+
+| # | Result |
+|---|---|
+| S1 | **Pass.** `qm snapshot` of a stopped VM snapshots both disks, the root and the data volume that no VM owns (`900000002/...`, listed only as `scsi1`). A holder VM exists only after a volume was moved (Phase 9), not after a plain attach and detach, so the "holder-owned" wording of the first version was wrong |
+| S2 | **Pass.** `--vmstate 1` and `--vmstate 0` both work on a running VM, one after the other. The memory is a file `images/<vmid>/vm-<vmid>-state-<name>.raw` on the root disk's storage (457 MiB for 512 MB RAM); the disk-only snapshot has no `vmstate` line |
+| S3 | **Pass.** Rollback and delete succeeded |
+| S4 | **Confirmed.** `qm disk move ... --delete 1`: "you can't move a disk with snapshots and delete the source" |
+| S5 | `qm destroy --purge` removed a VM that had snapshots and **kept** the data disk (owned by a holder id). The data disk's file kept the snapshots (`qemu-img snapshot -l`: `s2`, `s3`) |
+| S6 | `qm config <vmid> --snapshot <name>` shows what a snapshot saved: the configuration of that time (drive lines, `snaptime`, `vmstate`, `runningmachine` for a snapshot with memory) |
+| extra | A data volume with snapshots left inside its file can still be attached to another VM and resized (5 to 6 GiB worked); the file keeps `s2` and `s3`. Not measured: growth on a busy volume |
+
+Decisions: A first, B later (SSH plus `qemu-img` acceptable then). The disk-only snapshot of a running instance needs **no plugin strategy**: core asks the strategy factory about it only for KVM. The leftover snapshots in data volumes after an expunge are removed by the plugin, as the user asked: `ProxmoxVmSnapshots.deleteAll` before the destroy (behaviour.md section 23).
+
+Built: `ProxmoxApiClient` (`listSnapshotNames`, `createSnapshot`, `rollbackSnapshot`, `deleteSnapshot` with `force`), `ProxmoxVmSnapshots` (create, delete, revert, `deleteAll`), the three commands in `ProxmoxResource`, the call in `ProxmoxVmHandler.deleteVolume`, `vm_snapshot_enabled=1` in `schema-42300to2400.sql`. Tests: `ProxmoxVmSnapshotsTest` (20), `ProxmoxApiClientVmTest` (+3), `ProxmoxVmHandlerTest` (+2).
+
+Lab checks for the built feature are in test-log.md ("Instance snapshots").

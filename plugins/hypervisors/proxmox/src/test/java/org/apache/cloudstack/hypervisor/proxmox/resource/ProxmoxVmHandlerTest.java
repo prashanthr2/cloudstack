@@ -583,6 +583,33 @@ public class ProxmoxVmHandlerTest {
     }
 
     @Test
+    public void theSnapshotsOfAnInstanceAreDeletedBeforeItsVmIsDestroyed() {
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"));
+        when(client.listSnapshotNames("pve2", 9204L)).thenReturn(java.util.Arrays.asList("s1", "s2"));
+        when(client.deleteSnapshot(anyString(), anyLong(), anyString(), eq(true))).thenReturn("UPID:pve2:1:2:3:qmdelsnapshot:9204:u:");
+        when(client.destroyVm("pve2", 9204L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9204:u:");
+
+        assertTrue(handler.delete(delete(volumeAt("9204/vm-9204-disk-0.qcow2"))).getResult());
+
+        InOrder order = inOrder(client);
+        order.verify(client).deleteSnapshot("pve2", 9204L, "s2", true);
+        order.verify(client).deleteSnapshot("pve2", 9204L, "s1", true);
+        order.verify(client).destroyVm("pve2", 9204L);
+    }
+
+    @Test
+    public void anInstanceWhoseSnapshotsCannotBeDeletedIsDestroyedAnyway() {
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"));
+        when(client.listSnapshotNames("pve2", 9204L)).thenReturn(java.util.Collections.singletonList("s1"));
+        when(client.deleteSnapshot("pve2", 9204L, "s1", true)).thenThrow(new ProxmoxApiException("storage offline"));
+        when(client.destroyVm("pve2", 9204L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9204:u:");
+
+        assertTrue(handler.delete(delete(volumeAt("9204/vm-9204-disk-0.qcow2"))).getResult());
+
+        verify(client).destroyVm("pve2", 9204L);
+    }
+
+    @Test
     public void aVmThatIsStillRunningIsStoppedBeforeItIsDestroyed() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
         when(client.stopVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstop:9204:u:");

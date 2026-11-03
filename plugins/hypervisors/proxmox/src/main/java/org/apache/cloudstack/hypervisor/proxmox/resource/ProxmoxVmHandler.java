@@ -1487,6 +1487,8 @@ class ProxmoxVmHandler {
             waitFor(client, client.stopVm(location.getNode(), vmid));
             waitForVm(client, vmid, location.getNode(), "stop", taskTimeoutSeconds.getAsInt(), ProxmoxVmHandler::isStopped);
         }
+        // the snapshots of the data disks are in the disks' own files, which outlive the VM; the root disk's go with it
+        new ProxmoxVmSnapshots(clients, taskTimeoutSeconds).deleteAll(client, location);
         giveBackDataDisks(client, location, volume);
         waitFor(client, client.destroyVm(location.getNode(), vmid));
         LOGGER.info("Destroyed Proxmox VM {} with its disk", vmid);

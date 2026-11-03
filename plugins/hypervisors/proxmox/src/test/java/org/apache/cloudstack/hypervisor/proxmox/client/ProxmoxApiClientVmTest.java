@@ -148,6 +148,39 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
+    public void theSnapshotsOfAVmAreListedWithoutTheCurrentEntryParentsFirst() {
+        answer("GET /api2/json/nodes/pve1/qemu/9202/snapshot",
+                "{\"data\":[{\"name\":\"s1\",\"snaptime\":1},{\"name\":\"s2\",\"parent\":\"s1\"},{\"name\":\"current\",\"parent\":\"s2\"}]}");
+
+        assertEquals(java.util.Arrays.asList("s1", "s2"), client.listSnapshotNames("pve1", 9202));
+    }
+
+    @Test
+    public void aSnapshotIsTakenWithOrWithoutTheMemoryAndItsDescription() {
+        answer("POST /api2/json/nodes/pve1/qemu/9202/snapshot", task(UPID));
+
+        assertEquals(UPID, client.createSnapshot("pve1", 9202, "s1", "before the upgrade", true));
+        client.createSnapshot("pve1", 9202, "s2", null, false);
+
+        assertTrue(bodies.get(0), bodies.get(0).contains("snapname=s1"));
+        assertTrue(bodies.get(0), bodies.get(0).contains("description=before+the+upgrade"));
+        assertTrue(bodies.get(0), bodies.get(0).contains("vmstate=1"));
+        assertTrue(bodies.get(1), bodies.get(1).contains("vmstate=0"));
+        assertTrue(bodies.get(1), !bodies.get(1).contains("description"));
+    }
+
+    @Test
+    public void aRollbackAndADeleteGoToTheSnapshotsOwnPath() {
+        answer("POST /api2/json/nodes/pve1/qemu/9202/snapshot/s1/rollback", task(UPID));
+        answer("DELETE /api2/json/nodes/pve1/qemu/9202/snapshot/s1", task(UPID));
+        answer("DELETE /api2/json/nodes/pve1/qemu/9202/snapshot/s1?force=1", task(UPID));
+
+        assertEquals(UPID, client.rollbackSnapshot("pve1", 9202, "s1"));
+        assertEquals(UPID, client.deleteSnapshot("pve1", 9202, "s1", false));
+        assertEquals(UPID, client.deleteSnapshot("pve1", 9202, "s1", true));
+    }
+
+    @Test
     public void shutdownFallsBackToAForcedStopAfterTheTimeout() {
         answer("POST /api2/json/nodes/pve1/qemu/9202/status/shutdown", task(UPID));
 

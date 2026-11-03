@@ -749,3 +749,19 @@ Lab checks are in `design-phase10-ssh-access.md` sections 13 and 14, run after c
 | 4. A single-host `updateHostPassword` is refused with the new text (the same SSH login is used on every node) | **Pass** (2026-11-02) |
 | 5. `proxmox.ha.manage=true` with an HA offering: the VM is added to HA (`ha-manager`/`/cluster/ha/resources` shows it), no 403 | **Pass** |
 | 6. `POST /nodes/<node>/termproxy` as the token is refused | **Pass**: HTTP 403 `Permission check failed (/nodes/<node>, Sys.Console)`. A first try showed HTTP 401 only because bash history expansion turned `\!` into a literal backslash in the token id (`set +H` fixes it); it proved nothing and was repeated |
+
+## Instance snapshots (2026-11-03, built, not run yet)
+
+Needs `UPDATE cloud.hypervisor_capabilities SET vm_snapshot_enabled=1 WHERE hypervisor_type='Proxmox' AND hypervisor_version='default';` on an existing database, then a restart of the management server. Pull, rebuild `plugins/hypervisors/proxmox` and `client`, restart.
+
+| # | Check | Expected |
+|---|---|---|
+| IS1 | Stopped instance with a data volume: create an instance snapshot (UI or `createVMSnapshot`) | the snapshot is Ready; `qm listsnapshot <vmid>` shows it; `qm config <vmid> --snapshot <name>` lists both drives |
+| IS2 | Write a file in the instance, then take a disk-only snapshot while it **runs**, write another file | Ready; no `vmstate` in the snapshot config |
+| IS3 | Running instance: snapshot with memory (`snapshotmemory=true`) | Ready; `images/<vmid>/vm-<vmid>-state-<name>.raw` exists |
+| IS4 | Revert to the memory snapshot of IS3 while running | the instance is running with the state of the snapshot (a file written after it is gone); CloudStack shows Running |
+| IS5 | Stop the instance, revert to the disk-only snapshot of IS2 | the instance stays stopped, start it: the first file is there, the second is not |
+| IS6 | Delete one snapshot, then the others | `qm listsnapshot` shrinks; the state file of IS3 is gone; the CloudStack list is empty |
+| IS7 | Take two snapshots, then destroy and expunge the instance, keeping the data volume | `qemu-img snapshot -l <data volume file>` lists none; the data volume is still there and can be attached to another instance |
+| IS8 | Same as IS7 but expunge the instance **with** the data volume | the VM and the data file are both gone; no error in `jetty.log` |
+| IS9 | Try attach or detach of a volume, and a storage migration, while the instance has snapshots | refused by core, with its message |

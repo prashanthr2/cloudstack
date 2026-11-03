@@ -50,7 +50,9 @@ import com.cloud.agent.api.CheckNetworkCommand;
 import com.cloud.agent.api.CheckVirtualMachineCommand;
 import com.cloud.agent.api.Command;
 import com.cloud.agent.api.CreateStoragePoolCommand;
+import com.cloud.agent.api.CreateVMSnapshotCommand;
 import com.cloud.agent.api.DeleteStoragePoolCommand;
+import com.cloud.agent.api.DeleteVMSnapshotCommand;
 import com.cloud.agent.api.GetHostStatsAnswer;
 import com.cloud.agent.api.GetHostStatsCommand;
 import com.cloud.agent.api.GetStorageStatsAnswer;
@@ -74,6 +76,7 @@ import com.cloud.agent.api.RebootCommand;
 import com.cloud.agent.api.RebootRouterCommand;
 import com.cloud.agent.api.ReadyAnswer;
 import com.cloud.agent.api.ReadyCommand;
+import com.cloud.agent.api.RevertToVMSnapshotCommand;
 import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.StartupCommand;
 import com.cloud.agent.api.StartupRoutingCommand;
@@ -134,6 +137,7 @@ public class ProxmoxResource implements ServerResource {
     protected String tokenSecret;
     protected volatile ProxmoxApiClient client;
     private ProxmoxVmHandler vmHandler;
+    private ProxmoxVmSnapshots vmSnapshots;
     private ProxmoxRouterDeployer routerDeployer;
     private VirtualRoutingResource routingResource;
     private ProxmoxSystemVms systemVms;
@@ -178,6 +182,7 @@ public class ProxmoxResource implements ServerResource {
         client = createClient(tokenId, tokenSecret);
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
                 ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
+        vmSnapshots = new ProxmoxVmSnapshots(() -> client, ProxmoxConfig.TaskTimeout::value);
         routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);
@@ -316,6 +321,12 @@ public class ProxmoxResource implements ServerResource {
                 return vmHandler.prepareForMigration((PrepareForMigrationCommand) cmd);
             } else if (cmd instanceof MigrateCommand) {
                 return vmHandler.migrate((MigrateCommand) cmd);
+            } else if (cmd instanceof CreateVMSnapshotCommand) {
+                return vmSnapshots.create((CreateVMSnapshotCommand) cmd);
+            } else if (cmd instanceof DeleteVMSnapshotCommand) {
+                return vmSnapshots.delete((DeleteVMSnapshotCommand) cmd);
+            } else if (cmd instanceof RevertToVMSnapshotCommand) {
+                return vmSnapshots.revert((RevertToVMSnapshotCommand) cmd);
             } else if (cmd instanceof CheckVirtualMachineCommand) {
                 return vmHandler.checkVirtualMachine((CheckVirtualMachineCommand) cmd);
             } else if (cmd instanceof StartCommand) {

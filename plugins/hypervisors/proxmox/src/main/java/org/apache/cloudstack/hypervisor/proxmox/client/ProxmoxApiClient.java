@@ -971,6 +971,45 @@ public class ProxmoxApiClient implements Closeable {
         put("/nodes/" + node + "/qemu/" + vmid + "/config", params);
     }
 
+    /** The names of the snapshots of a VM (not the "current" entry that Proxmox lists as the VM's own state), parents before children. */
+    public List<String> listSnapshotNames(String node, long vmid) {
+        List<String> names = new ArrayList<>();
+        JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/snapshot");
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                String name = entry.path("name").asText("");
+                if (!name.isEmpty() && !"current".equals(name)) {
+                    names.add(name);
+                }
+            }
+        }
+        return names;
+    }
+
+    /** Takes a snapshot of every disk of a VM, with its memory when {@code withMemory} is set (it must run). Returns the task id. */
+    public String createSnapshot(String node, long vmid, String name, String description, boolean withMemory) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("snapname", name);
+        if (StringUtils.isNotBlank(description)) {
+            form.put("description", description);
+        }
+        form.put("vmstate", withMemory ? "1" : "0");
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/snapshot", form));
+    }
+
+    /** Puts the disks, and the configuration, of a VM back to a snapshot (and its memory, when the snapshot has it). Returns the task id. */
+    public String rollbackSnapshot(String node, long vmid, String name) {
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/snapshot/" + name + "/rollback", null));
+    }
+
+    /**
+     * Deletes a snapshot. With {@code force} the snapshot also goes from the configuration when removing it from a disk fails (the disk is gone
+     * already, or the storage does not answer). Returns the task id.
+     */
+    public String deleteSnapshot(String node, long vmid, String name, boolean force) {
+        return taskId(delete("/nodes/" + node + "/qemu/" + vmid + "/snapshot/" + name + (force ? "?force=1" : "")));
+    }
+
     /**
      * Grows a disk to {@code size} (for example "20G"; Proxmox never shrinks a disk). Returns the task id: a refused change (a shrink) shows
      * up as a failed task, not as an error of the call.
