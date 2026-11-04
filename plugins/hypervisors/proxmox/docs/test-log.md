@@ -771,7 +771,7 @@ Notes:
 - Core refuses to resize a volume of an instance that has instance snapshots (`VolumeApiServiceImpl.validateNoVmSnapshots`), even though Proxmox itself allows it.
 - Not measured: the growth of a data volume that carries snapshots, and a snapshot with memory of a larger instance (time).
 
-## Volume snapshots (built 2026-11-04; lab checks before building V1 to V11 are in design-phase10-volume-snapshots.md section 7)
+## Volume snapshots (built and lab-verified 2026-11-04; checks before building V1 to V11 are in design-phase10-volume-snapshots.md section 7)
 
 Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one in `ProxmoxServerDiscovererTest`; plugin total 590 pass. **Lab checks, not run yet** (rebuild with `mvn install -DskipTests -pl plugins/hypervisors/proxmox,client`, restart the management server):
 
@@ -789,3 +789,20 @@ Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one
 | VS10 | An instance snapshot exists: take a volume snapshot of its volume, then revert | The refusals of core, with its text |
 | VS11 | Recurring snapshot policy with a short interval, and updateHostPassword to a new SSH password, then a snapshot | A scheduled run succeeds; the snapshot after the password change works without a restart |
 | VS12 | **Root volume of a running instance** (write a file in the guest, take the snapshot, write another), then Create Volume from it | Backed Up; `qm listsnapshot <vmid>` has no `cs-...` entry afterwards; the backup is a bootable disk holding only the first file; the instance kept running |
+
+**Results (lab, 3 nodes, 2026-11-04): VS1 to VS12 pass.**
+
+| # | Result |
+|---|---|
+| VS1 | Backed Up; file under `snapshots/2/<volume id>/` on secondary; no internal snapshot left in the volume file |
+| VS2 | The backup (read after a read-write loop mount, so the journal of the crash-consistent copy can replay) holds the files from before the snapshot and not the one written after; `file.txt` was already on the disk. A read-only loop mount of the same copy fails with "wrong fs type", which is the unreplayed journal and not a bad backup |
+| VS3 | Root volume of a stopped instance: nothing left in the root file (`qemu-img snapshot -l` empty) |
+| VS4 | Volume file `images/900000002/vm-900000002-<uuid>.qcow2`, listed by `pvesm list`; the guest sees only the files from before the snapshot |
+| VS5 | Revert works; only `first.txt`; no `.tmp` and no internal snapshot left |
+| VS6 | After growing to 10 GiB and reverting, virtual size is 10 GiB and the data is the snapshot's |
+| VS7 | Delete removes the record and the file on secondary |
+| VS8 | With the secondary mounted read-only separately (`mount -o ro,nosharecache`; a plain `remount,ro` is refused on the lab because the secondary export is a subdirectory of the primary export and the two share one kernel mount): the snapshot fails (UI text is core's generic "internal error creating Snapshot"), nothing is left in the volume file; the next snapshot after `umount` works (the plugin mounts read-write again) |
+| VS9 | A second snapshot makes no second mount |
+| VS10 | Running instance: "The Instance the specified disk is attached to is not in the shutdown state"; stopped with an instance snapshot: "Unable to revert Snapshot for Instance, please remove Instance Snapshots before reverting Instance from Snapshot" (both core's text) |
+| VS11 | After `passwd` on the nodes, snapshots failed until `updateHostPassword` was called with the cluster id **and `update_passwd_on_host=true`**: each node logged "The SSH login csadmin works on Proxmox node ..." and the next snapshot was Backed Up without a restart. Without that parameter core only writes the database and the running plugin keeps the old password (open-issues.md). The recurring-policy half was not run |
+| VS12 | Root volume of a running instance: Backed Up; `qm listsnapshot 103` has no `cs-` entry afterwards; the volume made from it holds only the first file |
