@@ -767,6 +767,25 @@ Needs `UPDATE cloud.hypervisor_capabilities SET vm_snapshot_enabled=1 WHERE hype
 | IS9 | Storage migration while the instance has snapshots | **Refused by core** with `Instance with Instance Snapshots cannot be migrated with storage, please remove all Instance Snapshots`, as expected. Attach, detach and resize were not tried (core refuses them with its own texts) |
 
 Notes:
-- **Volume snapshots are not supported.** The Snapshot button of a data volume ends in `Unsupported command issued: org.apache.cloudstack.storage.command.CreateObjectCommand` (`DefaultSnapshotStrategy.takeSnapshot`), core's generic text. That was the "failure" of a first IS2 attempt; it was not an instance snapshot.
+- **Volume snapshots were not supported at the time of this round (built on 2026-11-04, see the next section).** The Snapshot button of a data volume ends in `Unsupported command issued: org.apache.cloudstack.storage.command.CreateObjectCommand` (`DefaultSnapshotStrategy.takeSnapshot`), core's generic text. That was the "failure" of a first IS2 attempt; it was not an instance snapshot.
 - Core refuses to resize a volume of an instance that has instance snapshots (`VolumeApiServiceImpl.validateNoVmSnapshots`), even though Proxmox itself allows it.
 - Not measured: the growth of a data volume that carries snapshots, and a snapshot with memory of a larger instance (time).
+
+## Volume snapshots (built 2026-11-04; lab checks before building V1 to V11 are in design-phase10-volume-snapshots.md section 7)
+
+Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one in `ProxmoxServerDiscovererTest`; plugin total 590 pass. **Lab checks, not run yet** (rebuild with `mvn install -DskipTests -pl plugins/hypervisors/proxmox,client`, restart the management server):
+
+| # | Check | Expected |
+|---|---|---|
+| VS1 | Detached data volume with a file in it: Take Snapshot in the UI | Backed Up; a file under `snapshots/<account>/<volume id>/` on secondary; `qemu-img snapshot -l <volume file>` lists nothing; one `/mnt/css-rw-*` mount |
+| VS2 | Data volume of a **running** instance: write a file, take the snapshot, write another file | Backed Up; `qm listsnapshot <vmid>` has no `cs-...` entry afterwards; the instance kept running; `qemu-img convert` of the backup shows only the first file |
+| VS3 | Volume snapshot of the root volume of a stopped instance | Backed Up, nothing left in the root file |
+| VS4 | Create Volume from the snapshot of VS2, attach it to an instance | The volume file is `images/<holder>/vm-<holder>-<uuid>.qcow2`; the disk holds only the first file; `pvesm list` shows it |
+| VS5 | Stop the instance, Revert the data volume to the snapshot | The first file only; the instance starts; `qemu-img snapshot -l` of the volume is empty |
+| VS6 | Grow the volume (resize in the UI), then Revert | The data of the snapshot, and the disk has the grown size (`qemu-img info`) |
+| VS7 | Delete the snapshot in the UI | The record goes; the file on secondary goes (secondary storage VM) |
+| VS8 | `sudo mount -o remount,ro /mnt/css-rw-<...>` on the node, take a snapshot, then remount `rw` | A clear error in the UI; no snapshot is left in the volume file (`qemu-img snapshot -l`) |
+| VS9 | Take a second snapshot | No second mount (`findmnt \| grep css-rw`) |
+| VS10 | An instance snapshot exists: take a volume snapshot of its volume, then revert | The refusals of core, with its text |
+| VS11 | Recurring snapshot policy with a short interval, and updateHostPassword to a new SSH password, then a snapshot | A scheduled run succeeds; the snapshot after the password change works without a restart |
+| VS12 | **Root volume of a running instance** (write a file in the guest, take the snapshot, write another), then Create Volume from it | Backed Up; `qm listsnapshot <vmid>` has no `cs-...` entry afterwards; the backup is a bootable disk holding only the first file; the instance kept running |

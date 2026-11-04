@@ -255,6 +255,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             // the resource checks a new SSH login against it (updateHostPassword with update_passwd_on_host); a resource that is rebuilt after a restart
             // gets it from the host details
             params.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, fingerprint);
+            putSshLogin(params, username, password, privateKey);
 
             ProxmoxResource resource = new ProxmoxResource();
             try {
@@ -362,7 +363,22 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             }
             // a host added before the token moved to the cluster has its own token and keeps it
         }
+        String[] login = sshLoginOf(host.getDetails());
+        putSshLogin(params, login[0], login[1], _configDao.getValue("ssh.privatekey"));
         return params;
+    }
+
+    /** The login for the commands that run on the node (volume snapshots): in the resource's parameters, which live in the management server's memory only. */
+    private static void putSshLogin(Map<String, Object> params, String user, String password, String privateKey) {
+        if (StringUtils.isNotBlank(user)) {
+            params.put(ProxmoxResource.PARAM_SSH_USER, user);
+        }
+        if (StringUtils.isNotEmpty(password)) {
+            params.put(ProxmoxResource.PARAM_SSH_PASSWORD, password);
+        }
+        if (StringUtils.isNotBlank(privateKey)) {
+            params.put(ProxmoxResource.PARAM_SSH_KEY, privateKey);
+        }
     }
 
     /** The name the cluster's token is made after: the Proxmox cluster, or the node itself when it is not in one. */

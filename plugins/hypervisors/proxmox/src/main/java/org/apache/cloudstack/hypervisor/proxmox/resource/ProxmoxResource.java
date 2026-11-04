@@ -37,6 +37,7 @@ import org.apache.cloudstack.storage.command.CopyCommand;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
 import org.apache.cloudstack.storage.command.DeleteCommand;
 import org.apache.cloudstack.storage.command.DettachCommand;
+import org.apache.cloudstack.storage.command.RevertSnapshotCommand;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -111,6 +112,10 @@ public class ProxmoxResource implements ServerResource {
     public static final String DETAIL_SSH_USER = "sshuser";
     public static final String DETAIL_SSH_PASSWORD = "sshpassword";
     public static final String DETAIL_SSH_FINGERPRINT = "sshfingerprint";
+    /** The login the resource uses for the commands that run on the node (volume snapshots). Put in the parameters at every connect, never stored under these names. */
+    public static final String PARAM_SSH_USER = "ssh.login.user";
+    public static final String PARAM_SSH_PASSWORD = "ssh.login.password";
+    public static final String PARAM_SSH_KEY = "ssh.login.key";
     protected static final String CAPABILITIES = "hvm";
     /** A new storage entry is mounted by the node a moment after it is added, so its status is polled for a while. */
     protected static final int STORAGE_ACTIVATION_ATTEMPTS = 15;
@@ -131,6 +136,9 @@ public class ProxmoxResource implements ServerResource {
     protected String node;
     protected String nodeIp;
     protected String sshFingerprint;
+    protected volatile String sshUser;
+    protected volatile String sshPassword;
+    protected String sshPrivateKey;
     protected String endpoint;
     protected List<String> endpoints = new ArrayList<>();
     protected String tokenId;
@@ -138,6 +146,7 @@ public class ProxmoxResource implements ServerResource {
     protected volatile ProxmoxApiClient client;
     private ProxmoxVmHandler vmHandler;
     private ProxmoxVmSnapshots vmSnapshots;
+    private ProxmoxVolumeSnapshots volumeSnapshots;
     private ProxmoxRouterDeployer routerDeployer;
     private VirtualRoutingResource routingResource;
     private ProxmoxSystemVms systemVms;
@@ -156,6 +165,9 @@ public class ProxmoxResource implements ServerResource {
         node = (String) params.get(DETAIL_NODE);
         nodeIp = (String) params.get(DETAIL_NODE_IP);
         sshFingerprint = (String) params.get(DETAIL_SSH_FINGERPRINT);
+        sshUser = (String) params.get(PARAM_SSH_USER);
+        sshPassword = (String) params.get(PARAM_SSH_PASSWORD);
+        sshPrivateKey = (String) params.get(PARAM_SSH_KEY);
         tokenId = (String) params.get("username");
         tokenSecret = (String) params.get("password");
         endpoint = (String) params.get(DETAIL_ENDPOINT);
@@ -183,6 +195,7 @@ public class ProxmoxResource implements ServerResource {
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
                 ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
         vmSnapshots = new ProxmoxVmSnapshots(() -> client, ProxmoxConfig.TaskTimeout::value);
+        volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, ProxmoxConfig.TaskTimeout::value);
         routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);
@@ -300,13 +313,24 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof GetStorageStatsCommand) {
                 return execute((GetStorageStatsCommand) cmd);
             } else if (cmd instanceof CopyCommand) {
+                if (ProxmoxVolumeSnapshots.isSnapshot(((CopyCommand) cmd).getSrcTO())) {
+                    return volumeSnapshots.copy((CopyCommand) cmd);
+                }
                 return vmHandler.copy((CopyCommand) cmd);
             } else if (cmd instanceof MigrateVolumeCommand) {
                 return vmHandler.migrateVolume((MigrateVolumeCommand) cmd);
             } else if (cmd instanceof DeleteCommand) {
+                if (ProxmoxVolumeSnapshots.isSnapshot(((DeleteCommand) cmd).getData())) {
+                    return volumeSnapshots.delete((DeleteCommand) cmd);
+                }
                 return vmHandler.delete((DeleteCommand) cmd);
             } else if (cmd instanceof CreateObjectCommand) {
+                if (ProxmoxVolumeSnapshots.isSnapshot(((CreateObjectCommand) cmd).getData())) {
+                    return volumeSnapshots.take((CreateObjectCommand) cmd);
+                }
                 return vmHandler.createObject((CreateObjectCommand) cmd);
+            } else if (cmd instanceof RevertSnapshotCommand) {
+                return volumeSnapshots.revert((RevertSnapshotCommand) cmd);
             } else if (cmd instanceof AttachCommand) {
                 return vmHandler.attach((AttachCommand) cmd);
             } else if (cmd instanceof DettachCommand) {
@@ -437,11 +461,22 @@ public class ProxmoxResource implements ServerResource {
         SshTarget target = new SshTarget(nodeIp, ProxmoxSsh.DEFAULT_PORT, cmd.getUsername(), null, cmd.getNewPassword(), sshFingerprint);
         try (ProxmoxSsh ssh = openSsh(target)) {
             logger.info("The SSH login {} works on Proxmox node {}", cmd.getUsername(), node);
+            // the login that the commands on the node use from now on, before the next connect rebuilds it from the host details
+            sshUser = cmd.getUsername();
+            sshPassword = cmd.getNewPassword();
             return new Answer(cmd, true, "The SSH login " + cmd.getUsername() + " works on Proxmox node " + node);
         } catch (ProxmoxSshException e) {
             logger.warn("The new SSH login for Proxmox node {} was not accepted: {}", node, e.getMessage());
             return new Answer(cmd, false, e.getMessage());
         }
+    }
+
+    /** A login to this node for a command that runs there; the host key is the one kept when the host was added. */
+    private ProxmoxSsh openLogin() {
+        if (StringUtils.isAnyBlank(nodeIp, sshUser, sshFingerprint) || StringUtils.isAllBlank(sshPrivateKey, sshPassword)) {
+            throw new ProxmoxSshException("Proxmox node " + node + " has no SSH login or host key for the commands that run on the node: delete the host and add it again");
+        }
+        return openSsh(new SshTarget(nodeIp, ProxmoxSsh.DEFAULT_PORT, sshUser, sshPrivateKey, sshPassword, sshFingerprint));
     }
 
     protected ProxmoxSsh openSsh(SshTarget target) {

@@ -284,6 +284,69 @@ public class ProxmoxResourceTest {
         verify(newClient, org.mockito.Mockito.never()).getNodeStatus(anyString());
     }
 
+    private org.apache.cloudstack.storage.command.CreateObjectCommand snapshotOfADetachedVolume() {
+        org.apache.cloudstack.storage.to.PrimaryDataStoreTO pool = org.mockito.Mockito.mock(org.apache.cloudstack.storage.to.PrimaryDataStoreTO.class);
+        when(pool.getUuid()).thenReturn("7fd5565c-6c1e-3032-81ec-d404812915ab");
+        org.apache.cloudstack.storage.to.VolumeObjectTO volume = org.mockito.Mockito.mock(org.apache.cloudstack.storage.to.VolumeObjectTO.class);
+        when(volume.getPath()).thenReturn("900000002/vm-900000002-3b22f99a-1f4a-4fa3-90b1-447e57b1a432.qcow2");
+        when(volume.getDataStore()).thenReturn(pool);
+        org.apache.cloudstack.storage.to.SnapshotObjectTO snapshot = new org.apache.cloudstack.storage.to.SnapshotObjectTO();
+        snapshot.setVolume(volume);
+        snapshot.setDataStore(pool);
+        return new org.apache.cloudstack.storage.command.CreateObjectCommand(snapshot);
+    }
+
+    @Test
+    public void aVolumeSnapshotNeedsTheSshLoginOfTheHostAndSaysSoWhenThereIsNone() {
+        Answer answer = resource.executeRequest(snapshotOfADetachedVolume());
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("no SSH login"));
+        assertTrue(sshTargets.isEmpty());
+    }
+
+    @Test
+    public void aVolumeSnapshotLogsInWithTheLoginInTheParametersAndWithTheNewOneAfterAnUpdateOfThePassword() throws ConfigurationException {
+        ProxmoxResource withLogin = new ProxmoxResource() {
+            @Override
+            protected ProxmoxApiClient createClient(String id, String secret) {
+                return client;
+            }
+
+            @Override
+            protected org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh openSsh(org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget target) {
+                sshTargets.add(target);
+                return org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh.open(target, () -> sshNode);
+            }
+        };
+        Map<String, Object> params = new HashMap<>();
+        params.put("zone", "1");
+        params.put("pod", "2");
+        params.put("cluster", "3");
+        params.put("guid", "Proxmox:abc");
+        params.put("username", "root@pam!cloudstack");
+        params.put("password", "secret");
+        params.put(ProxmoxResource.DETAIL_NODE, NODE);
+        params.put(ProxmoxResource.DETAIL_NODE_IP, "10.0.32.198");
+        params.put(ProxmoxResource.DETAIL_ENDPOINT, "https://10.0.35.25:8006");
+        params.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, "SHA256:node");
+        params.put(ProxmoxResource.PARAM_SSH_USER, "root");
+        params.put(ProxmoxResource.PARAM_SSH_PASSWORD, "first-password");
+        withLogin.configure(NODE, params);
+        sshNode.fingerprint = "SHA256:node";
+
+        assertTrue(withLogin.executeRequest(snapshotOfADetachedVolume()).getResult());
+        assertEquals("root", sshTargets.get(0).getUser());
+        assertEquals("first-password", sshTargets.get(0).getPassword());
+        assertEquals("SHA256:node", sshTargets.get(0).getPinnedFingerprint());
+
+        assertTrue(withLogin.executeRequest(new UpdateHostPasswordCommand("csadmin", "new-password", "10.0.32.74")).getResult());
+        sshTargets.clear();
+        assertTrue(withLogin.executeRequest(snapshotOfADetachedVolume()).getResult());
+        assertEquals("csadmin", sshTargets.get(0).getUser());
+        assertEquals("new-password", sshTargets.get(0).getPassword());
+    }
+
     @Test
     public void aNewSshLoginThatTheNodeRefusesIsReported() {
         sshNode.fingerprint = "SHA256:node";

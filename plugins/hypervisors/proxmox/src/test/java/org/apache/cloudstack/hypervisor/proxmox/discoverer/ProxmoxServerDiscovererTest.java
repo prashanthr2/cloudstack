@@ -608,6 +608,20 @@ public class ProxmoxServerDiscovererTest {
         assertEquals("new-password", ProxmoxServerDiscoverer.sshLoginOf(added)[1]);
     }
 
+    @Test
+    public void aRebuiltResourceGetsTheSshLoginAndTheManagementServersKeyForTheCommandsOnTheNode() {
+        org.mockito.Mockito.when(configDao.getValue("ssh.privatekey")).thenReturn("-----BEGIN KEY-----");
+        Map<String, String> details = new HashMap<>();
+        details.put("username", "csadmin");
+        details.put("password", "ssh-password");
+
+        java.util.HashMap<String, Object> params = discoverer.buildConfigParams(hostWithDetails(details));
+
+        assertEquals("csadmin", params.get(ProxmoxResource.PARAM_SSH_USER));
+        assertEquals("ssh-password", params.get(ProxmoxResource.PARAM_SSH_PASSWORD));
+        assertEquals("-----BEGIN KEY-----", params.get(ProxmoxResource.PARAM_SSH_KEY));
+    }
+
     private com.cloud.host.HostVO hostWithDetails(Map<String, String> details) {
         com.cloud.host.HostVO host = mock(com.cloud.host.HostVO.class);
         when(host.getClusterId()).thenReturn(2L);
