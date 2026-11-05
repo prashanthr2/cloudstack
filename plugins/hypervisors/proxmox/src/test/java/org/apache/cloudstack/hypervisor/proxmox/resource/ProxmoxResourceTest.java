@@ -316,10 +316,11 @@ public class ProxmoxResourceTest {
 
     @Test
     public void coresEvictionOfATemplateFromAPoolIsAnsweredByTheTemplateVmsAndNeedsNoSshLogin() {
-        when(client.findVmOrTemplateByName(org.mockito.ArgumentMatchers.startsWith("cs-tmpl-"))).thenReturn(new ProxmoxApiClient.VmLocation(9050, "cs-tmpl-x", NODE, "stopped", true));
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "cs-tmpl-x", NODE, "stopped", true));
+        when(client.getVmConfig(NODE, 9050L)).thenReturn(java.util.Collections.singletonMap("scsi0", "cs-7fd5565c-6c1e-3032-81ec-d404812915ab:9050/base-9050-disk-0.qcow2,size=5G"));
         when(client.destroyVm(NODE, 9050L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9050:u:");
 
-        Answer answer = resource.executeRequest(evictionOf("secondary:3|10.0.32.4|/acs/secondary|template/tmpl/1/3/f.qcow2"));
+        Answer answer = resource.executeRequest(evictionOf("9050/base-9050-disk-0.qcow2"));
 
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).destroyVm(NODE, 9050L);

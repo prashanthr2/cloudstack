@@ -61,7 +61,9 @@ public class ProxmoxTemplatesTest {
     private static final String POOL = "cs-" + POOL_UUID;
     private static final String URL = "nfs://10.0.32.4/acs/primary/lab/secondary";
     private static final String RELATIVE = "template/tmpl/1/3/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2";
-    private static final String PATH = "secondary:3|10.0.32.4|/acs/primary/lab/secondary|" + RELATIVE;
+    private static final String SOURCE_KEY = "3|10.0.32.4|/acs/primary/lab/secondary|" + RELATIVE;
+    /** What core keeps for the template VM that these tests make (VM id 9100): the base disk in the pool. */
+    private static final String PATH = "9100/base-9100-disk-0.qcow2";
     private static final String UPID = "UPID:pve1:1:2:3:qmcreate:9100:u:";
     private static final String UPID_TEMPLATE = "UPID:pve1:1:2:3:qmtemplate:9100:u:";
     private static final long GIB = 1024L * 1024 * 1024;
@@ -98,10 +100,22 @@ public class ProxmoxTemplatesTest {
         vmGetsDisk(9100L);
     }
 
+    /** The VM gets a blank disk when it is created, and the base disk of the template once it is converted. */
     private void vmGetsDisk(long vmid) {
+        when(client.getVmConfig(NODE, vmid)).thenReturn(disk("vm", vmid), disk("base", vmid));
+    }
+
+    private static Map<String, String> disk(String kind, long vmid) {
         Map<String, String> config = new HashMap<>();
-        config.put("scsi0", POOL + ":" + vmid + "/vm-" + vmid + "-disk-0.qcow2,size=5G");
-        when(client.getVmConfig(NODE, vmid)).thenReturn(config);
+        config.put("scsi0", POOL + ":" + vmid + "/" + kind + "-" + vmid + "-disk-0.qcow2,size=5G");
+        return config;
+    }
+
+    private void templateVmExists(long vmid, String node) {
+        ProxmoxApiClient.VmLocation vm = new ProxmoxApiClient.VmLocation(vmid, name(), node, "stopped", true);
+        when(client.findVmOrTemplateByName(name())).thenReturn(vm);
+        when(client.findVmOrTemplateById(vmid)).thenReturn(vm);
+        when(client.getVmConfig(node, vmid)).thenReturn(disk("base", vmid));
     }
 
     private static NfsTO store(String version) {
@@ -135,73 +149,56 @@ public class ProxmoxTemplatesTest {
     }
 
     private static String name() {
-        return ProxmoxTemplates.vmName(POOL_UUID, PATH);
+        return ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY);
     }
 
     // ---- the path and the name ----
 
     @Test
-    public void thePathCarriesTheVersionTheStoreAndTheFile() {
-        assertEquals(PATH, ProxmoxTemplates.path(store("3"), RELATIVE));
-        assertEquals("secondary:|10.0.32.4|/acs/primary/lab/secondary|" + RELATIVE, ProxmoxTemplates.path(store(null), RELATIVE));
-        assertTrue(ProxmoxTemplates.isTemplatePath(PATH));
-        assertFalse(ProxmoxTemplates.isTemplatePath("cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2"));
-        assertFalse(ProxmoxTemplates.isTemplatePath(null));
+    public void theTemplatePathIsTheBaseDiskOfATemplateVmInThePool() {
+        assertTrue(ProxmoxTemplates.isTemplatePath("104/base-104-disk-0.qcow2"));
+        assertTrue(ProxmoxTemplates.isTemplatePath("9100/base-9100-disk-0.qcow2"));
+        for (String other : new String[] {"105/vm-105-disk-0.qcow2", "104/base-105-disk-0.qcow2", "104/base-104-disk-0.raw", "base-104-disk-0.qcow2",
+                "104/base-104-disk 0.qcow2", "../104/base-104-disk-0.qcow2", "104/../base-104-disk-0.qcow2", "x/base-x-disk-0.qcow2",
+                "cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2", "secondary:3|10.0.32.4|/acs|a/b.qcow2", "", null}) {
+            assertFalse(String.valueOf(other), ProxmoxTemplates.isTemplatePath(other));
+        }
     }
 
     @Test
-    public void aPathIsParsedBackIntoTheStoreAndTheFile() {
-        ProxmoxTemplates.Source source = ProxmoxTemplates.parse(PATH);
-
-        assertEquals(RELATIVE, source.getRelative());
-        assertEquals("nfs://10.0.32.4/acs/primary/lab/secondary", source.store().getUrl());
-        assertEquals("3", source.store().getNfsVersion());
-        assertEquals(null, ProxmoxTemplates.parse("secondary:|10.0.32.4|/acs/x|a/b.qcow2").store().getNfsVersion());
+    public void theSourceKeyNamesTheVersionTheStoreAndTheFile() {
+        assertEquals(SOURCE_KEY, ProxmoxTemplates.sourceKey(store("3"), RELATIVE));
+        assertEquals("|10.0.32.4|/acs/primary/lab/secondary|" + RELATIVE, ProxmoxTemplates.sourceKey(store(null), RELATIVE));
     }
 
     @Test
-    public void aPathThatIsNotOneThePluginMadeIsRefusedWhateverIsWrongWithIt() {
-        for (String bad : new String[] {"cst-1:4/f.qcow2", "secondary:", "secondary:3|10.0.32.4|/acs|a|b", "secondary:3|10.0.32.4;id|/acs|a/b.qcow2",
-                "secondary:3;id|10.0.32.4|/acs|a/b.qcow2", "secondary:v3|10.0.32.4|/acs|a/b.qcow2", "secondary:3|10.0.32.4|/acs/../x|a/b.qcow2",
-                "secondary:3|10.0.32.4|/acs|../etc/x", "secondary:3|10.0.32.4|/acs|a b.qcow2", "secondary:3|10.0.32.4|/acs|", "secondary:3|10.0.32.4||a/b.qcow2", null}) {
+    public void aFileThatLeavesTheStoreIsRefusedAsASourceKey() {
+        for (String bad : new String[] {"../etc/x", "a b.qcow2", "x;id", ""}) {
             try {
-                ProxmoxTemplates.parse(bad);
+                ProxmoxTemplates.sourceKey(store("3"), bad);
                 fail(bad + " was accepted");
             } catch (IllegalArgumentException e) {
-                assertTrue(bad + ": " + e.getMessage(), e.getMessage().contains("template") || e.getMessage().contains("secondary store")
-                        || e.getMessage().contains("NFS version"));
+                assertTrue(bad + ": " + e.getMessage(), e.getMessage().contains("template file"));
             }
         }
     }
 
     @Test
-    public void aPathThatDoesNotFitTheColumnIsRefusedWithTheLimit() {
-        String longFile = "template/tmpl/1/3/" + "a".repeat(240) + ".qcow2";
+    public void theNameOfATemplateVmIsTheSameForTheSameFileOnTheSamePoolAndDiffersPerPoolAndFile() {
+        String name = ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY);
 
-        try {
-            ProxmoxTemplates.path(store("3"), longFile);
-            fail("accepted");
-        } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage(), e.getMessage().contains("255"));
-        }
-    }
-
-    @Test
-    public void theNameOfATemplateVmIsTheSameForTheCopyTheDeployAndTheEvictionAndDiffersPerPoolAndPath() {
-        String name = ProxmoxTemplates.vmName(POOL_UUID, PATH);
-
-        assertEquals(name, ProxmoxTemplates.vmName(POOL_UUID, PATH));
+        assertEquals(name, ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY));
         assertTrue(name, name.startsWith("cs-tmpl-"));
         assertTrue(name, name.length() <= 63);
-        assertNotEquals(name, ProxmoxTemplates.vmName("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", PATH));
-        assertNotEquals(name, ProxmoxTemplates.vmName(POOL_UUID, PATH.replace("/3/", "/4/")));
+        assertNotEquals(name, ProxmoxTemplates.vmName("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", SOURCE_KEY));
+        assertNotEquals(name, ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY.replace("/3/", "/4/")));
     }
 
     @Test
     public void aPoolUuidThatIsNotOneThePluginUsesIsRefused() {
         for (String bad : new String[] {"abc; reboot", "", null, "a b"}) {
             try {
-                ProxmoxTemplates.vmName(bad, PATH);
+                ProxmoxTemplates.vmName(bad, SOURCE_KEY);
                 fail(bad + " was accepted");
             } catch (IllegalArgumentException e) {
                 assertTrue(e.getMessage(), e.getMessage().contains("primary storage uuid"));
@@ -241,7 +238,7 @@ public class ProxmoxTemplatesTest {
     }
 
     @Test
-    public void theAnswerIsThePathCoreKeepsAndTheSizeOfTheImage() {
+    public void theAnswerIsTheBaseDiskInThePoolWhichCoreKeepsAndTheSizeOfTheImage() {
         CopyCmdAnswer answer = copy(RELATIVE);
 
         TemplateObjectTO onPrimary = (TemplateObjectTO) answer.getNewData();
@@ -253,7 +250,7 @@ public class ProxmoxTemplatesTest {
 
     @Test
     public void aTemplateThatIsOnThePoolAlreadyIsNotMadeAgain() {
-        when(client.findVmOrTemplateByName(name())).thenReturn(new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true));
+        templateVmExists(9050, "pve2");
 
         CopyCmdAnswer answer = copy(RELATIVE);
 
@@ -261,7 +258,7 @@ public class ProxmoxTemplatesTest {
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
         verify(client, never()).convertToTemplate(anyString(), anyLong());
         assertFalse(ran("qemu-img convert"));
-        assertEquals(PATH, ((TemplateObjectTO) answer.getNewData()).getPath());
+        assertEquals("9050/base-9050-disk-0.qcow2", ((TemplateObjectTO) answer.getNewData()).getPath());
         // the image is still checked, so a template that was changed on the store is noticed
         assertTrue(ran("qemu-img info"));
     }
@@ -391,46 +388,73 @@ public class ProxmoxTemplatesTest {
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
 
+    @Test
+    public void aTemplateVmWhoseDiskIsNotOnThePoolFailsTheCopyAndIsNotUsed() {
+        ProxmoxApiClient.VmLocation vm = new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true);
+        when(client.findVmOrTemplateByName(name())).thenReturn(vm);
+        Map<String, String> config = new HashMap<>();
+        config.put("scsi0", "cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf:9050/base-9050-disk-0.qcow2,size=5G");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(config);
+
+        CopyCmdAnswer answer = copy(RELATIVE);
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("no base disk on the pool"));
+    }
+
     // ---- a template VM that is needed at a deploy ----
 
     @Test
-    public void aTemplateVmThatIsThereIsFoundWithoutAnySshLoginOrSecondaryStore() {
-        ProxmoxApiClient.VmLocation vm = new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true);
-        when(client.findVmOrTemplateByName(name())).thenReturn(vm);
+    public void aTemplateVmIsFoundByTheIdInThePathWithoutAnySshLoginOrSecondaryStore() {
+        templateVmExists(9050, "pve2");
 
-        assertEquals(9050L, templates.ensureTemplateVm(POOL_UUID, PATH).getVmid());
+        ProxmoxApiClient.VmLocation vm = templates.requireTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2");
+
+        assertEquals(9050L, vm.getVmid());
+        assertEquals("pve2", vm.getNode());
         assertTrue(link.commands.isEmpty());
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
+        verify(client, never()).findVmOrTemplateByName(anyString());
     }
 
     @Test
-    public void aTemplateVmThatWasLostIsMadeAgainFromTheStoreNamedInThePath() {
-        ProxmoxApiClient.VmLocation made = templates.ensureTemplateVm(POOL_UUID, PATH);
-
-        assertEquals(9100L, made.getVmid());
-        assertEquals(NODE, made.getNode());
-        assertTrue(made.isTemplate());
-        String mountCommand = link.commandsWith("mount -t nfs").get(0);
-        assertTrue(mountCommand, mountCommand.contains("-o 'ro,vers=3,soft,timeo=30,retrans=2,nosharecache' '10.0.32.4:/acs/primary/lab/secondary'"));
-        verify(client).convertToTemplate(NODE, 9100L);
-    }
-
-    @Test
-    public void aTemplateVmThatCannotBeMadeAgainBecauseTheFileIsGoneFailsTheDeploy() {
-        replies.put("test -f '/mnt/css-tmp-", new ExecResult(1, "", ""));
-
+    public void aTemplateVmThatWasRemovedFailsTheDeployWithWhatToDoAndIsNotMadeAgain() {
         try {
-            templates.ensureTemplateVm(POOL_UUID, PATH);
+            templates.requireTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2");
             fail("no exception");
-        } catch (RuntimeException e) {
-            assertTrue(e.getMessage(), e.getMessage().contains("does not exist on the secondary store"));
+        } catch (ProxmoxApiException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("removed outside CloudStack"));
+            assertTrue(e.getMessage(), e.getMessage().contains("template_spool_ref"));
         }
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
+        assertTrue(link.commands.isEmpty());
+    }
+
+    @Test
+    public void aVmIdThatAnotherVmHasNowIsNotTakenForTheTemplateVm() {
+        // not a template
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "i-2-10-VM", "pve2", "running"));
+        assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
+
+        // a template that is not one of ours
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "ubuntu-base", "pve2", "stopped", true));
+        assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
+
+        // a template of ours with another disk (a different pool, or another disk file)
+        ProxmoxApiClient.VmLocation ours = new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true);
+        when(client.findVmOrTemplateById(9050L)).thenReturn(ours);
+        Map<String, String> other = new HashMap<>();
+        other.put("scsi0", "cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf:9050/base-9050-disk-0.qcow2,size=5G");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(other);
+        assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
+        assertEquals(9050L, templates.findTemplateVm("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", "9050/base-9050-disk-0.qcow2").getVmid());
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(disk("base", 9051));
+        assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void aPathThatIsNotATemplatePathIsRefusedAtADeploy() {
-        templates.ensureTemplateVm(POOL_UUID, "cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2");
+        templates.requireTemplateVm(POOL_UUID, "cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2");
     }
 
     // ---- eviction by core (DestroyCommand) ----
@@ -446,10 +470,10 @@ public class ProxmoxTemplatesTest {
 
     @Test
     public void theEvictionOfATemplateDestroysItsTemplateVm() {
-        when(client.findVmOrTemplateByName(name())).thenReturn(new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true));
+        templateVmExists(9050, "pve2");
         when(client.destroyVm("pve2", 9050L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9050:u:");
 
-        Answer answer = templates.destroy(destroyCommand(POOL_UUID, PATH));
+        Answer answer = templates.destroy(destroyCommand(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
 
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).destroyVm("pve2", 9050L);
@@ -465,13 +489,23 @@ public class ProxmoxTemplatesTest {
     }
 
     @Test
+    public void theEvictionLeavesAVmAloneThatHasTheIdOfARemovedTemplateVmNow() {
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "i-2-10-VM", "pve2", "running"));
+
+        Answer answer = templates.destroy(destroyCommand(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client, never()).destroyVm(anyString(), anyLong());
+    }
+
+    @Test
     public void proxmoxRefusingToRemoveABaseThatCloneUseIsAFailureWithItsTextSoCoreKeepsTheRow() {
-        when(client.findVmOrTemplateByName(name())).thenReturn(new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true));
+        templateVmExists(9050, "pve2");
         when(client.destroyVm("pve2", 9050L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9050:u:");
         doThrow(new ProxmoxApiException("Proxmox task qmdestroy failed: base volume 'base-9050-disk-0.qcow2' is still in use by linked clones")).when(client)
                 .waitForTask("UPID:pve2:1:2:3:qmdestroy:9050:u:", 600);
 
-        Answer answer = templates.destroy(destroyCommand(POOL_UUID, PATH));
+        Answer answer = templates.destroy(destroyCommand(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
 
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("still in use by linked clones"));
@@ -482,7 +516,7 @@ public class ProxmoxTemplatesTest {
         Answer answer = templates.destroy(destroyCommand(POOL_UUID, "cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2"));
 
         assertTrue(answer.getDetails(), answer.getResult());
-        verify(client, never()).findVmOrTemplateByName(anyString());
+        verify(client, never()).findVmOrTemplateById(anyLong());
     }
 
     @Test

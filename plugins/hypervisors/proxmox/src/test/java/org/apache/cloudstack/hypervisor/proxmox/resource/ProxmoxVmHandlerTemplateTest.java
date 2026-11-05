@@ -24,7 +24,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -59,7 +58,9 @@ public class ProxmoxVmHandlerTemplateTest {
     private static final String POOL_UUID = "7fd5565c-6c1e-3032-81ec-d404812915ab";
     private static final String POOL = "cs-" + POOL_UUID;
     private static final String RELATIVE = "template/tmpl/1/3/6ddd9e96-1804-4324-b39a-a04a2c5e127e.qcow2";
-    private static final String PATH = "secondary:3|10.0.32.4|/acs/secondary|" + RELATIVE;
+    private static final String SOURCE_KEY = "3|10.0.32.4|/acs/secondary|" + RELATIVE;
+    /** What core keeps for a template VM (VM id 9050 on pve2): the base disk in the pool. */
+    private static final String PATH = "9050/base-9050-disk-0.qcow2";
     private static final String CLONE_UPID = "UPID:pve1:1:2:3:qmclone:9204:u:";
     private static final long GIB = 1024L * 1024 * 1024;
 
@@ -81,7 +82,7 @@ public class ProxmoxVmHandlerTemplateTest {
     }
 
     private static String templateVmName() {
-        return ProxmoxTemplates.vmName(POOL_UUID, PATH);
+        return ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY);
     }
 
     private CopyCommand templateToPrimary() {
@@ -118,8 +119,15 @@ public class ProxmoxVmHandlerTemplateTest {
 
     /** The template VM exists on pve2, and a clone gets VM id {@code vmid} with the root disk {@code disk}. */
     private void templateVmExistsAndCloneGets(long vmid, String disk) {
-        when(client.findVmOrTemplateByName(templateVmName())).thenReturn(new ProxmoxApiClient.VmLocation(9050, templateVmName(), "pve2", "stopped", true));
+        templateVmExists();
         cloneGets(vmid, disk);
+    }
+
+    private void templateVmExists() {
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, templateVmName(), "pve2", "stopped", true));
+        Map<String, String> config = new HashMap<>();
+        config.put("scsi0", POOL + ":" + PATH + ",size=5G");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(config);
     }
 
     private void cloneGets(long vmid, String disk) {
@@ -137,14 +145,16 @@ public class ProxmoxVmHandlerTemplateTest {
     public void theCopyOfATemplateToAPoolMakesTheTemplateVmAndAnswersThePathCoreKeeps() {
         when(client.nextVmId()).thenReturn(9100L);
         when(client.createVm(eq(NODE), eq(9100L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9100:u:");
-        Map<String, String> config = new HashMap<>();
-        config.put("scsi0", POOL + ":9100/vm-9100-disk-0.qcow2,size=5G");
-        when(client.getVmConfig(NODE, 9100L)).thenReturn(config);
+        Map<String, String> blank = new HashMap<>();
+        blank.put("scsi0", POOL + ":9100/vm-9100-disk-0.qcow2,size=5G");
+        Map<String, String> base = new HashMap<>();
+        base.put("scsi0", POOL + ":9100/base-9100-disk-0.qcow2,size=5G");
+        when(client.getVmConfig(NODE, 9100L)).thenReturn(blank, base);
 
         CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(templateToPrimary());
 
         assertTrue(answer.getDetails(), answer.getResult());
-        assertEquals(PATH, ((TemplateObjectTO) answer.getNewData()).getPath());
+        assertEquals("9100/base-9100-disk-0.qcow2", ((TemplateObjectTO) answer.getNewData()).getPath());
         verify(client).convertToTemplate(NODE, 9100L);
     }
 
@@ -212,7 +222,7 @@ public class ProxmoxVmHandlerTemplateTest {
 
     @Test
     public void aVmIdTakenByAnotherCallerIsReplacedAndTheOtherVmIsLeftAlone() {
-        when(client.findVmOrTemplateByName(templateVmName())).thenReturn(new ProxmoxApiClient.VmLocation(9050, templateVmName(), "pve2", "stopped", true));
+        templateVmExists();
         when(client.nextVmId()).thenReturn(9200L, 9201L);
         when(client.cloneVm(anyString(), anyLong(), eq(9200L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn("UPID:pve1:1:2:3:qmclone:9200:u:");
         when(client.cloneVm(anyString(), anyLong(), eq(9201L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn("UPID:pve1:1:2:3:qmclone:9201:u:");
@@ -231,7 +241,7 @@ public class ProxmoxVmHandlerTemplateTest {
 
     @Test
     public void aFailedCloneRemovesWhatItLeftBehindAndAnswersTheReason() {
-        when(client.findVmOrTemplateByName(templateVmName())).thenReturn(new ProxmoxApiClient.VmLocation(9050, templateVmName(), "pve2", "stopped", true));
+        templateVmExists();
         when(client.nextVmId()).thenReturn(9204L);
         when(client.cloneVm(anyString(), anyLong(), eq(9204L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn(CLONE_UPID);
         doThrow(new ProxmoxApiException("Proxmox task qmclone failed: unable to create image: No space left on device")).when(client).waitForTask(CLONE_UPID, 600);
@@ -246,40 +256,18 @@ public class ProxmoxVmHandlerTemplateTest {
     }
 
     @Test
-    public void aTemplateVmThatIsGoneIsMadeAgainFromTheStoreInThePathAndThenCloned() {
-        // no template VM is found by name at first; the one made again is cloned
-        when(client.nextVmId()).thenReturn(9100L, 9204L);
-        when(client.createVm(eq(NODE), eq(9100L), anyMap())).thenReturn("UPID:pve1:1:2:3:qmcreate:9100:u:");
-        Map<String, String> templateConfig = new HashMap<>();
-        templateConfig.put("scsi0", POOL + ":9100/vm-9100-disk-0.qcow2,size=5G");
-        when(client.getVmConfig(NODE, 9100L)).thenReturn(templateConfig);
-        when(client.cloneVm(eq(NODE), eq(9100L), eq(9204L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn(CLONE_UPID);
-        Map<String, String> cloneConfig = new HashMap<>();
-        cloneConfig.put("scsi0", POOL + ":9204/vm-9204-disk-0.qcow2,size=5G");
-        when(client.getVmConfig(NODE, 9204L)).thenReturn(cloneConfig);
-
-        CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(rootVolumeFromTemplate(PATH, null));
-
-        assertTrue(answer.getDetails(), answer.getResult());
-        verify(client).convertToTemplate(NODE, 9100L);
-        verify(client).cloneVm(NODE, 9100L, 9204L, "i-2-10-VM", true, NODE, POOL);
-        assertTrue(link.commandsWith("mount -t nfs").get(0), link.commandsWith("mount -t nfs").get(0).contains("'10.0.32.4:/acs/secondary'"));
-    }
-
-    @Test
-    public void aTemplateVmThatCannotBeMadeAgainFailsTheDeployWithTheReasonAndCreatesNoVm() {
-        link.answers = command -> command.contains("mount -t nfs") ? new ExecResult(32, "", "mount.nfs: access denied by server") : new ExecResult(0, "", "");
-
+    public void aTemplateVmThatWasRemovedFailsTheDeployWithWhatToDoAndCreatesNoVm() {
         Answer answer = handler.copy(rootVolumeFromTemplate(PATH, null));
 
         assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("access denied by server"));
-        verify(client, never()).cloneVm(anyString(), anyLong(), anyLong(), anyString(), anyBoolean(), anyString(), isNull());
-        verify(client, never()).createVm(eq(NODE), eq(9204L), anyMap());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("removed outside CloudStack"));
+        verify(client, never()).cloneVm(anyString(), anyLong(), anyLong(), anyString(), anyBoolean(), anyString(), anyString());
+        verify(client, never()).createVm(anyString(), anyLong(), anyMap());
+        assertTrue("a deploy needs no SSH login, and makes nothing from the store: " + link.commands, link.commands.isEmpty());
     }
 
     @Test
-    public void withoutTheSshLoginAMissingTemplateVmCannotBeMadeAgainAndTheReasonSaysSo() {
+    public void withoutTheSshLoginATemplateOnAPoolCannotBeUsedAndTheReasonSaysSo() {
         ProxmoxVmHandler without = new ProxmoxVmHandler(() -> client, NODE, "10.0.32.198", 8006, () -> "x", millis -> { }, () -> 600);
 
         Answer answer = without.copy(rootVolumeFromTemplate(PATH, null));
@@ -290,7 +278,7 @@ public class ProxmoxVmHandlerTemplateTest {
 
     @Test
     public void aTemplatePathThatIsNotOneThePluginMadeIsRefusedWithAnAnswer() {
-        Answer answer = handler.copy(rootVolumeFromTemplate("secondary:3|10.0.32.4;id|/acs|a/b.qcow2", null));
+        Answer answer = handler.copy(rootVolumeFromTemplate("secondary:3|10.0.32.4|/acs|a/b.qcow2", null));
 
         assertFalse(answer.getResult());
         verify(client, never()).cloneVm(anyString(), anyLong(), anyLong(), anyString(), anyBoolean(), anyString(), anyString());

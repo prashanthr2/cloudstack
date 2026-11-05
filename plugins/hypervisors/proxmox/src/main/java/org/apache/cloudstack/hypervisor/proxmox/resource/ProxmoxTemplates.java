@@ -47,21 +47,21 @@ import com.cloud.storage.Storage;
  * clones in design-phase12-linked-clones.md): made once per pool and template when core copies the template to the pool, cloned for every root volume,
  * and deleted when core evicts the template from the pool.
  * <p>
- * What core keeps in {@code template_spool_ref} and hands back is only the {@code path} of the answer to the copy, so the path says where the template
- * comes from ({@link #PATH_PREFIX}, the store and the file), and the template VM is found by a name that is derived from the pool and the path, which
- * the copy, the deploy and the eviction all know. A template VM that is lost is made again from the store named in the path.
+ * As on KVM, what core keeps in {@code template_spool_ref} ({@code install_path} and {@code local_path}) is the place of the template on the primary
+ * storage: the path of the base disk of the template VM in the pool, "&lt;vmid&gt;/base-&lt;vmid&gt;-disk-0.qcow2", the form that the path of a volume
+ * has. The deploy and the eviction find the template VM by its id and check that it is a template of ours whose disk is that path on that pool, so a VM
+ * id that Proxmox has given to another VM since is never touched. A template VM that was removed outside CloudStack is not made again at a deploy (the
+ * path says nothing of where the template came from, as on KVM a missing base file fails the deploy): the deploy fails and says so, and the template
+ * is copied again once its row is removed. The copy finds a template VM that it made earlier by its name, which is derived from the pool and the file
+ * on the secondary store.
  * <p>
  * Every value that CloudStack gives ends up in a root shell, so each is checked against a strict pattern first (see {@link ProxmoxSecondaryMounts}).
  */
 class ProxmoxTemplates {
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxTemplates.class);
 
-    /** The start of the path of a template on primary: "secondary:&lt;NFS version&gt;|&lt;server&gt;|&lt;export&gt;|&lt;file below the store&gt;". */
-    static final String PATH_PREFIX = "secondary:";
-    /** The name of a template VM is this and the UUID of the pool and the path. */
+    /** The name of a template VM is this and a UUID of the pool and the file on the secondary store. */
     static final String NAME_PREFIX = "cs-tmpl-";
-    /** The size of the column that holds the path in the database (template_spool_ref.install_path). */
-    static final int MAX_PATH_LENGTH = 255;
     private static final String MEMORY_MIB = "256";
     private static final int CREATE_ATTEMPTS = 10;
     private static final long CREATE_RETRY_WAIT_MS = 500;
@@ -69,6 +69,8 @@ class ProxmoxTemplates {
 
     private static final Pattern POOL_UUID = Pattern.compile("^[A-Za-z0-9-]{1,64}$");
     private static final Pattern DISK_PATH = Pattern.compile("^[0-9]+/vm-[0-9]+-[A-Za-z0-9-]+\\.qcow2$");
+    /** The path of a template on primary: the base disk of a template VM, "&lt;vmid&gt;/base-&lt;vmid&gt;-disk-0.qcow2". */
+    private static final Pattern TEMPLATE_PATH = Pattern.compile("^([0-9]+)/base-\\1-[A-Za-z0-9-]+\\.qcow2$");
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
@@ -87,64 +89,27 @@ class ProxmoxTemplates {
         this.pauser = pauser;
     }
 
-    /** Where a template comes from: the parts of its path. */
-    static final class Source {
-        private final String version;
-        private final String server;
-        private final String export;
-        private final String relative;
-
-        private Source(String version, String server, String export, String relative) {
-            this.version = version;
-            this.server = server;
-            this.export = export;
-            this.relative = relative;
-        }
-
-        NfsTO store() {
-            return ProxmoxSecondaryMounts.storeOf(version, server, export);
-        }
-
-        String getRelative() {
-            return relative;
-        }
-    }
-
     // ---- the path and the name ----
 
+    /** Whether the path is that of a template VM's base disk in a pool, the form that this plugin answers a copy with. */
     static boolean isTemplatePath(String path) {
-        return path != null && path.startsWith(PATH_PREFIX);
+        return path != null && TEMPLATE_PATH.matcher(path).matches();
     }
 
-    /** The path of a template file on a store, as it is kept in the database. */
-    static String path(NfsTO store, String relativePath) {
+    private static long vmIdOf(String path) {
+        return Long.parseLong(StringUtils.substringBefore(path, "/"));
+    }
+
+    /** What names the file on the secondary store: the same store and file on the same pool make the same template VM. */
+    static String sourceKey(NfsTO store, String relativePath) {
         String[] address = ProxmoxSecondaryMounts.address(store);
         String version = ProxmoxSecondaryMounts.checkVersion(store.getNfsVersion());
-        String relative = ProxmoxSecondaryMounts.relativePath(relativePath, "the template file");
-        String path = PATH_PREFIX + version + "|" + address[0] + "|" + address[1] + "|" + relative;
-        if (path.length() > MAX_PATH_LENGTH) {
-            throw new IllegalArgumentException("The template path " + path + " is " + path.length() + " characters long and CloudStack keeps at most "
-                    + MAX_PATH_LENGTH + ": use a shorter export or template folder");
-        }
-        return path;
+        return version + "|" + address[0] + "|" + address[1] + "|" + ProxmoxSecondaryMounts.relativePath(relativePath, "the template file");
     }
 
-    /** The parts of a template path, each checked again as the address of a store and a relative path are. */
-    static Source parse(String path) {
-        if (!isTemplatePath(path)) {
-            throw new IllegalArgumentException("The template path " + path + " is not one this plugin made");
-        }
-        String[] parts = path.substring(PATH_PREFIX.length()).split("\\|", -1);
-        if (parts.length != 4) {
-            throw new IllegalArgumentException("The template path " + path + " is not of the form secondary:<version>|<server>|<export>|<file>");
-        }
-        ProxmoxSecondaryMounts.storeOf(parts[0], parts[1], parts[2]);
-        return new Source(ProxmoxSecondaryMounts.checkVersion(parts[0]), parts[1], parts[2], ProxmoxSecondaryMounts.relativePath(parts[3], "the template file"));
-    }
-
-    /** The name of the template VM of a template path on a pool: the same for the copy, the deploy and the eviction, which know only these two. */
-    static String vmName(String poolUuid, String path) {
-        return NAME_PREFIX + UUID.nameUUIDFromBytes((checkedPool(poolUuid) + "|" + path).getBytes(StandardCharsets.UTF_8));
+    /** The name of the template VM of a file on a store on a pool, which a repeated copy finds again. */
+    static String vmName(String poolUuid, String sourceKey) {
+        return NAME_PREFIX + UUID.nameUUIDFromBytes((checkedPool(poolUuid) + "|" + sourceKey).getBytes(StandardCharsets.UTF_8));
     }
 
     private static String checkedPool(String poolUuid) {
@@ -156,34 +121,46 @@ class ProxmoxTemplates {
 
     // ---- copy to primary ----
 
+    /** A template VM on the pool and its path. */
+    private static final class OnPool {
+        private final ProxmoxApiClient.VmLocation vm;
+        private final String path;
+
+        private OnPool(ProxmoxApiClient.VmLocation vm, String path) {
+            this.vm = vm;
+            this.path = path;
+        }
+    }
+
     /**
      * Makes the template VM for the template on this pool, unless there is one (core calls this under its lock on the template and pool, so there is one
-     * caller at a time, and a repeated call after a failure finds what is there). The answer is the path that core keeps and the size of the image.
+     * caller at a time, and a repeated call after a failure finds what is there). The answer is the path that core keeps (the base disk of the template
+     * VM in the pool) and the size of the image.
      */
     CopyCmdAnswer copyToPrimary(TemplateObjectTO source, TemplateObjectTO destination) {
         try {
             NfsTO store = (NfsTO) source.getDataStore();
             String relative = ProxmoxSecondaryMounts.relativePath(StringUtils.removeStart(StringUtils.defaultString(source.getPath()), "/"), "the template file");
-            String path = path(store, relative);
             String poolUuid = checkedPool(((PrimaryDataStoreTO) destination.getDataStore()).getUuid());
-            String name = vmName(poolUuid, path);
+            String name = vmName(poolUuid, sourceKey(store, relative));
             ProxmoxApiClient client = clients.get();
             try (ProxmoxSsh ssh = logins.get()) {
-                ProxmoxSecondaryMounts.ImageInfo image = mounts.withMount(ssh, store, true, mount -> {
+                ProxmoxSecondaryMounts.ImageInfo[] image = new ProxmoxSecondaryMounts.ImageInfo[1];
+                OnPool template = mounts.withMount(ssh, store, true, mount -> {
                     String from = mount + "/" + relative;
                     requireFile(ssh, from);
-                    ProxmoxSecondaryMounts.ImageInfo info = mounts.checkImage(ssh, from);
+                    image[0] = mounts.checkImage(ssh, from);
                     ProxmoxApiClient.VmLocation existing = client.findVmOrTemplateByName(name);
                     if (existing != null && existing.isTemplate()) {
-                        LOGGER.info("The template {} is on the pool {} already as the template VM {}", relative, poolUuid, existing.getVmid());
-                    } else {
-                        makeTemplateVm(client, ssh, poolUuid, name, from, info, existing);
+                        OnPool found = new OnPool(existing, templatePath(client, poolUuid, existing));
+                        LOGGER.info("The template {} is on the pool {} already as the template VM {} ({})", relative, poolUuid, existing.getVmid(), found.path);
+                        return found;
                     }
-                    return info;
+                    return makeTemplateVm(client, ssh, poolUuid, name, from, image[0], existing);
                 });
                 TemplateObjectTO onPrimary = new TemplateObjectTO();
-                onPrimary.setPath(path);
-                onPrimary.setSize(image.getVirtualSize());
+                onPrimary.setPath(template.path);
+                onPrimary.setSize(image[0].getVirtualSize());
                 onPrimary.setPhysicalSize(source.getPhysicalSize());
                 onPrimary.setFormat(Storage.ImageFormat.QCOW2);
                 return new CopyCmdAnswer(onPrimary);
@@ -195,26 +172,43 @@ class ProxmoxTemplates {
     }
 
     /**
-     * The template VM for a template path on a pool, made again from the store named in the path when it is gone (an administrator removed it). The
-     * normal case needs no SSH login and no secondary store: the VM is found by its name.
+     * The template VM of a template path on a pool, or null when there is none: no VM of that id, or one that is not a template VM of ours whose base disk
+     * is that path on that pool (a VM id that was given to another VM after the template VM was removed). Needs no SSH login and no secondary store.
      */
-    ProxmoxApiClient.VmLocation ensureTemplateVm(String poolUuid, String path) {
-        Source source = parse(path);
-        String name = vmName(poolUuid, path);
+    ProxmoxApiClient.VmLocation findTemplateVm(String poolUuid, String path) {
+        if (!isTemplatePath(path)) {
+            throw new IllegalArgumentException("The template path " + path + " is not one this plugin made");
+        }
+        String storage = ProxmoxStorageNames.storageId(checkedPool(poolUuid));
         ProxmoxApiClient client = clients.get();
-        ProxmoxApiClient.VmLocation existing = client.findVmOrTemplateByName(name);
-        if (existing != null && existing.isTemplate()) {
-            return existing;
+        ProxmoxApiClient.VmLocation vm = client.findVmOrTemplateById(vmIdOf(path));
+        if (vm == null || !vm.isTemplate() || vm.getName() == null || !vm.getName().startsWith(NAME_PREFIX)) {
+            return null;
         }
-        LOGGER.warn("Proxmox has no template VM {} for {} on the pool {}: making it again from the secondary store", name, path, poolUuid);
-        NfsTO store = source.store();
-        try (ProxmoxSsh ssh = logins.get()) {
-            return mounts.withMount(ssh, store, true, mount -> {
-                String from = mount + "/" + source.getRelative();
-                requireFile(ssh, from);
-                return makeTemplateVm(client, ssh, poolUuid, name, from, mounts.checkImage(ssh, from), existing);
-            });
+        String disk = client.getVmConfig(vm.getNode(), vm.getVmid()).get(ProxmoxVmConfig.ROOT_DISK);
+        String expected = storage + ":" + path;
+        return disk != null && expected.equals(StringUtils.substringBefore(disk, ",")) ? vm : null;
+    }
+
+    /** The template VM at a deploy: the one {@link #findTemplateVm} finds, or a failure that says what to do. */
+    ProxmoxApiClient.VmLocation requireTemplateVm(String poolUuid, String path) {
+        ProxmoxApiClient.VmLocation vm = findTemplateVm(poolUuid, path);
+        if (vm == null) {
+            throw new ProxmoxApiException("Proxmox has no template VM with the disk " + path + " on the pool " + ProxmoxStorageNames.storageId(poolUuid)
+                    + ": it was removed outside CloudStack. Remove the template from the primary storage (its row in template_spool_ref) so that it is copied again");
         }
+        return vm;
+    }
+
+    /** The path of a template VM's base disk, read from its configuration and checked to be on the pool. */
+    private String templatePath(ProxmoxApiClient client, String poolUuid, ProxmoxApiClient.VmLocation vm) {
+        String disk = client.getVmConfig(vm.getNode(), vm.getVmid()).get(ProxmoxVmConfig.ROOT_DISK);
+        String path = ProxmoxVmConfig.diskPath(disk);
+        String storage = ProxmoxStorageNames.storageId(poolUuid);
+        if (disk == null || !isTemplatePath(path) || vmIdOf(path) != vm.getVmid() || !storage.equals(StringUtils.substringBefore(disk, ":"))) {
+            throw new ProxmoxApiException("The template VM " + vm.getVmid() + " has no base disk on the pool " + storage + " (" + disk + ")");
+        }
+        return path;
     }
 
     /**
@@ -222,7 +216,7 @@ class ProxmoxTemplates {
      * replaces a file), then {@code template}. A VM of that name that is not a template is what an earlier, interrupted copy left: it is removed first.
      * Whatever fails removes the VM again.
      */
-    private ProxmoxApiClient.VmLocation makeTemplateVm(ProxmoxApiClient client, ProxmoxSsh ssh, String poolUuid, String name, String from,
+    private OnPool makeTemplateVm(ProxmoxApiClient client, ProxmoxSsh ssh, String poolUuid, String name, String from,
             ProxmoxSecondaryMounts.ImageInfo image, ProxmoxApiClient.VmLocation leftover) {
         if (leftover != null) {
             LOGGER.warn("Removing the unfinished template VM {} ({}) that an earlier copy left", name, leftover.getVmid());
@@ -243,8 +237,10 @@ class ProxmoxTemplates {
             }
             replaceFile(ssh, from, ProxmoxStorageNames.mountPath(poolUuid) + "/images/" + diskPath);
             waitFor(client, client.convertToTemplate(node, vmid));
-            LOGGER.info("Made the template VM {} ({}) on {} from {}", name, vmid, storage, from);
-            return new ProxmoxApiClient.VmLocation(vmid, name, node, "stopped", true);
+            ProxmoxApiClient.VmLocation made = new ProxmoxApiClient.VmLocation(vmid, name, node, "stopped", true);
+            String path = templatePath(client, poolUuid, made);
+            LOGGER.info("Made the template VM {} ({}) on {} from {}: {}", name, vmid, storage, from, path);
+            return new OnPool(made, path);
         } catch (RuntimeException e) {
             destroyQuietly(client, vmid);
             throw e;
@@ -296,8 +292,9 @@ class ProxmoxTemplates {
 
     /**
      * Core's eviction of an unused template from a pool ({@code DestroyCommand} with the stored path): the template VM is destroyed. Proxmox refuses
-     * while clones depend on it; that is answered as a failure, so core keeps the row and tries again. A template VM that is gone is a success, and so is
-     * a template that was copied before template VMs (a legacy path), which has nothing on the pool.
+     * while clones depend on it; that is answered as a failure, so core keeps the row and tries again. A template VM that is gone is a success (nothing
+     * is left to remove, and a VM id that another VM has now is left alone), and so is a template that was copied before template VMs (a legacy path),
+     * which has nothing on the pool.
      */
     Answer destroy(DestroyCommand cmd) {
         String path = cmd.getVolume() == null ? null : cmd.getVolume().getPath();
@@ -308,15 +305,14 @@ class ProxmoxTemplates {
             return Answer.createUnsupportedCommandAnswer(cmd);
         }
         try {
-            String name = vmName(cmd.getVolume().getPoolUuid(), path);
             ProxmoxApiClient client = clients.get();
-            ProxmoxApiClient.VmLocation existing = client.findVmOrTemplateByName(name);
+            ProxmoxApiClient.VmLocation existing = findTemplateVm(cmd.getVolume().getPoolUuid(), path);
             if (existing == null) {
-                return new Answer(cmd, true, "Proxmox has no template VM " + name + ", nothing to remove");
+                return new Answer(cmd, true, "Proxmox has no template VM with the disk " + path + ", nothing to remove");
             }
             waitFor(client, client.destroyVm(existing.getNode(), existing.getVmid()));
-            LOGGER.info("Removed the template VM {} ({}) from the pool", name, existing.getVmid());
-            return new Answer(cmd, true, "Removed the template VM " + name);
+            LOGGER.info("Removed the template VM {} ({}) from the pool", existing.getName(), existing.getVmid());
+            return new Answer(cmd, true, "Removed the template VM " + existing.getName());
         } catch (ProxmoxApiException | IllegalArgumentException e) {
             LOGGER.warn("The template {} was not removed from the pool: {}", path, e.getMessage());
             return new Answer(cmd, false, e.getMessage());

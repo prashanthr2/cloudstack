@@ -340,9 +340,9 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * The root volume of a VM is created as the VM itself: a clone of the template VM that caches the template on the pool (ProxmoxTemplates), made
-     * again from the secondary store named in the path when the template VM is gone. A deploy needs no SSH login and no secondary store when the template
-     * VM is there. The volume path is the disk's place in the primary storage ("&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-0.qcow2"), which carries the VM id
+     * The root volume of a VM is created as the VM itself: a clone of the template VM that caches the template on the pool (ProxmoxTemplates), found by
+     * the path that core keeps (the base disk of the template VM). A deploy needs no SSH login and no secondary store; it fails, and says so, when the
+     * template VM was removed outside CloudStack. The volume path is the disk's place in the primary storage ("&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-0.qcow2"), which carries the VM id
      * the later commands need. A template that was copied before template VMs (a legacy path) is imported from its storage entry while that exists.
      */
     private Answer createRootVolume(TemplateObjectTO template, VolumeObjectTO volume) {
@@ -354,7 +354,7 @@ class ProxmoxVmHandler {
             }
             String poolUuid = ((PrimaryDataStoreTO) volume.getDataStore()).getUuid();
             ProxmoxApiClient client = clients.get();
-            ProxmoxApiClient.VmLocation templateVm = made.ensureTemplateVm(poolUuid, templatePath);
+            ProxmoxApiClient.VmLocation templateVm = made.requireTemplateVm(poolUuid, templatePath);
             String poolStorage = ProxmoxStorageNames.storageId(poolUuid);
             String name = StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid());
             return new CopyCmdAnswer(createVmWithRootDisk(client, volume, name,
