@@ -1,6 +1,6 @@
 # Phase 11 design: templates and ISOs read from a plain secondary mount (no storage entries)
 
-Status: decided 2026-11-05 and revised the same day after the lab (items 1 and 5 changed, section 6); **step 1 of section 7 built and unit tested 2026-11-05, not yet run on the lab**; M2b and M3 pass (a shared `dir` entry with bind-mounted ISO files, section 6); M2b, M3 to M6 pass; nothing built yet. Replaces the per-account `cst-` and per-ISO `csi-` storage entries (design-phase3 4.1, design-phase6) and the whole-store `css-` entry.
+Status: decided 2026-11-05 and revised the same day after the lab (items 1 and 5 changed, section 6); **step 1 of section 7 built, unit tested and lab verified 2026-11-05 (SM1 to SM5, SM7; test-log.md)**; M2b and M3 pass (a shared `dir` entry with bind-mounted ISO files, section 6); M2b, M3 to M6 pass; nothing built yet. Replaces the per-account `cst-` and per-ISO `csi-` storage entries (design-phase3 4.1, design-phase6) and the whole-store `css-` entry.
 
 ## 1. Why
 
@@ -50,7 +50,7 @@ M1 plain `soft,ro,nosharecache` mount works for the SSH user with sudo; M2 ISO b
 
 Nothing here is built. Steps 1 to 3 are in the order proposed on 2026-11-05 (**to confirm**: templates first, then ISOs and migration, then template from volume and snapshot). Each step ends with unit tests, lab checks, `behaviour.md` / `test-log.md` / `upstream-notes.md` entries, and a commit only when asked. Core is not touched.
 
-### Step 1: the foundation (built 2026-11-05, 621 plugin tests pass, lab checks pending)
+### Step 1: the foundation (built 2026-11-05, lab verified the same day)
 - **New class `ProxmoxSecondaryMounts`** (resource package), taking the `ProxmoxSsh` login like `ProxmoxVolumeSnapshots` does. It holds what `ProxmoxVolumeSnapshots.mountSecondary` does today and replaces it:
   - `withMount(ssh, NfsTO, readOnly, action)`: makes a **mount directory of its own for this one operation** (`/mnt/css-tmp-<random uuid>`), mounts the store there (`timeout 60 mount -t nfs -o <options of section 8> server:export DIR`, `vers=` from `NfsTO.getNfsVersion()`), runs the action, and in a `finally` unmounts (`timeout 30 umount DIR || timeout 30 umount -l DIR`) and removes the directory. Nothing is shared between operations, so there are no locks and no "already mounted" cases; **nothing stays mounted when an operation is over** (a dead export can only hurt an operation that is running); and the `css-rw-` mount of volume snapshots that was never unmounted is gone. A cleanup the first time the mounts are used after the host connected (the resource is rebuilt at a reconnect) removes directories `/mnt/css-tmp-*` older than 10 minutes that a crash left behind (lazy unmount if still mounted). Decided 2026-11-05.
   - A mount made by the old code (`/mnt/css-rw-*`, `hard`) is not used any more and stays until the node reboots or someone unmounts it (upgrade note).
