@@ -305,6 +305,45 @@ public class ProxmoxResourceTest {
         assertTrue(sshTargets.isEmpty());
     }
 
+    private com.cloud.agent.api.storage.DestroyCommand evictionOf(String path) {
+        com.cloud.agent.api.to.VolumeTO volume = org.mockito.Mockito.mock(com.cloud.agent.api.to.VolumeTO.class);
+        when(volume.getPath()).thenReturn(path);
+        when(volume.getPoolUuid()).thenReturn("7fd5565c-6c1e-3032-81ec-d404812915ab");
+        com.cloud.agent.api.storage.DestroyCommand cmd = org.mockito.Mockito.mock(com.cloud.agent.api.storage.DestroyCommand.class);
+        when(cmd.getVolume()).thenReturn(volume);
+        return cmd;
+    }
+
+    @Test
+    public void coresEvictionOfATemplateFromAPoolIsAnsweredByTheTemplateVmsAndNeedsNoSshLogin() {
+        when(client.findVmOrTemplateByName(org.mockito.ArgumentMatchers.startsWith("cs-tmpl-"))).thenReturn(new ProxmoxApiClient.VmLocation(9050, "cs-tmpl-x", NODE, "stopped", true));
+        when(client.destroyVm(NODE, 9050L)).thenReturn("UPID:pve2:1:2:3:qmdestroy:9050:u:");
+
+        Answer answer = resource.executeRequest(evictionOf("secondary:3|10.0.32.4|/acs/secondary|template/tmpl/1/3/f.qcow2"));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).destroyVm(NODE, 9050L);
+        assertTrue(sshTargets.isEmpty());
+    }
+
+    @Test
+    public void aTemplateCopiedToAPoolNeedsTheSshLoginOfTheHostAndSaysSoWhenThereIsNone() {
+        com.cloud.agent.api.to.NfsTO store = new com.cloud.agent.api.to.NfsTO("nfs://10.0.32.4/acs/secondary", com.cloud.storage.DataStoreRole.Image);
+        org.apache.cloudstack.storage.to.TemplateObjectTO source = org.mockito.Mockito.mock(org.apache.cloudstack.storage.to.TemplateObjectTO.class);
+        when(source.getDataStore()).thenReturn(store);
+        when(source.getPath()).thenReturn("template/tmpl/1/3/f.qcow2");
+        org.apache.cloudstack.storage.to.PrimaryDataStoreTO pool = org.mockito.Mockito.mock(org.apache.cloudstack.storage.to.PrimaryDataStoreTO.class);
+        when(pool.getUuid()).thenReturn("7fd5565c-6c1e-3032-81ec-d404812915ab");
+        org.apache.cloudstack.storage.to.TemplateObjectTO dest = org.mockito.Mockito.mock(org.apache.cloudstack.storage.to.TemplateObjectTO.class);
+        when(dest.getDataStore()).thenReturn(pool);
+
+        Answer answer = resource.executeRequest(new org.apache.cloudstack.storage.command.CopyCommand(source, dest, 600, false));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("no SSH login"));
+        assertTrue(sshTargets.isEmpty());
+    }
+
     @Test
     public void aVolumeSnapshotLogsInWithTheLoginInTheParametersAndWithTheNewOneAfterAnUpdateOfThePassword() throws ConfigurationException {
         ProxmoxResource withLogin = new ProxmoxResource() {

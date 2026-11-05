@@ -850,3 +850,20 @@ Unit tests: `ProxmoxSecondaryMountsTest` (31: the mount per operation and its op
 | SM4 | With `soft;reboot` the snapshot fails and the plugin log names the option (`The setting proxmox.secondary.mount.options has the option 'soft;reboot', which ...`). Not pasted: that no node ran a `css-tmp` command and that no `cs-` snapshot is left on the instance (`qm listsnapshot`) |
 | SM5 | A directory `/mnt/css-tmp-old` (20 minutes old) on each node: after the hosts were reconnected and a snapshot taken, pve1 (which took it) had lost its directory; pve2 and pve3 still had theirs, as designed (the cleanup runs on the first use of each node). The count of the cleanup command in the journal printed 0 only because the journal escapes the quotes of the command (the check was wrong, not the plugin) |
 | SM7 | A 5 GiB volume grown to 10 GiB (file 10 GiB), reverted to the snapshot from before: file 5 GiB; a new snapshot of it and a volume created from that: 5 GiB, no cutting. The query of `volumes.size` for the grown volume was not pasted; the 5 GiB of the later snapshot and volume show that the database had 5 GiB |
+
+## Templates as Proxmox template VMs, step 2 (built 2026-11-05)
+
+Unit tests: `ProxmoxTemplatesTest` (29), `ProxmoxVmHandlerTemplateTest` (12), the new client calls in `ProxmoxApiClientVmTest`, two dispatch tests in `ProxmoxResourceTest`; plugin total 658 pass. **Lab checks, not run yet** (behaviour.md section 25). Check the node with the sudo journal (`sj` of the secondary mount checks) and the Proxmox UI; check CloudStack with SQL as well as the node:
+
+| # | Check | Expected |
+|---|---|---|
+| TV1 | Register a user template (qcow2) and deploy an instance from it, in a zone with one pool | In Proxmox a template VM `cs-tmpl-<uuid>` (template icon) appears on a node; `qm config <vmid>` shows `template: 1` and a `base-<vmid>-disk-0.qcow2` disk; the instance is a normal VM with its own disk; `select local_path from template_spool_ref ...` (the column is `install_path` in some versions) shows `secondary:...|...|...|template/tmpl/...` |
+| TV2 | Deploy a second instance from the same template | No `css-tmp` mount and no `qemu-img convert` in the sudo journal of any node (no SSH at all), the clone takes seconds to a minute; `volumes.size` equals the disk's virtual size |
+| TV3 | Deploy with a root disk bigger than the template (resize at deploy) | The disk image is the bigger size (`qemu-img info`) and `volumes.size` is the same |
+| TV4 | Deploy from the system VM template (the SSVM template of Phase 8) and start the instance | Works as before; the console proxy / SSVM still come up |
+| TV5 | A template whose image has a backing file (`qemu-img create -b ...`) registered | The copy fails with the message "has a backing file"; no VM is made |
+| TV6 | `qm destroy` the template VM by hand, then deploy again | The log says "making it again from the secondary store"; the sudo journal shows the mount and the convert; the deploy works |
+| TV7 | Eviction of an unused template: with `storage.cleanup.enabled` and `storage.template.cleanup.enabled` on, delete all instances from a template and wait for two cleanup cycles (or set `storage.cleanup.interval` low) | The template VM is removed from Proxmox and the `template_spool_ref` row is gone; a template with a live instance is not touched |
+| TV8 | An existing instance from before this change starts, stops, and is deleted | Works; its template path is of the old `cst-` form and nothing is made for it |
+| TV9 | Deploy from an old template (old `cst-` path) while its entry exists | Works with the old `import-from` |
+| TV10 | Ten deploys from a template that is not yet on the pool, in parallel | One template VM (core's lock), ten clones, no failures; name check with `qm list \| grep cs-tmpl` |

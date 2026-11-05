@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.client;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -286,23 +287,70 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
-    public void aTemplateDirectoryEntryExposesOneFolderOfAnAlreadyMountedPathAsImagesContent() {
-        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"dir\",\"storage\":\"cst-2\"}}");
+    public void templateVmsAreFoundByNameOrIdOnlyThroughTheCallsThatAskForThem() {
+        answer("GET /api2/json/cluster/resources?type=vm", "{\"data\":["
+                + "{\"type\":\"qemu\",\"vmid\":9202,\"name\":\"i-2-10-VM\",\"node\":\"pve2\",\"status\":\"running\"},"
+                + "{\"type\":\"qemu\",\"vmid\":9000,\"name\":\"cs-tmpl-1\",\"node\":\"pve1\",\"status\":\"stopped\",\"template\":1},"
+                + "{\"type\":\"lxc\",\"vmid\":9300,\"name\":\"ct\",\"node\":\"pve1\",\"status\":\"running\"}]}");
 
-        client.createTemplateDirStorage("cst-2", "/mnt/css-1", "template/tmpl/1");
+        ProxmoxApiClient.VmLocation template = client.findVmOrTemplateByName("cs-tmpl-1");
+        assertEquals(9000L, template.getVmid());
+        assertEquals("pve1", template.getNode());
+        assertTrue(template.isTemplate());
+        assertEquals(9000L, client.findVmOrTemplateById(9000).getVmid());
+        assertFalse(client.findVmOrTemplateByName("i-2-10-VM").isTemplate());
+        assertNull(client.findVmOrTemplateByName("ct"));
+        assertNull(client.findVmOrTemplateById(9300));
+        // the ordinary calls still leave templates out
+        assertNull(client.findVmByName("cs-tmpl-1"));
+        assertNull(client.findVm(9000));
+    }
+
+    @Test
+    public void aFullCloneNamesTheTargetNodeTheStorageAndTheFormat() {
+        answer("POST /api2/json/nodes/pve1/qemu/9000/clone", task(UPID));
+
+        String upid = client.cloneVm("pve1", 9000, 9205, "i-2-10-VM", true, "pve2", "cs-7fd5565c");
+
+        assertEquals(UPID, upid);
+        String body = bodies.get(0);
+        assertTrue(body, body.contains("newid=9205"));
+        assertTrue(body, body.contains("name=i-2-10-VM"));
+        assertTrue(body, body.contains("full=1"));
+        assertTrue(body, body.contains("target=pve2"));
+        assertTrue(body, body.contains("storage=cs-7fd5565c"));
+        assertTrue(body, body.contains("format=qcow2"));
+    }
+
+    @Test
+    public void aLinkedCloneTakesNeitherStorageNorFormat() {
+        answer("POST /api2/json/nodes/pve1/qemu/9000/clone", task(UPID));
+
+        client.cloneVm("pve1", 9000, 9205, "i-2-10-VM", false, null, "cs-7fd5565c");
 
         String body = bodies.get(0);
-        assertTrue(body, body.contains("storage=cst-2"));
-        assertTrue(body, body.contains("type=dir"));
-        assertTrue(body, body.contains("path=%2Fmnt%2Fcss-1"));
-        assertTrue(body, body.contains("content=images"));
-        assertTrue(body, body.contains("content-dirs=images%3Dtemplate%2Ftmpl%2F1"));
-        // nothing is mounted by it, and it is offline where the NFS entry is not mounted
-        assertTrue(body, body.contains("is_mountpoint=yes"));
-        assertTrue(body, body.contains("shared=1"));
-        // the share is read-only, so Proxmox must not try to create folders in it
-        assertTrue(body, body.contains("create-subdirs=0"));
-        assertTrue(body, body.contains("create-base-path=0"));
+        assertTrue(body, body.contains("full=0"));
+        assertFalse(body, body.contains("storage="));
+        assertFalse(body, body.contains("format="));
+        assertFalse(body, body.contains("target="));
+    }
+
+    @Test
+    public void aVmIsMadeATemplateByTheTemplateCall() {
+        answer("POST /api2/json/nodes/pve1/qemu/9000/template", task(UPID));
+
+        assertEquals(UPID, client.convertToTemplate("pve1", 9000));
+    }
+
+    @Test
+    public void theTemplateFlagOfAConfigurationIsRead() {
+        java.util.Map<String, String> config = new java.util.HashMap<>();
+        assertFalse(ProxmoxApiClient.isTemplate(config));
+        config.put("template", "1");
+        assertTrue(ProxmoxApiClient.isTemplate(config));
+        config.put("template", "0");
+        assertFalse(ProxmoxApiClient.isTemplate(config));
+        assertFalse(ProxmoxApiClient.isTemplate(null));
     }
 
     @Test

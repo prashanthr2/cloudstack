@@ -1,6 +1,6 @@
 # Phase 12 design: linked clones for root volumes (parked)
 
-Status: **design only, parked 2026-11-05.** Nothing is built and the lab spike (section 8) has not been run. It builds on step 2 of design-phase11-secondary-mounts.md (templates converted from the secondary mount into the VM's disk, a "full clone"), which is built first and stays the default mechanism.
+Status: **design only, parked 2026-11-05.** Nothing is built and the lab spike (section 8) has not been run. It builds on step 2 of design-phase11-secondary-mounts.md, which since 2026-11-05 (option C) already makes the **template VM** at the copy to primary and creates root volumes as **full clones** of it (`clone full=1`); this phase adds the choice of `full=0`, the setting and the short path.
 
 Requested on 2026-11-05: Proxmox root volumes can be **linked clones** of the template, controlled by a **setting at cluster and zone level**, and honouring the other places where KVM decides it (the offering and so on).
 
@@ -29,8 +29,8 @@ So the closest precedent for "cluster and zone" is the VMware and XenServer sett
 2. **The provisioning type of the offering decides first**, as on KVM: `THIN` follows the setting; `SPARSE` and `FAT` are always a full copy, converted with `-o preallocation=metadata` or `full` (the same mapping as KVM's `PreallocationType`; the full-copy path of step 2 should do this too, today it does not pass `preallocation`).
 3. **A volume bigger than the template**: a linked clone is made and the overlay is grown (`resize`; to confirm in the spike). VMware forces a full clone here; KVM does not.
 4. **A template that is not qcow2 or raw**, or an ISO: full copy or not supported, as now.
-5. **The template on the pool is made at the first linked deploy, not at "template to primary".** `copyTemplateToPrimary` stays what step 2 makes it (check the image, answer a path that carries the store and the file). At a linked deploy the plugin makes sure the pool has a **template VM** for the template: named `cs-tmpl-<template uuid>-<pool id>`, found by name, created by converting the secondary file into the base disk of a new VM (a VM id from `nextid`; no network, no start) and `template`; then `clone full=0 target=<this node>`. Concurrent first deploys: a lock per template and pool in the resource, and the name check afterwards (the lowest VM id wins, the other is destroyed), as another management server may race. A deploy from the same path while the setting is `true` ignores the template VM.
-6. **Template deletion (`DeleteCommand` for a template on primary)** destroys the template VM when no clone uses it; Proxmox refuses otherwise and the plugin answers the failure with Proxmox's text (core's garbage collector retries). Nothing to delete in full mode.
+5. **The template VM is made by step 2 of design-phase11, at the copy to primary** (named `cs-tmpl-<uuid of pool and path>`, made again at a deploy if it is lost, deleted by the `DestroyCommand` of core's template eviction). This phase only changes the clone call from `full=1` to `full=0` when the decision (items 1 to 4) says so.
+6. **Template deletion** is already done by step 2 (`DestroyCommand`): the template VM is destroyed when no clone uses it, and Proxmox's refusal ("base volume ... is still in use by linked clones") is answered as a failure with its text, so core keeps the row and retries; core itself counts a template as in use while a volume uses it.
 7. **The volume path stays the short form** `<vmid>/vm-<vmid>-disk-0.qcow2` for linked clones too: `ProxmoxVmConfig.diskPath` removes the base part when it reads the path from the VM configuration. Nothing else in CloudStack sees the difference.
 8. **Other places, by design:**
    - *Volume snapshots:* a snapshot of an overlay is an internal qcow2 snapshot as now; `qemu-img convert` reads through the backing file, so a backup is complete; "create volume" makes a standalone volume. **A revert replaces the overlay with the standalone copy**, which ends the volume's dependence on the base (the short path is unchanged).
@@ -72,7 +72,7 @@ No new API or UI: a global setting with scope StoragePool appears in **Global Se
 ## 7. Build plan (after step 2 and its lab checks)
 
 1. The setting and the decision function (setting, provisioning type, format, size) with unit tests, and the preallocation mapping in the full-copy path.
-2. `ProxmoxTemplates`: ensure the template VM (lock, name, convert, `template`, duplicate check), the clone call (`full=0`, `target`), `DeleteCommand` for a template, and the short path in `diskPath`; unit tests with the scripted SSH link and the mock client.
+2. The decision function in `createRootVolume` (`full=0` or `full=1`) and the short path in `diskPath`; the template VM, the clone call and `DestroyCommand` exist from step 2 of design-phase11; unit tests.
 3. Lab checks (section 8) and a doc update (`behaviour.md`, `test-log.md`, `upstream-notes.md` for the new setting).
 
 ## 8. Lab spike, to run when this is unparked (nothing here has been run)

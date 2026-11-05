@@ -38,8 +38,8 @@ public final class ProxmoxStorageNames {
      */
     public static final String SECONDARY_STORAGE_ID_PREFIX = "css-";
     /**
-     * A directory entry on the mount of a secondary store that exposes the templates of one account folder, so a VM disk can be imported
-     * from a template file. It mounts nothing, so there can be many without more mounts. Same letter-first rule as above.
+     * The directory entries that an earlier version made for the templates of one account folder (a template that was copied then still has a path
+     * that names one). No new ones are made: a template is a Proxmox template VM now (ProxmoxTemplates). Only used to recognise the old paths.
      */
     public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
 
@@ -79,14 +79,6 @@ public final class ProxmoxStorageNames {
     /** Where the nodes mount that entry. */
     public static String secondaryMountPath(String secondaryStorageId) {
         return MOUNT_PATH_PREFIX + secondaryStorageId;
-    }
-
-    /**
-     * The entry for the template folder {@code folder} of the NFS export {@code server:export}. Derived from the three values, so every
-     * command for the same template finds the same entry, on any management server and after a restart.
-     */
-    public static String templateStorageId(String server, String export, String folder) {
-        return TEMPLATE_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
     }
 
     /** The entry for the ISO folder {@code folder} of the NFS export {@code server:export}, derived like the template entry. */

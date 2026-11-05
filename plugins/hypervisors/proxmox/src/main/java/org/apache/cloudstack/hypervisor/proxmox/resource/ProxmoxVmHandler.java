@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.LongConsumer;
+import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -38,6 +39,7 @@ import java.util.stream.Collectors;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
 import org.apache.cloudstack.storage.command.AttachAnswer;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CopyCmdAnswer;
@@ -133,6 +135,7 @@ class ProxmoxVmHandler {
      */
     private final Map<String, Long> migrationMarks = new ConcurrentHashMap<>();
     private volatile ProxmoxSystemVms systemVms;
+    private volatile ProxmoxTemplates templates;
     private volatile Supplier<String> controlBridge = () -> "cloud0";
 
     ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
@@ -160,6 +163,11 @@ class ProxmoxVmHandler {
     /** What happens after a system VM has started (the guest agent, the boot arguments, waiting for the VM). Without it system VMs are started but not set up. */
     void setSystemVms(ProxmoxSystemVms systemVms) {
         this.systemVms = systemVms;
+    }
+
+    /** The template VMs that cache the templates on the pools (design-phase11, step 2). Without it a template cannot be copied to a pool. */
+    void setTemplates(ProxmoxTemplates templates) {
+        this.templates = templates;
     }
 
     /** The name of the node's host-only bridge for the control NIC of system VMs (the setting {@code proxmox.control.bridge}). */
@@ -218,7 +226,7 @@ class ProxmoxVmHandler {
         try {
             if (src instanceof TemplateObjectTO && src.getDataStore() instanceof NfsTO && dest instanceof TemplateObjectTO
                     && dest.getDataStore() instanceof PrimaryDataStoreTO) {
-                return copyTemplateToPrimary((TemplateObjectTO) src);
+                return copyTemplateToPrimary((TemplateObjectTO) src, (TemplateObjectTO) dest);
             }
             if (src instanceof TemplateObjectTO && src.getDataStore() instanceof PrimaryDataStoreTO && dest instanceof VolumeObjectTO) {
                 return createRootVolume((TemplateObjectTO) src, (VolumeObjectTO) dest);
@@ -229,7 +237,7 @@ class ProxmoxVmHandler {
             }
             return new CopyCmdAnswer("Copying " + (src == null ? null : src.getObjectType()) + " to " + (dest == null ? null : dest.getObjectType())
                     + " is not supported for Proxmox");
-        } catch (ProxmoxApiException e) {
+        } catch (ProxmoxApiException | ProxmoxSshException | IllegalArgumentException e) {
             LOGGER.error("Proxmox node {} could not complete {}: {}", node, cmd.getClass().getSimpleName(), e.getMessage());
             return new CopyCmdAnswer(e.getMessage());
         }
@@ -275,40 +283,15 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * Nothing is copied. The secondary store is added to the Proxmox cluster as one read-only NFS entry, which is the only mount, and the
-     * account's template folder ("template/tmpl/&lt;account&gt;") as a directory entry on that mount, shared by the templates of the account.
-     * The answer names the template file in it ("&lt;entry&gt;:&lt;template id&gt;/&lt;file&gt;"); the root volume is created from that file
-     * (createRootVolume).
+     * The template is made on the pool as a Proxmox template VM (ProxmoxTemplates); the answer is the path that core keeps for it and hands back when a
+     * root volume is created (createRootVolume).
      */
-    private Answer copyTemplateToPrimary(TemplateObjectTO template) {
-        NfsTO secondary = (NfsTO) template.getDataStore();
-        URI url = URI.create(StringUtils.removeEnd(secondary.getUrl(), "/"));
-        String server = url.getHost();
-        String export = url.getPath();
-        // template/tmpl/<account>/<template id>/<file>
-        String[] parts = StringUtils.removeStart(StringUtils.defaultString(template.getPath()), "/").split("/");
-        int count = parts.length;
-        if (StringUtils.isBlank(server) || StringUtils.isBlank(export) || count < 3 || !StringUtils.isNumeric(parts[count - 2])
-                || parts[count - 1].isEmpty() || template.getPath().contains("..")) {
-            return new CopyCmdAnswer(String.format("Cannot find the template file from the secondary store %s and the path %s: "
-                    + "expected <folder>/<template id>/<file>", secondary.getUrl(), template.getPath()));
+    private Answer copyTemplateToPrimary(TemplateObjectTO template, TemplateObjectTO destination) {
+        ProxmoxTemplates made = templates;
+        if (made == null) {
+            return new CopyCmdAnswer("Proxmox node " + node + " cannot make templates on a pool: no SSH login was given for it");
         }
-        String folder = String.join("/", Arrays.copyOfRange(parts, 0, count - 2));
-
-        ProxmoxApiClient client = clients.get();
-        String mountPath = ensureSecondaryMount(client, secondary, server, export);
-        String id = ProxmoxStorageNames.templateStorageId(server, export, folder);
-        ensureStorage(client, id, () -> client.createTemplateDirStorage(id, mountPath, folder));
-        // The folders of a template have a short number as their name, which Proxmox does not list, so the file itself cannot be looked
-        // up; what can be checked is that the entry is usable on this node. A file that is not there fails the creation of the VM later.
-        if (!waitForStorage(client, id)) {
-            return new CopyCmdAnswer(String.format("Proxmox storage %s for the templates in %s is not active on node %s", id, folder, node));
-        }
-        TemplateObjectTO onPrimary = new TemplateObjectTO();
-        onPrimary.setPath(id + ":" + parts[count - 2] + "/" + parts[count - 1]);
-        onPrimary.setSize(template.getSize() != null && template.getSize() > 0 ? template.getSize() : template.getPhysicalSize());
-        onPrimary.setFormat(Storage.ImageFormat.QCOW2);
-        return new CopyCmdAnswer(onPrimary);
+        return made.copyToPrimary(template, destination);
     }
 
     /**
@@ -357,14 +340,31 @@ class ProxmoxVmHandler {
     }
 
     /**
-     * The root volume of a VM is created as the VM itself, with the template file imported as its disk. The volume path is the disk's
-     * place in the primary storage ("&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-0.qcow2"), which carries the VM id the later commands need.
+     * The root volume of a VM is created as the VM itself: a clone of the template VM that caches the template on the pool (ProxmoxTemplates), made
+     * again from the secondary store named in the path when the template VM is gone. A deploy needs no SSH login and no secondary store when the template
+     * VM is there. The volume path is the disk's place in the primary storage ("&lt;vmid&gt;/vm-&lt;vmid&gt;-disk-0.qcow2"), which carries the VM id
+     * the later commands need. A template that was copied before template VMs (a legacy path) is imported from its storage entry while that exists.
      */
     private Answer createRootVolume(TemplateObjectTO template, VolumeObjectTO volume) {
-        String templateVolume = template.getPath();
+        String templatePath = template.getPath();
+        if (ProxmoxTemplates.isTemplatePath(templatePath)) {
+            ProxmoxTemplates made = templates;
+            if (made == null) {
+                return new CopyCmdAnswer("Proxmox node " + node + " cannot make templates on a pool: no SSH login was given for it");
+            }
+            String poolUuid = ((PrimaryDataStoreTO) volume.getDataStore()).getUuid();
+            ProxmoxApiClient client = clients.get();
+            ProxmoxApiClient.VmLocation templateVm = made.ensureTemplateVm(poolUuid, templatePath);
+            String poolStorage = ProxmoxStorageNames.storageId(poolUuid);
+            String name = StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid());
+            return new CopyCmdAnswer(createVmWithRootDisk(client, volume, name,
+                    vmid -> client.cloneVm(templateVm.getNode(), templateVm.getVmid(), vmid, name, true, node, poolStorage)));
+        }
+        String templateVolume = templatePath;
         String templateEntry = StringUtils.substringBefore(StringUtils.defaultString(templateVolume), ":");
         if (!ProxmoxStorageNames.isTemplateStorageId(templateEntry) || !templateVolume.contains(":")) {
-            return new CopyCmdAnswer("The template path " + templateVolume + " is not a template volume of a Proxmox storage entry");
+            return new CopyCmdAnswer("The template path " + templateVolume + " is not one this plugin made (a Proxmox template VM, or a template volume of a "
+                    + "storage entry from an earlier version)");
         }
         ProxmoxApiClient client = clients.get();
         if (client.findStorage(templateEntry) == null) {
@@ -435,10 +435,18 @@ class ProxmoxVmHandler {
      */
     private VolumeObjectTO createVmWithRootDisk(ProxmoxApiClient client, VolumeObjectTO volume, String diskOption) {
         Map<String, String> params = new LinkedHashMap<>();
-        params.put("name", StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid()));
+        String name = StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid());
+        params.put("name", name);
         params.put("memory", CREATE_MEMORY_MIB);
         params.put(ProxmoxVmConfig.ROOT_DISK, diskOption);
+        return createVmWithRootDisk(client, volume, name, vmid -> client.createVm(node, vmid, params));
+    }
 
+    /**
+     * As above, with the VM made by {@code creator}, which starts the creation of the VM with the given id (a create, or a clone of a template VM)
+     * and returns the task id. An id that another caller was given a moment ago is tried again with a new one.
+     */
+    private VolumeObjectTO createVmWithRootDisk(ProxmoxApiClient client, VolumeObjectTO volume, String name, LongFunction<String> creator) {
         long vmid = 0;
         for (int attempt = 1; attempt <= CREATE_ATTEMPTS; attempt++) {
             vmid = client.nextVmId();
@@ -446,7 +454,7 @@ class ProxmoxVmHandler {
                 throw new ProxmoxApiException("Proxmox offered the VM id " + vmid + ", which is in the range 900000001 to 999999999 that CloudStack keeps for the owners of data volumes");
             }
             try {
-                waitFor(client, client.createVm(node, vmid, params));
+                waitFor(client, creator.apply(vmid));
                 break;
             } catch (ProxmoxApiException e) {
                 // the id is not reserved: another caller may have been given it a moment ago
@@ -465,6 +473,12 @@ class ProxmoxVmHandler {
             throw new ProxmoxApiException("Proxmox created VM " + vmid + " without a root disk");
         }
         long size = ProxmoxVmConfig.diskSizeBytes(disk);
+        // the size in the configuration is the one asked for when the disk was made (a clone of a template VM has that of the template VM's blank disk,
+        // rounded up to whole GiB): the size of the image is what the guest gets, and what the volume must be grown from
+        ProxmoxApiClient.ImageInfo image = client.getImageInfo(node, StringUtils.substringBefore(disk, ","));
+        if (image != null && image.getSize() > 0) {
+            size = image.getSize();
+        }
         if (volume.getSize() != null && volume.getSize() > size) {
             try {
                 waitFor(client, client.resizeDisk(node, vmid, ProxmoxVmConfig.ROOT_DISK, Long.toString(volume.getSize())));
@@ -478,7 +492,7 @@ class ProxmoxVmHandler {
         created.setPath(ProxmoxVmConfig.diskPath(disk));
         created.setSize(size);
         created.setFormat(Storage.ImageFormat.QCOW2);
-        LOGGER.info("Created Proxmox VM {} ({}) with root disk {} on node {}", vmid, params.get("name"), created.getPath(), node);
+        LOGGER.info("Created Proxmox VM {} ({}) with root disk {} on node {}", vmid, name, created.getPath(), node);
         return created;
     }
 

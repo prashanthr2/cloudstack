@@ -44,16 +44,6 @@ public class ProxmoxStorageNamesTest {
     }
 
     @Test
-    public void aTemplateEntryIsNamedFromItsFolderAndFoundAgainByEveryCommand() {
-        String id = ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4");
-
-        assertEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/4"));
-        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/1/3"));
-        assertNotEquals(id, ProxmoxStorageNames.templateStorageId("10.0.32.5", "/acs/secondary", "template/tmpl/1/4"));
-        assertTrue(id, id.startsWith("cst-"));
-    }
-
-    @Test
     public void onlyTemplateEntriesAreRecognisedAsSuch() {
         assertTrue(ProxmoxStorageNames.isTemplateStorageId("cst-3f2a8c1e-0000-3000-8000-000000000000"));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.storageId("3f2a8c1e-0000-3000-8000-000000000000")));
@@ -85,7 +75,7 @@ public class ProxmoxStorageNamesTest {
         assertEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211"));
         assertNotEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/212"));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(first));
-        assertFalse(ProxmoxStorageNames.isIsoStorageId(ProxmoxStorageNames.templateStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211")));
+        assertFalse(ProxmoxStorageNames.isIsoStorageId("cst-3f2a8c1e-0000-3000-8000-000000000000"));
         assertFalse(ProxmoxStorageNames.isIsoStorageId(null));
     }
 

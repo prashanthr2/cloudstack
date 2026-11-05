@@ -618,30 +618,6 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Adds a directory entry on a path that another entry has already mounted (the NFS entry of the secondary store), exposing one folder of
-     * it as "images" content, so that a VM can be created from the template files in its numbered sub-folders
-     * ({@code import-from=<id>:<folder number>/<file>}). Nothing is mounted by this entry, so any number of them share the one mount; the
-     * entry is offline on a node where the path is not mounted ({@code is_mountpoint}).
-     *
-     * @param mountPath the path the NFS entry is mounted at
-     * @param folder the folder inside it, e.g. "template/tmpl/1" for the templates of account 1
-     */
-    public void createTemplateDirStorage(String id, String mountPath, String folder) {
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("storage", id);
-        form.put("type", "dir");
-        form.put("path", mountPath);
-        form.put("content", "images");
-        form.put("content-dirs", "images=" + folder);
-        form.put("is_mountpoint", "yes");
-        form.put("shared", "1");
-        // the share is read-only: Proxmox must not try to create the folders of its content types (or the base path) in it
-        form.put("create-subdirs", "0");
-        form.put("create-base-path", "0");
-        post("/storage", form);
-    }
-
-    /**
      * Adds the NFS entry of a secondary store: the only entry that mounts it. The store is read-only, so Proxmox is told not to create the
      * folders of the content type in it ({@code create-subdirs 0}); without that, adding the entry fails with "mkdir ... Read-only file system".
      */
@@ -870,12 +846,23 @@ public class ProxmoxApiClient implements Closeable {
         private final String name;
         private final String node;
         private final String status;
+        private final boolean template;
 
         public VmLocation(long vmid, String name, String node, String status) {
+            this(vmid, name, node, status, false);
+        }
+
+        public VmLocation(long vmid, String name, String node, String status, boolean template) {
             this.vmid = vmid;
             this.name = name;
             this.node = node;
             this.status = status;
+            this.template = template;
+        }
+
+        /** True for a Proxmox template VM (the cache of a CloudStack template on a pool). */
+        public boolean isTemplate() {
+            return template;
         }
 
         public long getVmid() {
@@ -901,18 +888,46 @@ public class ProxmoxApiClient implements Closeable {
 
     /** All QEMU VMs of the cluster (templates left out), wherever they are. */
     public List<VmLocation> listClusterVms() {
+        return listClusterVms(false);
+    }
+
+    private List<VmLocation> listClusterVms(boolean includeTemplates) {
         List<VmLocation> vms = new ArrayList<>();
         JsonNode data = get("/cluster/resources?type=vm");
         if (data != null && data.isArray()) {
             for (JsonNode entry : data) {
-                if (!"qemu".equals(entry.path("type").asText()) || entry.path("template").asInt(0) == 1) {
+                boolean template = entry.path("template").asInt(0) == 1;
+                if (!"qemu".equals(entry.path("type").asText()) || (template && !includeTemplates)) {
                     continue;
                 }
                 vms.add(new VmLocation(entry.path("vmid").asLong(), entry.path("name").asText(null), entry.path("node").asText(null),
-                        entry.path("status").asText("unknown")));
+                        entry.path("status").asText("unknown"), template));
             }
         }
         return vms;
+    }
+
+    /**
+     * The VM or template VM with the given name, or null. The CloudStack instances and the template VMs that cache CloudStack templates are told
+     * apart by name ({@code cs-tmpl-...}); an instance is never found through this, so it is only used for the names of the template VMs.
+     */
+    public VmLocation findVmOrTemplateByName(String name) {
+        for (VmLocation vm : listClusterVms(true)) {
+            if (name.equals(vm.getName())) {
+                return vm;
+            }
+        }
+        return null;
+    }
+
+    /** The VM or template VM with the given id, or null. */
+    public VmLocation findVmOrTemplateById(long vmid) {
+        for (VmLocation vm : listClusterVms(true)) {
+            if (vm.getVmid() == vmid) {
+                return vm;
+            }
+        }
+        return null;
     }
 
     /** The VM with the given id, or null. */
@@ -941,6 +956,36 @@ public class ProxmoxApiClient implements Closeable {
         form.put("vmid", Long.toString(vmid));
         form.putAll(params);
         return taskId(post("/nodes/" + node + "/qemu", form));
+    }
+
+    /**
+     * Clones a VM (usually a template VM) into a new VM {@code newVmid}; returns the task id. A full clone is a standalone copy and may name the
+     * {@code storage} and the disk {@code format}; a linked clone (full false) takes neither and is on the storage of the template.
+     * {@code targetNode} is where the new VM is created (shared storage only), or null for the node of the source.
+     */
+    public String cloneVm(String node, long vmid, long newVmid, String name, boolean full, String targetNode, String storage) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("newid", Long.toString(newVmid));
+        form.put("name", name);
+        form.put("full", full ? "1" : "0");
+        if (targetNode != null) {
+            form.put("target", targetNode);
+        }
+        if (full && storage != null) {
+            form.put("storage", storage);
+            form.put("format", "qcow2");
+        }
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/clone", form));
+    }
+
+    /** Makes a stopped VM a template VM (its disks become base images); returns the task id. */
+    public String convertToTemplate(String node, long vmid) {
+        return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/template", new LinkedHashMap<>()));
+    }
+
+    /** True when the configuration is that of a template VM. */
+    public static boolean isTemplate(Map<String, String> config) {
+        return config != null && "1".equals(config.get("template"));
     }
 
     /** The configuration of a VM as Proxmox reports it: option name to value (for example "scsi0" to the disk option). */

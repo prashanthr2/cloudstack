@@ -85,6 +85,7 @@ import com.cloud.agent.api.StopCommand;
 import com.cloud.agent.api.StoragePoolInfo;
 import com.cloud.agent.api.UnPlugNicCommand;
 import com.cloud.agent.api.UpdateHostPasswordCommand;
+import com.cloud.agent.api.storage.DestroyCommand;
 import com.cloud.agent.api.storage.MigrateVolumeCommand;
 import com.cloud.agent.api.storage.ResizeVolumeCommand;
 import com.cloud.agent.api.check.CheckSshAnswer;
@@ -147,6 +148,7 @@ public class ProxmoxResource implements ServerResource {
     private ProxmoxVmHandler vmHandler;
     private ProxmoxVmSnapshots vmSnapshots;
     private ProxmoxVolumeSnapshots volumeSnapshots;
+    private ProxmoxTemplates templates;
     private ProxmoxRouterDeployer routerDeployer;
     private VirtualRoutingResource routingResource;
     private ProxmoxSystemVms systemVms;
@@ -195,7 +197,10 @@ public class ProxmoxResource implements ServerResource {
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
                 ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
         vmSnapshots = new ProxmoxVmSnapshots(() -> client, ProxmoxConfig.TaskTimeout::value);
-        volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, new ProxmoxSecondaryMounts(ProxmoxConfig.SecondaryMountOptions::value), ProxmoxConfig.TaskTimeout::value);
+        ProxmoxSecondaryMounts secondaryMounts = new ProxmoxSecondaryMounts(ProxmoxConfig.SecondaryMountOptions::value);
+        volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, secondaryMounts, ProxmoxConfig.TaskTimeout::value);
+        templates = new ProxmoxTemplates(() -> client, node, this::openLogin, secondaryMounts, ProxmoxConfig.TaskTimeout::value, this::pause);
+        vmHandler.setTemplates(templates);
         routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);
@@ -329,6 +334,9 @@ public class ProxmoxResource implements ServerResource {
                     return volumeSnapshots.take((CreateObjectCommand) cmd);
                 }
                 return vmHandler.createObject((CreateObjectCommand) cmd);
+            } else if (cmd instanceof DestroyCommand) {
+                // core's eviction of an unused template from a pool: the template VM that caches it
+                return templates.destroy((DestroyCommand) cmd);
             } else if (cmd instanceof RevertSnapshotCommand) {
                 return volumeSnapshots.revert((RevertSnapshotCommand) cmd);
             } else if (cmd instanceof AttachCommand) {

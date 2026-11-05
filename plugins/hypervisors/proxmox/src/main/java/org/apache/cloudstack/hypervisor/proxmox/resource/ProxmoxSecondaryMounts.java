@@ -34,6 +34,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.cloud.agent.api.to.NfsTO;
+import com.cloud.storage.DataStoreRole;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -193,7 +194,7 @@ class ProxmoxSecondaryMounts {
     // ---- the pieces ----
 
     /** The server and the export of the store, after the address has been checked. */
-    private static String[] address(NfsTO store) {
+    static String[] address(NfsTO store) {
         URI url;
         try {
             url = URI.create(StringUtils.removeEnd(StringUtils.defaultString(store.getUrl()), "/"));
@@ -207,6 +208,25 @@ class ProxmoxSecondaryMounts {
             throw new IllegalArgumentException("The secondary store address " + store.getUrl() + " is not an NFS server and export this plugin can mount");
         }
         return new String[] {server, export};
+    }
+
+    /** The NFS version of a store, or "" when it has none; a value that is not a version number is refused. */
+    static String checkVersion(String version) {
+        if (StringUtils.isBlank(version)) {
+            return "";
+        }
+        if (!NFS_VERSION.matcher(version).matches()) {
+            throw new IllegalArgumentException("The NFS version " + version + " of the secondary store is not a version number");
+        }
+        return version;
+    }
+
+    /** A store from the parts that a template path carries, each checked as the address of a store is. */
+    static NfsTO storeOf(String version, String server, String export) {
+        NfsTO store = new NfsTO("nfs://" + server + export, DataStoreRole.Image);
+        address(store);
+        store.setNfsVersion(checkVersion(version).isEmpty() ? null : version);
+        return store;
     }
 
     /** {@code ro} or {@code rw}, the store's NFS version when it has one, and the options of the setting. */
