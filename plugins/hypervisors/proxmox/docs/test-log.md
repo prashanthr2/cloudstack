@@ -806,3 +806,16 @@ Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one
 | VS10 | Running instance: "The Instance the specified disk is attached to is not in the shutdown state"; stopped with an instance snapshot: "Unable to revert Snapshot for Instance, please remove Instance Snapshots before reverting Instance from Snapshot" (both core's text) |
 | VS11 | After `passwd` on the nodes, snapshots failed until `updateHostPassword` was called with the cluster id **and `update_passwd_on_host=true`**: each node logged "The SSH login csadmin works on Proxmox node ..." and the next snapshot was Backed Up without a restart. Without that parameter core only writes the database and the running plugin keeps the old password (open-issues.md). The recurring-policy half was not run |
 | VS12 | Root volume of a running instance: Backed Up; `qm listsnapshot 103` has no `cs-` entry afterwards; the volume made from it holds only the first file |
+
+## Secondary mounts without storage entries (design-phase11-secondary-mounts.md; lab checks M1 to M6, 2026-11-05, not run yet)
+
+Scratch VMs 9001 (ISO) and 9002 (template disk) are made by hand with `qm` and removed afterwards; CloudStack is not involved.
+
+| # | Check | Expected |
+|---|---|---|
+| M1 | Plain mount of the secondary export with `ro,soft,timeo=30,retrans=2,nosharecache` as the SSH user with sudo | `findmnt` shows `ro` and `soft`; an ISO and a template file are readable |
+| M2 | Scratch VM with `ide2=<path on the mount>,media=cdrom`: start, eject, attach again while running | All succeed; QEMU has the file open (`info block`) |
+| M3 | With that ISO: online migration to a node without the mount, then with it; instance snapshot without and with memory | Records what Proxmox does (a refusal without the mount is expected) |
+| M4 | A separate NFS server (pve1) holds a copy of the ISO, mounted `soft` on pve3 and attached; block the server | `ls`, `pvesm status`, `qm status` and the VM stay responsive; the mount gives an error within about 30 s |
+| M5 | `qemu-img convert` a template from the mount into `images/9002/vm-9002-disk-0.qcow2`, create the VM with that disk, start it | Starts; time compared with `import-from` (7.6 s for 8 GiB) |
+| M6 | `qemu-img info` of an image with a backing file and of one with a data file | Both show up in the JSON, so the plugin can refuse them |
