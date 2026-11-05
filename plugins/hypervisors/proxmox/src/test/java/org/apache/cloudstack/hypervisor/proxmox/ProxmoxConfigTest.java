@@ -52,7 +52,7 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(9, config.getConfigKeys().length);
+        assertEquals(10, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
@@ -68,6 +68,10 @@ public class ProxmoxConfigTest {
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.SystemVmSshKey));
         assertEquals("", ProxmoxConfig.SystemVmSshKey.value());
         assertTrue(ProxmoxConfig.SystemVmSshKey.isDynamic());
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.SecondaryMountOptions));
+        assertEquals("proxmox.secondary.mount.options", ProxmoxConfig.SecondaryMountOptions.key());
+        assertEquals("soft,timeo=30,retrans=2,nosharecache", ProxmoxConfig.SecondaryMountOptions.value());
+        assertTrue(ProxmoxConfig.SecondaryMountOptions.isDynamic());
         assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
         assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());

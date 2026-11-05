@@ -17,8 +17,6 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.io.IOException;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -58,8 +56,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 /**
  * Volume snapshots (design-phase10-volume-snapshots.md): CloudStack's snapshot of one volume, copied to the secondary store. Proxmox has no API for
  * it, so the work is {@code qemu-img} on the node, over the SSH login of the host. A snapshot is an internal qcow2 snapshot of the volume's file that
- * lives only until it is backed up (as for KVM); the backup is a converted copy of it on secondary storage, which the plugin mounts read-write for
- * the purpose.
+ * lives only until it is backed up (as for KVM); the backup is a converted copy of it on secondary storage, which the plugin mounts for the one
+ * operation (read-write to write the copy, read-only to read it; {@link ProxmoxSecondaryMounts}).
  * <p>
  * A volume that a running instance uses cannot be snapshotted with {@code qemu-img}, as QEMU has the file open, so Proxmox takes the snapshot of the VM
  * ("cs-&lt;uuid&gt;", without memory) and {@code qemu-img} only reads that snapshot, which is never written again. The VM snapshot is deleted after the
@@ -74,27 +72,24 @@ class ProxmoxVolumeSnapshots {
     /** The name of the Proxmox VM snapshot that stands for a volume snapshot of a running instance. */
     static final String VM_SNAPSHOT_PREFIX = "cs-";
     private static final String VM_SNAPSHOT_DESCRIPTION = "CloudStack volume snapshot";
-    private static final String SECONDARY_MOUNT_PREFIX = "/mnt/css-rw-";
 
     private static final Pattern POOL_UUID = Pattern.compile("^[A-Za-z0-9-]{1,64}$");
     /** "&lt;vmid or holder&gt;/vm-&lt;vmid or holder&gt;-&lt;uuid or disk-n&gt;.qcow2" */
     private static final Pattern VOLUME_PATH = Pattern.compile("^[0-9]+/vm-[0-9]+-[A-Za-z0-9-]+\\.qcow2$");
     private static final Pattern SNAPSHOT_NAME = Pattern.compile("^[A-Za-z0-9-]{1,40}$");
-    private static final Pattern RELATIVE_PATH = Pattern.compile("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$");
-    private static final Pattern NFS_SERVER = Pattern.compile("^[A-Za-z0-9._-]+$");
-    private static final Pattern NFS_EXPORT = Pattern.compile("^(/[A-Za-z0-9._-]+)+$");
-    private static final Pattern NFS_VERSION = Pattern.compile("^[0-9](\\.[0-9])?$");
 
     /** One operation at a time per volume file. */
     private static final Map<String, ReentrantLock> LOCKS = new ConcurrentHashMap<>();
 
     private final Supplier<ProxmoxApiClient> clients;
     private final Supplier<ProxmoxSsh> logins;
+    private final ProxmoxSecondaryMounts secondary;
     private final IntSupplier taskTimeoutSeconds;
 
-    ProxmoxVolumeSnapshots(Supplier<ProxmoxApiClient> clients, Supplier<ProxmoxSsh> logins, IntSupplier taskTimeoutSeconds) {
+    ProxmoxVolumeSnapshots(Supplier<ProxmoxApiClient> clients, Supplier<ProxmoxSsh> logins, ProxmoxSecondaryMounts secondary, IntSupplier taskTimeoutSeconds) {
         this.clients = clients;
         this.logins = logins;
+        this.secondary = secondary;
         this.taskTimeoutSeconds = taskTimeoutSeconds;
     }
 
@@ -184,27 +179,29 @@ class ProxmoxVolumeSnapshots {
             final String snapshotName = name;
             return withLock(volume.getPath(), () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    String mount = mountSecondary(ssh, (NfsTO) target.getDataStore());
-                    String copy = mount + "/" + folder + "/" + copyName;
-                    requireFile(ssh, file);
-                    runOrFail(ssh, "create the snapshot folder", "mkdir -p " + ProxmoxSsh.quote(mount + "/" + folder));
-                    try {
-                        // -U: a running instance has the file open; what is read is a snapshot, which is never written
-                        ExecResult converted = ssh.sudo("qemu-img convert -O qcow2" + (isOfVm(snapshotName) ? " -U" : "") + " -l snapshot.name="
-                                + ProxmoxSsh.quote(snapshotName) + " " + ProxmoxSsh.quote(file) + " " + ProxmoxSsh.quote(copy), null, timeoutMillis(cmd.getWait()));
-                        if (!converted.isSuccess()) {
-                            throw new ProxmoxSshException("qemu-img could not copy the snapshot " + snapshotName + ": " + converted.describeFailure());
+                    // read-write: the copy is written into the snapshot folder of the store
+                    return secondary.withMount(ssh, (NfsTO) target.getDataStore(), false, mount -> {
+                        String copy = mount + "/" + folder + "/" + copyName;
+                        requireFile(ssh, file);
+                        runOrFail(ssh, "create the snapshot folder", "mkdir -p " + ProxmoxSsh.quote(mount + "/" + folder));
+                        try {
+                            // -U: a running instance has the file open; what is read is a snapshot, which is never written
+                            ExecResult converted = ssh.sudo("qemu-img convert -O qcow2" + (isOfVm(snapshotName) ? " -U" : "") + " -l snapshot.name="
+                                    + ProxmoxSsh.quote(snapshotName) + " " + ProxmoxSsh.quote(file) + " " + ProxmoxSsh.quote(copy), null, timeoutMillis(cmd.getWait()));
+                            if (!converted.isSuccess()) {
+                                throw new ProxmoxSshException("qemu-img could not copy the snapshot " + snapshotName + ": " + converted.describeFailure());
+                            }
+                        } catch (RuntimeException e) {
+                            ssh.sudo("rm -f " + ProxmoxSsh.quote(copy), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+                            throw e;
                         }
-                    } catch (RuntimeException e) {
-                        ssh.sudo("rm -f " + ProxmoxSsh.quote(copy), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
-                        throw e;
-                    }
-                    long size = Long.parseLong(runOrFail(ssh, "read the size of the copy", "stat -c %s " + ProxmoxSsh.quote(copy)).trim());
-                    SnapshotObjectTO backedUp = new SnapshotObjectTO();
-                    backedUp.setPath(folder + "/" + copyName);
-                    backedUp.setPhysicalSize(size);
-                    LOGGER.info("Copied snapshot {} of {} to {} on the secondary store ({} bytes)", snapshotName, volume.getPath(), backedUp.getPath(), size);
-                    return new CopyCmdAnswer(backedUp);
+                        long size = Long.parseLong(runOrFail(ssh, "read the size of the copy", "stat -c %s " + ProxmoxSsh.quote(copy)).trim());
+                        SnapshotObjectTO backedUp = new SnapshotObjectTO();
+                        backedUp.setPath(folder + "/" + copyName);
+                        backedUp.setPhysicalSize(size);
+                        LOGGER.info("Copied snapshot {} of {} to {} on the secondary store ({} bytes)", snapshotName, volume.getPath(), backedUp.getPath(), size);
+                        return new CopyCmdAnswer(backedUp);
+                    });
                 }
             });
         } catch (ProxmoxApiException | ProxmoxSshException | IllegalArgumentException e) {
@@ -263,28 +260,30 @@ class ProxmoxVolumeSnapshots {
             String file = ProxmoxStorageNames.mountPath(pool) + "/images/" + path;
             return withLock(path, () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    String mount = mountSecondary(ssh, (NfsTO) source.getDataStore());
-                    String from = mount + "/" + backup;
-                    requireFile(ssh, from);
-                    if (!ssh.sudo("test -f " + ProxmoxSsh.quote(file), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS).isSuccess()) {
-                        String temporary = file + ".tmp";
-                        runOrFail(ssh, "create the folder of the volume", "mkdir -p " + ProxmoxSsh.quote(StringUtils.substringBeforeLast(file, "/")));
-                        try {
-                            convertTo(ssh, from, temporary, dest.getSize(), cmd.getWait());
-                            runOrFail(ssh, "move the volume into place", "mv " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(file));
-                        } catch (RuntimeException e) {
-                            ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
-                            throw e;
+                    // read-only: the backup is only read
+                    return secondary.withMount(ssh, (NfsTO) source.getDataStore(), true, mount -> {
+                        String from = mount + "/" + backup;
+                        requireFile(ssh, from);
+                        if (!ssh.sudo("test -f " + ProxmoxSsh.quote(file), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS).isSuccess()) {
+                            String temporary = file + ".tmp";
+                            runOrFail(ssh, "create the folder of the volume", "mkdir -p " + ProxmoxSsh.quote(StringUtils.substringBeforeLast(file, "/")));
+                            try {
+                                convertTo(ssh, from, temporary, dest.getSize(), cmd.getWait());
+                                runOrFail(ssh, "move the volume into place", "mv " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(file));
+                            } catch (RuntimeException e) {
+                                ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+                                throw e;
+                            }
+                            LOGGER.info("Created the volume {} from the snapshot {}", path, backup);
+                        } else {
+                            LOGGER.info("The volume {} exists already, a repeated command is answered with it", path);
                         }
-                        LOGGER.info("Created the volume {} from the snapshot {}", path, backup);
-                    } else {
-                        LOGGER.info("The volume {} exists already, a repeated command is answered with it", path);
-                    }
-                    VolumeObjectTO created = new VolumeObjectTO();
-                    created.setPath(path);
-                    created.setSize(details(ssh, file, false).virtualSize);
-                    created.setFormat(Storage.ImageFormat.QCOW2);
-                    return new CopyCmdAnswer(created);
+                        VolumeObjectTO created = new VolumeObjectTO();
+                        created.setPath(path);
+                        created.setSize(details(ssh, file, false).virtualSize);
+                        created.setFormat(Storage.ImageFormat.QCOW2);
+                        return new CopyCmdAnswer(created);
+                    });
                 }
             });
         } catch (ProxmoxApiException | ProxmoxSshException | IllegalArgumentException e) {
@@ -315,18 +314,21 @@ class ProxmoxVolumeSnapshots {
             }
             return withLock(volume.getPath(), () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    String mount = mountSecondary(ssh, (NfsTO) snapshot.getDataStore());
-                    String from = mount + "/" + backup;
-                    requireFile(ssh, from);
-                    requireFile(ssh, file);
-                    String temporary = file + ".tmp";
-                    try {
-                        convertTo(ssh, from, temporary, volume.getSize(), cmd.getWait());
-                        runOrFail(ssh, "replace the volume", "mv -f " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(file));
-                    } catch (RuntimeException e) {
-                        ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
-                        throw e;
-                    }
+                    // read-only: the backup is only read
+                    secondary.withMount(ssh, (NfsTO) snapshot.getDataStore(), true, mount -> {
+                        String from = mount + "/" + backup;
+                        requireFile(ssh, from);
+                        requireFile(ssh, file);
+                        String temporary = file + ".tmp";
+                        try {
+                            convertTo(ssh, from, temporary, volume.getSize(), cmd.getWait());
+                            runOrFail(ssh, "replace the volume", "mv -f " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(file));
+                        } catch (RuntimeException e) {
+                            ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+                            throw e;
+                        }
+                        return null;
+                    });
                 }
                 LOGGER.info("Reverted the volume {} to the snapshot {}", volume.getPath(), backup);
                 return new Answer(cmd, true, "Reverted the volume " + volume.getPath());
@@ -482,45 +484,8 @@ class ProxmoxVolumeSnapshots {
         return name;
     }
 
-    /** A folder or file below the secondary store's mount; nothing that leaves it. */
-    static String relativePath(String path, String what) {
-        if (path == null || !RELATIVE_PATH.matcher(path).matches()) {
-            throw new IllegalArgumentException("The path of " + what + " (" + path + ") is not a relative path of letters, digits, '.', '_' and '-'");
-        }
-        for (String part : path.split("/")) {
-            if (".".equals(part) || "..".equals(part)) {
-                throw new IllegalArgumentException("The path of " + what + " (" + path + ") must not contain . or ..");
-            }
-        }
-        return path;
-    }
-
-    /**
-     * Mounts the secondary store's export read-write, in a directory of its own, unless it is mounted there already, and returns the directory. It is
-     * not a Proxmox storage entry (those are read-only and shared with the templates); it is left mounted for the next snapshot.
-     */
-    String mountSecondary(ProxmoxSsh ssh, NfsTO store) {
-        URI url;
-        try {
-            url = URI.create(StringUtils.removeEnd(StringUtils.defaultString(store.getUrl()), "/"));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("The secondary store address " + store.getUrl() + " is not a URL");
-        }
-        String server = url.getHost();
-        String export = url.getPath();
-        if (server == null || !NFS_SERVER.matcher(server).matches() || export == null || !NFS_EXPORT.matcher(export).matches() || export.contains("/../")
-                || export.endsWith("/..")) {
-            throw new IllegalArgumentException("The secondary store address " + store.getUrl() + " is not an NFS server and export this plugin can mount");
-        }
-        String version = store.getNfsVersion();
-        if (StringUtils.isNotBlank(version) && !NFS_VERSION.matcher(version).matches()) {
-            throw new IllegalArgumentException("The NFS version " + version + " of the secondary store is not a version number");
-        }
-        String directory = SECONDARY_MOUNT_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export).getBytes(StandardCharsets.UTF_8));
-        String options = StringUtils.isBlank(version) ? "" : "-o vers=" + version + " ";
-        runOrFail(ssh, "mount the secondary store " + server + ":" + export, "mountpoint -q " + ProxmoxSsh.quote(directory) + " || (mkdir -p "
-                + ProxmoxSsh.quote(directory) + " && mount -t nfs " + options + ProxmoxSsh.quote(server + ":" + export) + " " + ProxmoxSsh.quote(directory) + ")");
-        return directory;
+    private static String relativePath(String path, String what) {
+        return ProxmoxSecondaryMounts.relativePath(path, what);
     }
 
     /** The VM when it is running, else null (a volume of a stopped or a missing VM is not open anywhere). */

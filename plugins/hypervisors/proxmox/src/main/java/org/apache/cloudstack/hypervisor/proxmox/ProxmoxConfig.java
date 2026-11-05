@@ -74,6 +74,15 @@ public class ProxmoxConfig implements Configurable {
                     + "the VM>. Several keys are separated by | . Empty (the default): nothing is added and only the management server's key works. "
                     + "See the Proxmox plugin requirements, \"Logging in to a system VM from a node\"", true);
 
+    public static final ConfigKey<String> SecondaryMountOptions = new ConfigKey<>("Advanced", String.class,
+            "proxmox.secondary.mount.options", "soft,timeo=30,retrans=2,nosharecache",
+            "NFS mount options that the plugin uses when it mounts a secondary store on a Proxmox node, for one operation (a template deploy, an ISO, a "
+                    + "volume snapshot). A comma-separated list of: soft, hard, nosharecache, noatime, nolock, proto=tcp, and timeo=, retrans=, nconnect=, "
+                    + "rsize=, wsize= with a number. The plugin adds ro or rw and the NFS version of the store itself. The default makes a dead NFS export "
+                    + "give an I/O error after about 100 seconds instead of hanging the node (soft); nosharecache is needed when the secondary export lies "
+                    + "below the export of a primary storage, as the kernel shares one mount between them and the options of the first would win. "
+                    + "Empty: the system defaults, which is what KVM uses (hard). A change applies to mounts made after it", true);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -81,6 +90,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey, SecondaryMountOptions};
     }
 }

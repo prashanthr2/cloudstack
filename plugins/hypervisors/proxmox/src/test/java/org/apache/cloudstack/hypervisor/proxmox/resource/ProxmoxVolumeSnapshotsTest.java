@@ -96,7 +96,8 @@ public class ProxmoxVolumeSnapshotsTest {
             }
             return ok("");
         };
-        snapshots = new ProxmoxVolumeSnapshots(() -> client, () -> ProxmoxSsh.open(new SshTarget("10.0.0.1", 22, "root", null, "pw", null), () -> link), () -> 600);
+        snapshots = new ProxmoxVolumeSnapshots(() -> client, () -> ProxmoxSsh.open(new SshTarget("10.0.0.1", 22, "root", null, "pw", null), () -> link),
+                new ProxmoxSecondaryMounts(() -> ProxmoxSecondaryMounts.DEFAULT_OPTIONS), () -> 600);
         when(client.createSnapshot(anyString(), anyLong(), anyString(), org.mockito.ArgumentMatchers.any(), anyBoolean())).thenReturn(UPID);
         when(client.deleteSnapshot(anyString(), anyLong(), anyString(), anyBoolean())).thenReturn(UPID);
     }
@@ -272,15 +273,18 @@ public class ProxmoxVolumeSnapshotsTest {
         Answer answer = backup(onPrimary(volume(PATH, GIB, null), PATH + "/" + SNAPSHOT, null), FOLDER);
 
         assertTrue(answer.getDetails(), answer.getResult());
-        String mount = "/mnt/css-rw-";
         String mountCommand = link.commandsWith("mount -t nfs").get(0);
-        assertTrue(mountCommand, mountCommand.startsWith("mountpoint -q '" + mount));
-        assertTrue(mountCommand, mountCommand.contains("-o vers=3 '10.0.32.4:/acs/primary/lab/secondary'"));
+        assertTrue(mountCommand, mountCommand.startsWith("mkdir -p '/mnt/css-tmp-"));
+        assertTrue(mountCommand, mountCommand.contains(" && timeout 60 mount -t nfs -o 'rw,vers=3,soft,timeo=30,retrans=2,nosharecache' '10.0.32.4:/acs/primary/lab/secondary' '/mnt/css-tmp-"));
         String directory = mountCommand.substring(mountCommand.indexOf('\'') + 1, mountCommand.indexOf('\'', mountCommand.indexOf('\'') + 1));
         assertEquals("mkdir -p '" + directory + "/" + FOLDER + "'", link.commandsWith("mkdir -p '" + directory + "/" + FOLDER).get(0));
         assertEquals("qemu-img convert -O qcow2 -l snapshot.name='" + SNAPSHOT + "' '" + FILE + "' '" + directory + "/" + FOLDER + "/" + SNAPSHOT + "'",
                 link.commandsWith("qemu-img convert").get(0));
         assertEquals("qemu-img snapshot -d '" + SNAPSHOT + "' '" + FILE + "'", link.commandsWith("snapshot -d").get(0));
+        // the mount of this one operation is unmounted and removed after the copy, and before the snapshot is removed from primary
+        String release = link.commandsWith("umount '" + directory + "'").get(0);
+        assertTrue(release, release.endsWith("; rmdir '" + directory + "'"));
+        assertTrue(link.commands.indexOf(link.commandsWith("qemu-img convert").get(0)) < link.commands.indexOf(release));
         SnapshotObjectTO result = (SnapshotObjectTO) ((CopyCmdAnswer) answer).getNewData();
         assertEquals(FOLDER + "/" + SNAPSHOT, result.getPath());
         assertEquals(Long.valueOf(4096), result.getPhysicalSize());
@@ -311,7 +315,8 @@ public class ProxmoxVolumeSnapshotsTest {
 
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("No space left on device"));
-        assertEquals(1, link.commandsWith("rm -f '/mnt/css-rw-").size());
+        assertEquals(1, link.commandsWith("rm -f '/mnt/css-tmp-").size());
+        assertEquals("the mount is released when the copy failed", 1, link.commandsWith("rmdir '/mnt/css-tmp-").size());
         assertTrue(link.commands.toString(), ran("snapshot -d"));
     }
 
@@ -469,8 +474,17 @@ public class ProxmoxVolumeSnapshotsTest {
     }
 
     @Test
+    public void aBackupIsReadFromAReadOnlyMountThatIsUnmountedAfterwards() {
+        Answer answer = createVolume(FOLDER + "/" + SNAPSHOT, GIB);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertTrue(link.commandsWith("mount -t nfs").get(0), link.commandsWith("mount -t nfs").get(0).contains("-o 'ro,vers=3,soft,timeo=30,retrans=2,nosharecache'"));
+        assertEquals(1, link.commandsWith("rmdir '/mnt/css-tmp-").size());
+    }
+
+    @Test
     public void aBackupThatIsNotThereFailsTheVolume() {
-        replies.put("test -f '/mnt/css-rw-", failed(""));
+        replies.put("test -f '/mnt/css-tmp-", failed(""));
 
         Answer answer = createVolume(FOLDER + "/" + SNAPSHOT, GIB);
 
@@ -510,6 +524,15 @@ public class ProxmoxVolumeSnapshotsTest {
         assertTrue(convert, convert.endsWith("/" + FOLDER + "/" + SNAPSHOT + "' '" + FILE + ".tmp'"));
         assertEquals("mv -f '" + FILE + ".tmp' '" + FILE + "'", link.commandsWith("mv ").get(0));
         assertTrue(link.commands.indexOf(convert) < link.commands.indexOf(link.commandsWith("mv ").get(0)));
+    }
+
+    @Test
+    public void aRevertReadsTheBackupFromAReadOnlyMountThatIsUnmountedAfterwards() {
+        Answer answer = revert(GIB, null);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertTrue(link.commandsWith("mount -t nfs").get(0), link.commandsWith("mount -t nfs").get(0).contains("-o 'ro,vers=3,soft,timeo=30,retrans=2,nosharecache'"));
+        assertEquals(1, link.commandsWith("rmdir '/mnt/css-tmp-").size());
     }
 
     @Test

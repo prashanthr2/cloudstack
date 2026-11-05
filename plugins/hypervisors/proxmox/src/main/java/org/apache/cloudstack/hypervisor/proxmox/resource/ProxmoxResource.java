@@ -195,7 +195,7 @@ public class ProxmoxResource implements ServerResource {
         vmHandler = new ProxmoxVmHandler(() -> client, node, nodeIp, apiPort(), () -> "PVEAPIToken=" + tokenId + "=" + tokenSecret, this::pause,
                 ProxmoxConfig.TaskTimeout::value, ProxmoxConfig.MigrationTimeout::value, ProxmoxConfig.HaManage::value);
         vmSnapshots = new ProxmoxVmSnapshots(() -> client, ProxmoxConfig.TaskTimeout::value);
-        volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, ProxmoxConfig.TaskTimeout::value);
+        volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, new ProxmoxSecondaryMounts(ProxmoxConfig.SecondaryMountOptions::value), ProxmoxConfig.TaskTimeout::value);
         routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);

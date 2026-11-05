@@ -819,3 +819,22 @@ Scratch VMs 9001 (ISO) and 9002 (template disk) are made by hand with `qm` and r
 | M4 | A separate NFS server (pve1) holds a copy of the ISO, mounted `soft` on pve3 and attached; block the server | `ls`, `pvesm status`, `qm status` and the VM stay responsive; the mount gives an error within about 30 s |
 | M5 | `qemu-img convert` a template from the mount into `images/9002/vm-9002-disk-0.qcow2`, create the VM with that disk, start it | Starts; time compared with `import-from` (7.6 s for 8 GiB) |
 | M6 | `qemu-img info` of an image with a backing file and of one with a data file | Both show up in the JSON, so the plugin can refuse them |
+
+**Results so far (2026-11-05):** M1 pass. M2 **fail**: `qm create ... --ide2 /mnt/mtest/...iso,media=cdrom` gives "unable to associate path ... to any storage"; Proxmox accepts a path for a CD drive only inside the `iso` directory of a storage entry (design-phase11, section 6). M2b (bind mount of the ISO file into the `iso` directory of a local `dir` storage, then `<storage>:iso/<name>.iso`) replaces M2 to M4 for the ISO; M5 and M6 (template) are not affected.
+M2b **pass**, M3 **pass** (2026-11-05): ISO bound into `local`'s `iso` directory attaches, boots, ejects and re-attaches; online migration needs a `shared 1` directory entry (`csiso`) because `local` makes the ISO a local disk; with `csiso` and the same bind on both nodes: migration both ways (9 s, 4 to 5 ms downtime) and snapshots with and without memory work. Details in design-phase11 section 6.
+M4 **pass** (2026-11-05): with the NFS server blocked (DROP) the node's Proxmox commands and services stayed responsive and the VM kept running; a read of the ISO failed with an I/O error after 99 s (`soft,timeo=30,retrans=2`). Details in design-phase11 section 6. M5 and M6 still to run.
+M5 **pass**, M6 **pass** (2026-11-05): a 5 GB (1.67 GiB on disk) template converted from the soft read-only mount into `images/9002/` in 29.9 s and the VM created with that disk starts; backing file and data file both show in `qemu-img info --output=json`. Lab checks M1 to M6 are done; design-phase11 section 6 has the summary and what changed.
+M7 **pass** (2026-11-05): mount in a unique directory, bind one ISO file, unmount the directory: no "busy", the bind keeps reading (4,194,304 bytes), and unmounting the bind releases the NFS mount (7 NFS mounts of the store before, 6 after). Six other NFS mounts of the store were still there on pve3 (what they are was not looked at).
+
+## Secondary mounts, step 1 (built 2026-11-05)
+
+Unit tests: `ProxmoxSecondaryMountsTest` (31: the mount per operation and its options, the setting's allowed list and refusals, a failed mount, a failed action, a failed release, the one-time cleanup, the image check, paths), the volume snapshot tests follow the new mount commands (36), and the setting is in `ProxmoxConfigTest`; plugin total 621 pass. **Lab checks, not run yet** (volume snapshots must still work, now with a mount per operation):
+
+| # | Check | Expected |
+|---|---|---|
+| SM1 | Take a volume snapshot of a detached data volume (VS1 again) and watch the node during it: `findmnt -t nfs4 \| grep css-tmp` | A `/mnt/css-tmp-<uuid>` mount with `rw,...,soft,timeo=30,retrans=2,nosharecache` while it runs; nothing after it and no `/mnt/css-tmp-*` directory left |
+| SM2 | Create a volume from the snapshot and revert (VS4, VS5 again) | The same with `ro`; both work |
+| SM3 | Change `proxmox.secondary.mount.options` to `soft,timeo=10,retrans=1`, take a snapshot | The mount shows the new options |
+| SM4 | Set it to `soft;reboot` | The snapshot fails with the text that names the option; nothing was run on the node |
+| SM5 | Make a directory `/mnt/css-tmp-old` older than 10 minutes on a node (`touch -d '20 min ago'`), restart the host connection (disconnect and reconnect the host in the UI), take a snapshot | The directory is gone |
+| SM6 | A snapshot with the NFS server blocked (separate server, as M4), then released | The snapshot fails with an error within about 2 minutes; no mount and no directory left on the node; the next snapshot works |
