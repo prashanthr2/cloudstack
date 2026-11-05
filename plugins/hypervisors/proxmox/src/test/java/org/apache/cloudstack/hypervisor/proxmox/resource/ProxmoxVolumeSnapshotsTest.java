@@ -536,13 +536,34 @@ public class ProxmoxVolumeSnapshotsTest {
     }
 
     @Test
-    public void aVolumeThatWasGrownSinceTheBackupIsGrownAgainByTheRevert() {
+    public void aVolumeThatWasGrownSinceTheBackupIsTheSizeOfTheBackupAgainAfterARevert() {
+        // core sets the recorded size of the volume to the size of the snapshot after a revert, so the file must have that size and not the size before
         virtualSize = GIB;
 
         Answer answer = revert(3 * GIB, null);
 
         assertTrue(answer.getDetails(), answer.getResult());
-        assertEquals("qemu-img resize '" + FILE + ".tmp' " + 3 * GIB, link.commandsWith("qemu-img resize").get(0));
+        assertFalse(ran("qemu-img resize"));
+        assertFalse(ran("qemu-img map"));
+        assertTrue(ran("mv -f '" + FILE + ".tmp' '" + FILE + "'"));
+    }
+
+    @Test
+    public void aRevertDoesNotCutOrGrowTheBackupWhateverSizeTheVolumeHasNow() {
+        virtualSize = 3 * GIB;
+
+        Answer answer = revert(GIB, null);
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertFalse(ran("qemu-img resize"));
+        assertFalse(ran("--shrink"));
+        assertTrue(ran("mv -f '" + FILE + ".tmp' '" + FILE + "'"));
+    }
+
+    @Test
+    public void aRevertForAVolumeWithoutARecordedSizeIsTheSameAsOneWithASize() {
+        assertTrue(revert(null, null).getResult());
+        assertFalse(ran("qemu-img resize"));
     }
 
     @Test

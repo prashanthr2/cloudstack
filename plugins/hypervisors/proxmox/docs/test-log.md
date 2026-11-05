@@ -782,7 +782,7 @@ Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one
 | VS3 | Volume snapshot of the root volume of a stopped instance | Backed Up, nothing left in the root file |
 | VS4 | Create Volume from the snapshot of VS2, attach it to an instance | The volume file is `images/<holder>/vm-<holder>-<uuid>.qcow2`; the disk holds only the first file; `pvesm list` shows it |
 | VS5 | Stop the instance, Revert the data volume to the snapshot | The first file only; the instance starts; `qemu-img snapshot -l` of the volume is empty |
-| VS6 | Grow the volume (resize in the UI), then Revert | The data of the snapshot, and the disk has the grown size (`qemu-img info`) |
+| VS6 | Grow the volume (resize in the UI), then Revert | The data of the snapshot, and the disk is the **size of the snapshot again**: `qemu-img info` of the file and `volumes.size` in the database both show the old size (corrected 2026-11-05: the first version expected the grown size) |
 | VS7 | Delete the snapshot in the UI | The record goes; the file on secondary goes (secondary storage VM) |
 | VS8 | `sudo mount -o remount,ro /mnt/css-rw-<...>` on the node, take a snapshot, then remount `rw` | A clear error in the UI; no snapshot is left in the volume file (`qemu-img snapshot -l`) |
 | VS9 | Take a second snapshot | No second mount (`findmnt \| grep css-rw`) |
@@ -799,7 +799,7 @@ Unit tests: `ProxmoxVolumeSnapshotsTest` (34), two in `ProxmoxResourceTest`, one
 | VS3 | Root volume of a stopped instance: nothing left in the root file (`qemu-img snapshot -l` empty) |
 | VS4 | Volume file `images/900000002/vm-900000002-<uuid>.qcow2`, listed by `pvesm list`; the guest sees only the files from before the snapshot |
 | VS5 | Revert works; only `first.txt`; no `.tmp` and no internal snapshot left |
-| VS6 | After growing to 10 GiB and reverting, virtual size is 10 GiB and the data is the snapshot's |
+| VS6 | **Passed wrongly, then corrected (2026-11-05).** After growing to 10 GiB and reverting, the file was 10 GiB and the data the snapshot's, but core had set `volumes.size` back to 5 GiB (5368709120), so file and database disagreed; found by SM2, when "create volume from snapshot" refused to cut a 10 GiB backup to the 5 GiB that core records. The revert no longer resizes (design-phase10-volume-snapshots.md, decision 5). To repeat VS6 on a fresh volume after the fix |
 | VS7 | Delete removes the record and the file on secondary |
 | VS8 | With the secondary mounted read-only separately (`mount -o ro,nosharecache`; a plain `remount,ro` is refused on the lab because the secondary export is a subdirectory of the primary export and the two share one kernel mount): the snapshot fails (UI text is core's generic "internal error creating Snapshot"), nothing is left in the volume file; the next snapshot after `umount` works (the plugin mounts read-write again) |
 | VS9 | A second snapshot makes no second mount |
@@ -838,3 +838,4 @@ Unit tests: `ProxmoxSecondaryMountsTest` (31: the mount per operation and its op
 | SM4 | Set it to `soft;reboot` | The snapshot fails with the text that names the option; nothing was run on the node |
 | SM5 | Make a directory `/mnt/css-tmp-old` older than 10 minutes on a node (`touch -d '20 min ago'`), restart the host connection (disconnect and reconnect the host in the UI), take a snapshot | The directory is gone |
 | SM6 | A snapshot with the NFS server blocked (separate server, as M4), then released | The snapshot fails with an error within about 2 minutes; no mount and no directory left on the node; the next snapshot works |
+| SM7 | VS6 again, on a fresh 5 GiB data volume, after the revert fix: take a snapshot, grow the volume to 10 GiB in the UI, stop the instance (or detach), revert | After the revert `qemu-img info` of the file shows 5 GiB **and** `select size from volumes where uuid='<volume>'` shows 5368709120 (both, not the file alone); then take a snapshot and create a volume from it: it works without any cutting |

@@ -298,6 +298,11 @@ class ProxmoxVolumeSnapshots {
      * Puts the data of the backup back into the volume: a converted copy next to the file is moved over it when it is complete, so a failure leaves the
      * volume as it was. Core allows it for a stopped instance only; a running one is refused here too, as the file would be replaced under QEMU. The
      * internal snapshots in the old file go with it.
+     * <p>
+     * The copy keeps the size of the backup, which is the size of the volume when the snapshot was taken: after a successful revert core sets the size
+     * recorded for the volume to the size of the snapshot ({@code SnapshotManagerImpl.updateVolumeSizeAndPrimaryStorageCount}), so a volume that was grown
+     * after the snapshot is the smaller size again, as with KVM. Growing the file to the size CloudStack has before the revert would leave the file bigger
+     * than the database says (lab, 2026-11-05).
      */
     Answer revert(RevertSnapshotCommand cmd) {
         SnapshotObjectTO snapshot = cmd.getData();
@@ -321,7 +326,7 @@ class ProxmoxVolumeSnapshots {
                         requireFile(ssh, file);
                         String temporary = file + ".tmp";
                         try {
-                            convertTo(ssh, from, temporary, volume.getSize(), cmd.getWait());
+                            convertTo(ssh, from, temporary, null, cmd.getWait());
                             runOrFail(ssh, "replace the volume", "mv -f " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(file));
                         } catch (RuntimeException e) {
                             ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
