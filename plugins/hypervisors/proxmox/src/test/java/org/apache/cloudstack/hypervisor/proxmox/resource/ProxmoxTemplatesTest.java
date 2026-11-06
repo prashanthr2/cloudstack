@@ -108,6 +108,10 @@ public class ProxmoxTemplatesTest {
     private static Map<String, String> disk(String kind, long vmid) {
         Map<String, String> config = new HashMap<>();
         config.put("scsi0", POOL + ":" + vmid + "/" + kind + "-" + vmid + "-disk-0.qcow2,size=5G");
+        if ("base".equals(kind)) {
+            config.put("name", name());
+            config.put("template", "1");
+        }
         return config;
     }
 
@@ -394,6 +398,7 @@ public class ProxmoxTemplatesTest {
         when(client.findVmOrTemplateByName(name())).thenReturn(vm);
         Map<String, String> config = new HashMap<>();
         config.put("scsi0", "cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf:9050/base-9050-disk-0.qcow2,size=5G");
+        config.put("template", "1");
         when(client.getVmConfig("pve2", 9050L)).thenReturn(config);
 
         CopyCmdAnswer answer = copy(RELATIVE);
@@ -431,19 +436,42 @@ public class ProxmoxTemplatesTest {
     }
 
     @Test
+    public void aTemplateVmIsFoundFromItsConfigurationWhenTheClusterListDoesNotShowItsNameAndTemplateFlagYet() {
+        // right after the copy the cluster list has the VM without a name and not as a template (Proxmox's status daemon has not reported it)
+        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, null, "pve2", "unknown", false));
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(disk("base", 9050));
+
+        ProxmoxApiClient.VmLocation vm = templates.requireTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2");
+
+        assertEquals(9050L, vm.getVmid());
+        assertEquals(name(), vm.getName());
+        assertTrue(vm.isTemplate());
+    }
+
+    @Test
     public void aVmIdThatAnotherVmHasNowIsNotTakenForTheTemplateVm() {
         // not a template
         when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "i-2-10-VM", "pve2", "running"));
+        Map<String, String> instance = new HashMap<>();
+        instance.put("name", "i-2-10-VM");
+        instance.put("scsi0", POOL + ":9050/base-9050-disk-0.qcow2,size=5G");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(instance);
+        assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
+
+        // a clone of ours that is not a template
+        Map<String, String> clone = disk("base", 9050);
+        clone.remove("template");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(clone);
         assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
 
         // a template that is not one of ours
-        when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, "ubuntu-base", "pve2", "stopped", true));
+        Map<String, String> foreign = disk("base", 9050);
+        foreign.put("name", "ubuntu-base");
+        when(client.getVmConfig("pve2", 9050L)).thenReturn(foreign);
         assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));
 
         // a template of ours with another disk (a different pool, or another disk file)
-        ProxmoxApiClient.VmLocation ours = new ProxmoxApiClient.VmLocation(9050, name(), "pve2", "stopped", true);
-        when(client.findVmOrTemplateById(9050L)).thenReturn(ours);
-        Map<String, String> other = new HashMap<>();
+        Map<String, String> other = disk("base", 9050);
         other.put("scsi0", "cs-047ccc61-dc29-3d58-9c73-dd1ab2c100cf:9050/base-9050-disk-0.qcow2,size=5G");
         when(client.getVmConfig("pve2", 9050L)).thenReturn(other);
         assertEquals(null, templates.findTemplateVm(POOL_UUID, "9050/base-9050-disk-0.qcow2"));

@@ -457,10 +457,12 @@ class ProxmoxVmHandler {
                 waitFor(client, creator.apply(vmid));
                 break;
             } catch (ProxmoxApiException e) {
-                // the id is not reserved: another caller may have been given it a moment ago
+                // the id is not reserved: another caller may have been given it a moment ago; or Proxmox's lock on the pool, which it takes to allocate
+                // a disk, was not free in time (many clones at once on one pool): nothing was copied then, so the clone is tried again with a new id
                 boolean taken = e.getMessage() != null && e.getMessage().contains("already exists");
+                boolean busy = e.getMessage() != null && e.getMessage().contains("lock request timeout");
                 destroyQuietly(client, vmid, taken);
-                if (!taken || attempt == CREATE_ATTEMPTS) {
+                if (!(taken || busy) || attempt == CREATE_ATTEMPTS) {
                     throw e;
                 }
                 pauser.accept(CREATE_RETRY_WAIT_MS * attempt);

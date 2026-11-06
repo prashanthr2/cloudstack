@@ -127,6 +127,8 @@ public class ProxmoxVmHandlerTemplateTest {
         when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, templateVmName(), "pve2", "stopped", true));
         Map<String, String> config = new HashMap<>();
         config.put("scsi0", POOL + ":" + PATH + ",size=5G");
+        config.put("name", templateVmName());
+        config.put("template", "1");
         when(client.getVmConfig("pve2", 9050L)).thenReturn(config);
     }
 
@@ -237,6 +239,28 @@ public class ProxmoxVmHandlerTemplateTest {
         assertTrue(answer.getDetails(), answer.getResult());
         assertEquals("9201/vm-9201-disk-0.qcow2", ((VolumeObjectTO) answer.getNewData()).getPath());
         verify(client, never()).destroyVm(anyString(), anyLong());
+    }
+
+    @Test
+    public void aCloneThatCouldNotGetProxmoxsLockOnThePoolIsTriedAgainWithANewId() {
+        templateVmExists();
+        when(client.nextVmId()).thenReturn(9200L, 9201L);
+        when(client.cloneVm(anyString(), anyLong(), eq(9200L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn("UPID:pve1:1:2:3:qmclone:9200:u:");
+        when(client.cloneVm(anyString(), anyLong(), eq(9201L), anyString(), anyBoolean(), anyString(), anyString())).thenReturn("UPID:pve1:1:2:3:qmclone:9201:u:");
+        doThrow(new ProxmoxApiException("Proxmox task qmclone failed: clone failed: cfs-lock 'storage-" + POOL + "' error: got lock request timeout")).when(client)
+                .waitForTask("UPID:pve1:1:2:3:qmclone:9200:u:", 600);
+        when(client.findVm(9200L)).thenReturn(new ProxmoxApiClient.VmLocation(9200, "i-2-10-VM", NODE, "stopped"));
+        when(client.destroyVm(NODE, 9200L)).thenReturn("UPID:pve1:1:2:3:qmdestroy:9200:u:");
+        Map<String, String> config = new HashMap<>();
+        config.put("scsi0", POOL + ":9201/vm-9201-disk-0.qcow2,size=5G");
+        when(client.getVmConfig(NODE, 9201L)).thenReturn(config);
+
+        CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(rootVolumeFromTemplate(PATH, null));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("9201/vm-9201-disk-0.qcow2", ((VolumeObjectTO) answer.getNewData()).getPath());
+        verify(client).destroyVm(NODE, 9200L);
+        assertEquals(1, pauses);
     }
 
     @Test

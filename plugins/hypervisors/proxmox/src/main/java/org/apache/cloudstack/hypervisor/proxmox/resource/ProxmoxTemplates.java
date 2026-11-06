@@ -151,7 +151,7 @@ class ProxmoxTemplates {
                     requireFile(ssh, from);
                     image[0] = mounts.checkImage(ssh, from);
                     ProxmoxApiClient.VmLocation existing = client.findVmOrTemplateByName(name);
-                    if (existing != null && existing.isTemplate()) {
+                    if (existing != null && ProxmoxApiClient.isTemplate(client.getVmConfig(existing.getNode(), existing.getVmid()))) {
                         OnPool found = new OnPool(existing, templatePath(client, poolUuid, existing));
                         LOGGER.info("The template {} is on the pool {} already as the template VM {} ({})", relative, poolUuid, existing.getVmid(), found.path);
                         return found;
@@ -174,6 +174,10 @@ class ProxmoxTemplates {
     /**
      * The template VM of a template path on a pool, or null when there is none: no VM of that id, or one that is not a template VM of ours whose base disk
      * is that path on that pool (a VM id that was given to another VM after the template VM was removed). Needs no SSH login and no secondary store.
+     * <p>
+     * The id and the node come from the cluster list, but whether it is a template, its name and its disk come from <b>its configuration</b>: the cluster
+     * list shows the name and the template flag of a VM only after Proxmox's status daemon has reported it (some seconds after the VM was made or
+     * converted), so a deploy right after the copy would otherwise find no template VM.
      */
     ProxmoxApiClient.VmLocation findTemplateVm(String poolUuid, String path) {
         if (!isTemplatePath(path)) {
@@ -182,12 +186,17 @@ class ProxmoxTemplates {
         String storage = ProxmoxStorageNames.storageId(checkedPool(poolUuid));
         ProxmoxApiClient client = clients.get();
         ProxmoxApiClient.VmLocation vm = client.findVmOrTemplateById(vmIdOf(path));
-        if (vm == null || !vm.isTemplate() || vm.getName() == null || !vm.getName().startsWith(NAME_PREFIX)) {
+        if (vm == null) {
             return null;
         }
-        String disk = client.getVmConfig(vm.getNode(), vm.getVmid()).get(ProxmoxVmConfig.ROOT_DISK);
-        String expected = storage + ":" + path;
-        return disk != null && expected.equals(StringUtils.substringBefore(disk, ",")) ? vm : null;
+        Map<String, String> config = client.getVmConfig(vm.getNode(), vm.getVmid());
+        String name = config.get("name");
+        String disk = config.get(ProxmoxVmConfig.ROOT_DISK);
+        if (!ProxmoxApiClient.isTemplate(config) || name == null || !name.startsWith(NAME_PREFIX) || disk == null
+                || !(storage + ":" + path).equals(StringUtils.substringBefore(disk, ","))) {
+            return null;
+        }
+        return new ProxmoxApiClient.VmLocation(vm.getVmid(), name, vm.getNode(), "stopped", true);
     }
 
     /** The template VM at a deploy: the one {@link #findTemplateVm} finds, or a failure that says what to do. */
