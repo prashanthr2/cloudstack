@@ -460,7 +460,7 @@ class ProxmoxVmHandler {
                 // the id is not reserved: another caller may have been given it a moment ago; or Proxmox's lock on the pool, which it takes to allocate
                 // a disk, was not free in time (many clones at once on one pool): nothing was copied then, so the clone is tried again with a new id
                 boolean taken = e.getMessage() != null && e.getMessage().contains("already exists");
-                boolean busy = e.getMessage() != null && e.getMessage().contains("lock request timeout");
+                boolean busy = e.getMessage() != null && (e.getMessage().contains("lock request timeout") || e.getMessage().contains("locked command timed out"));
                 destroyQuietly(client, vmid, taken);
                 if (!(taken || busy) || attempt == CREATE_ATTEMPTS) {
                     throw e;
