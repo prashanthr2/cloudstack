@@ -937,3 +937,13 @@ Unit tests: `ProxmoxIsosTest` (14), `ProxmoxVmHandlerIsoTest` (29), the client, 
 | IS10 | **Pass** for the sweep (after the host reconnect and an attach of another ISO the old bind was gone). **Finding:** the bind stayed after the expunge, as IS5 |
 
 Changes after this run: the names carry CloudStack's UUIDs (`cs-<ISO uuid>.iso` for the bind, `cs-tmpl-<template uuid>-<8 characters of the pool uuid>` for the template VM); a bind is removed after a migration, a delete and a start that does not list it; the sweep runs before every bind (not only the first) and skips binds made in the last 10 minutes; a move before a start that Proxmox refuses fails with the VM, both nodes and the reason.
+
+### Results of the second run (2026-11-06, after the uuid names and the bind clean-up)
+
+| Test | Result |
+|---|---|
+| Names | **Pass.** Template VM `cs-tmpl-3f8302d1-fa8e-4606-8aae-0e225e2e81cd-7fd5565c` (T1 uuid and pool start), bind `cs-b43b3621-56ab-4628-858d-a5c1b0a0adcb.iso` (ISO1 uuid). The first attempt showed hash names because an old jar was still deployed |
+| IS4 | **Pass.** After the detach on the stopped instance the binds stayed; the next start removed both and the four drives are `none,media=cdrom` |
+| IS5 | **Pass** (repeated). With `expunge=true` the bind was gone once the instance was expunged. The first attempt left it because the instance was only destroyed (its configuration still named the bind) and the ISO would not boot, so the VM had to be force-stopped in Proxmox |
+| IS6 | **Pass.** The bind moved with the instance |
+| IS8 | **Pass.** The attach on a running instance failed with the mount error (`exit code 124` is the 60 s timeout) and "Detach the ISO ..."; `pvesm status` and `qm list` answered, no bind, no ISO on the drives |
