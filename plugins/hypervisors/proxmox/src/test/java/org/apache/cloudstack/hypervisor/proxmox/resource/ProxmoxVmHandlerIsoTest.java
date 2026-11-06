@@ -393,6 +393,48 @@ public class ProxmoxVmHandlerIsoTest {
     }
 
     @Test
+    public void aStartThatNoLongerListsAnIsoRemovesItsBindFromTheNode() {
+        StartCommand cmd = startWithIsos(null, isoDisk(mock(TemplateObjectTO.class), 3));
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("ide2", ISO_VOLUME + ",media=cdrom", "scsi0", "x"));
+
+        assertTrue(handler.start(cmd).getResult());
+
+        String release = link.commandsWith("grep -lF").get(0);
+        assertTrue(release, release.contains(ISO_VOLUME) && release.contains("'/etc/pve/nodes/pve1/qemu-server/'*.conf"));
+        assertTrue(release, release.contains("umount '" + ISO_DIRECTORY + "/template/iso/" + ISO_NAME + "'"));
+    }
+
+    @Test
+    public void aDeletedVmOnThisNodeTakesItsIsoBindsAway() {
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, VM, NODE, "stopped"));
+        when(client.getVmConfig(NODE, 9204L)).thenReturn(config("ide2", ISO_VOLUME + ",media=cdrom"));
+        when(client.destroyVm(NODE, 9204L)).thenReturn("UPID:destroy");
+        VolumeObjectTO volume = mock(VolumeObjectTO.class);
+        when(volume.getPath()).thenReturn("9204/vm-9204-disk-0.qcow2");
+        when(volume.getVolumeType()).thenReturn(Volume.Type.ROOT);
+
+        assertTrue(handler.delete(new org.apache.cloudstack.storage.command.DeleteCommand(volume)).getResult());
+
+        assertTrue(link.commands.toString(), ran("umount '" + ISO_DIRECTORY + "/template/iso/" + ISO_NAME + "'"));
+    }
+
+    @Test
+    public void aVmThatMovedAwayFromThisNodeLeavesNoIsoBindsBehind() {
+        when(client.getClusterNodes(null)).thenReturn(Collections.singletonList(new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.199", true)));
+        theVmIs("running", config("ide2", ISO_VOLUME + ",media=cdrom"));
+        when(client.migrateRunningVm(NODE, 9204L, "pve2")).thenReturn("UPID:m");
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, VM, "pve2", "running"));
+        when(client.getVmStatus("pve2", 9204L)).thenReturn("running");
+        com.cloud.agent.api.MigrateCommand cmd = mock(com.cloud.agent.api.MigrateCommand.class);
+        when(cmd.getVmName()).thenReturn(VM);
+        when(cmd.getDestinationIp()).thenReturn("10.0.32.199");
+
+        assertTrue(handler.migrate(cmd).getResult());
+
+        assertTrue(link.commands.toString(), ran("umount '" + ISO_DIRECTORY + "/template/iso/" + ISO_NAME + "'"));
+    }
+
+    @Test
     public void theDestinationBindsTheIsosOfTheVmBeforeTheVmMovesThere() {
         Answer answer = handler.prepareForMigration(prepareWithIsos(isoDisk(iso(RELATIVE), 3)));
 

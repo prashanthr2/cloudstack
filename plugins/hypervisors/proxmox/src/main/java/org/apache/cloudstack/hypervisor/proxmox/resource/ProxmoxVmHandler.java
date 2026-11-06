@@ -18,6 +18,7 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -490,10 +491,15 @@ class ProxmoxVmHandler {
             }
             if (!node.equals(location.getNode())) {
                 // the VM was created on whichever node got the volume command; a stopped VM on shared storage only moves its configuration
-                LOGGER.info("Moving Proxmox VM {} from node {} to {}", vmid, location.getNode(), node);
-                waitFor(client, client.migrateVm(location.getNode(), vmid, node));
-                // for a VM under Proxmox HA the task only queued the move
-                waitForVm(client, vmid, null, "move to node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()));
+                LOGGER.info("Moving Proxmox VM {} ({}) from node {} to {} to start it there", vmid, vm.getName(), location.getNode(), node);
+                try {
+                    waitFor(client, client.migrateVm(location.getNode(), vmid, node));
+                    // for a VM under Proxmox HA the task only queued the move
+                    waitForVm(client, vmid, null, "move to node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()));
+                } catch (ProxmoxApiException e) {
+                    throw new ProxmoxApiException(String.format("Proxmox could not move the stopped VM %s (%s) from node %s to node %s, where CloudStack starts it: %s",
+                            vm.getName(), vmid, location.getNode(), node, e.getMessage()), e);
+                }
             }
             Map<String, String> cdroms = cdromDrives(client, vm);
             String rootDrive = ProxmoxVmConfig.rootDiskDrive(vm);
@@ -533,6 +539,7 @@ class ProxmoxVmHandler {
             client.updateVmConfig(node, vmid, options);
             waitFor(client, client.startVm(node, vmid));
             waitForVm(client, vmid, node, "start on node " + node, taskTimeoutSeconds.getAsInt(), l -> l != null && node.equals(l.getNode()) && l.isRunning());
+            releaseIsos(ProxmoxIsos.boundNames(current));
             applyHaFlag(client, vm, vmid);
             if (ProxmoxVmConfig.isSystemVm(vm) && systemVms != null) {
                 String problem = systemVms.afterStart(client, vm, node, vmid);
@@ -1368,6 +1375,17 @@ class ProxmoxVmHandler {
         return null;
     }
 
+    /**
+     * Removes the ISO binds of this node that a VM configuration no longer names (an ISO detached while the VM was stopped, a VM that left or was deleted);
+     * one that a VM of the node still names stays. Never fails the command.
+     */
+    private void releaseIsos(List<String> names) {
+        ProxmoxIsos made = isos;
+        if (made != null && !names.isEmpty()) {
+            made.releaseFiles(names);
+        }
+    }
+
     /** The reason the VM's NICs cannot be attached on this node, or null. */
     private String missingBridge(ProxmoxApiClient client, VirtualMachineTO vm) {
         if (vm.getNics() == null) {
@@ -1413,11 +1431,13 @@ class ProxmoxVmHandler {
             boolean wasRunning = location.isRunning();
             String finalTarget = target;
             int timeout = migrationTimeoutSeconds.getAsInt();
+            List<String> isoBinds = node.equals(location.getNode()) ? ProxmoxIsos.boundNames(client.getVmConfig(location.getNode(), location.getVmid())) : new ArrayList<>();
             client.waitForTask(client.migrateRunningVm(location.getNode(), location.getVmid(), target), timeout);
             // for a VM under Proxmox HA the task only queued the move
             waitForVm(client, location.getVmid(), target, "move to node " + target, timeout,
                     l -> l != null && finalTarget.equals(l.getNode()) && (!wasRunning || l.isRunning()));
             LOGGER.info("Moved Proxmox VM {} ({}) from node {} to {}", location.getVmid(), cmd.getVmName(), location.getNode(), target);
+            releaseIsos(isoBinds);
             return new MigrateAnswer(cmd, true, "Moved " + cmd.getVmName() + " to node " + target, null);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox could not migrate {}: {}", cmd.getVmName(), e.getMessage());
@@ -1482,8 +1502,11 @@ class ProxmoxVmHandler {
         // the snapshots of the data disks are in the disks' own files, which outlive the VM; the root disk's go with it
         new ProxmoxVmSnapshots(clients, taskTimeoutSeconds).deleteAll(client, location);
         giveBackDataDisks(client, location, volume);
+        // the binds are on the node of the VM; this agent can only remove those of its own node, the others go with the sweep of that node's next bind
+        List<String> isoBinds = node.equals(location.getNode()) ? ProxmoxIsos.boundNames(client.getVmConfig(location.getNode(), vmid)) : new ArrayList<>();
         waitFor(client, client.destroyVm(location.getNode(), vmid));
         LOGGER.info("Destroyed Proxmox VM {} with its disk", vmid);
+        releaseIsos(isoBinds);
         return new Answer(cmd, true, "Destroyed Proxmox VM " + vmid);
     }
 

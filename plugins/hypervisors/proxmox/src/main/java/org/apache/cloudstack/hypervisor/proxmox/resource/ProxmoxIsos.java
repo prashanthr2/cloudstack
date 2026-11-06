@@ -19,7 +19,13 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongConsumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -41,11 +47,13 @@ import com.cloud.agent.api.to.NfsTO;
  * storage entry, and the plugin makes no entry that mounts the secondary store (a dead export would hang the nodes' own daemons), so the ISO file is
  * <b>bind-mounted</b> from a short-lived read-only mount of the store onto a file of one small directory entry, {@code csiso-...}, that is {@code shared 1}
  * (the same files on every node, so a VM with an ISO can still migrate online). The bind keeps the NFS mount alive on its own; the directory of the mount is
- * unmounted again at once (lab M7). The ISO is then {@code csiso-...:iso/cs-<hash>.iso}, attached through the API like any volume.
+ * unmounted again at once (lab M7). The ISO is then {@code csiso-...:iso/cs-<ISO uuid>.iso}, attached through the API like any volume; the file is named
+ * after the ISO's UUID in CloudStack so that it can be traced from either side.
  * <p>
  * A bind is made when an ISO is attached, when a VM with an ISO starts (so a start after a node reboot works) and on the destination of a migration; it
- * is removed when the ISO is detached and no VM configuration of the cluster names it any more, and the binds that no configuration names are removed
- * once when this agent first needs one. An ISO whose mount or bind cannot be made fails the command with the reason.
+ * is removed when no VM configuration <b>of this node</b> names it any more: after the ISO is detached, after the VM moved to another node or was deleted,
+ * and after a start that no longer lists it. The binds that no configuration of the node names are also removed whenever this agent makes a bind, except
+ * those made in the last minutes (their drive may not be written yet). An ISO whose mount or bind cannot be made fails the command with the reason.
  * <p>
  * Every value that CloudStack gives ends up in a root shell, so each is checked against a strict pattern first and quoted as well.
  */
@@ -59,6 +67,10 @@ class ProxmoxIsos {
     private static final String FILE_PREFIX = "cs-";
     private static final int UNMOUNT_TIMEOUT_SECONDS = 30;
     private static final Pattern ISO_PATH = Pattern.compile("^(/[A-Za-z0-9._-]+)+$");
+    private static final Pattern UUID_NAME = Pattern.compile("^[A-Za-z0-9-]{1,64}$");
+    private static final Pattern NODE_NAME = Pattern.compile("^[A-Za-z0-9.-]{1,64}$");
+    /** A bind made less than this long ago is not swept: the command that made it may not have written the drive yet. */
+    private static final long SWEEP_GRACE_MS = 10 * 60 * 1000L;
 
     private final Supplier<ProxmoxApiClient> clients;
     private final String node;
@@ -66,7 +78,7 @@ class ProxmoxIsos {
     private final ProxmoxSecondaryMounts mounts;
     private final Supplier<String> isoPath;
     private final LongConsumer pauser;
-    private boolean swept;
+    private final Map<String, Long> recentBinds = new ConcurrentHashMap<>();
 
     ProxmoxIsos(Supplier<ProxmoxApiClient> clients, String node, Supplier<ProxmoxSsh> logins, ProxmoxSecondaryMounts mounts, Supplier<String> isoPath,
             LongConsumer pauser) {
@@ -91,9 +103,15 @@ class ProxmoxIsos {
         }
     }
 
-    /** The name of the bind: "cs-" and the first 16 characters of the SHA-256 of the store and file, with the extension Proxmox lists (.iso or .img). */
-    static String fileName(String sourceKey, String file) {
+    /**
+     * The name of the bind: "cs-" and the UUID of the ISO in CloudStack, with the extension Proxmox lists (.iso or .img). An ISO without a UUID gets the
+     * first 16 characters of the SHA-256 of the store and file instead.
+     */
+    static String fileName(String uuid, String sourceKey, String file) {
         String extension = file.toLowerCase(Locale.ROOT).endsWith(".img") ? ".img" : ".iso";
+        if (uuid != null && UUID_NAME.matcher(uuid).matches()) {
+            return FILE_PREFIX + uuid + extension;
+        }
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(sourceKey.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder();
@@ -104,6 +122,25 @@ class ProxmoxIsos {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    static String fileName(String sourceKey, String file) {
+        return fileName(null, sourceKey, file);
+    }
+
+    /** The files of the shared entry that the drives of a VM configuration name (an ISO that this class bound), as "cs-....iso". */
+    static List<String> boundNames(Map<String, String> config) {
+        List<String> names = new ArrayList<>();
+        for (String drive : ProxmoxVmConfig.CDROM_DRIVES) {
+            String value = config.get(drive);
+            if (value != null && value.startsWith(ProxmoxStorageNames.ISO_SHARED_STORAGE_ID_PREFIX)) {
+                String file = StringUtils.substringBefore(StringUtils.substringAfter(value, ":iso/"), ",");
+                if (file.startsWith(FILE_PREFIX) && UUID_NAME.matcher(StringUtils.substringBeforeLast(file, ".")).matches()) {
+                    names.add(file);
+                }
+            }
+        }
+        return names;
     }
 
     private Iso parse(TemplateObjectTO iso) {
@@ -122,7 +159,7 @@ class ProxmoxIsos {
         }
         try {
             String relative = ProxmoxSecondaryMounts.relativePath(path, "the ISO file");
-            return new Iso(store, relative, fileName(ProxmoxTemplates.sourceKey(store, relative), relative));
+            return new Iso(store, relative, fileName(iso.getUuid(), ProxmoxTemplates.sourceKey(store, relative), relative));
         } catch (IllegalArgumentException e) {
             throw new ProxmoxApiException(e.getMessage(), e);
         }
@@ -160,7 +197,8 @@ class ProxmoxIsos {
         }
         String target = directory + ISO_DIR + parsed.name;
         try (ProxmoxSsh ssh = logins.get()) {
-            sweepOnce(ssh, directory);
+            recentBinds.put(parsed.name, System.currentTimeMillis());
+            sweep(ssh, directory);
             mounts.withMount(ssh, parsed.store, true, mount -> {
                 String from = mount + "/" + parsed.relative;
                 if (!ssh.sudo("test -f " + ProxmoxSsh.quote(from), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS).isSuccess()) {
@@ -199,43 +237,71 @@ class ProxmoxIsos {
                 + ")); rm -f " + quoted, null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
     }
 
+    /** The configurations of the VMs of this node: a bind is only used by a VM of the node it is on. */
+    private String configs() {
+        if (!NODE_NAME.matcher(node).matches()) {
+            throw new ProxmoxApiException("The Proxmox node name " + node + " is not one this plugin can look up VM configurations for");
+        }
+        return ProxmoxSsh.quote("/etc/pve/nodes/" + node + "/qemu-server/") + "*.conf";
+    }
+
     /**
-     * After an ISO is detached: removes its bind from this node when no VM configuration of the cluster names it (one VM that still has the ISO keeps
-     * it for them all). Best effort: a failure is logged and leaves the bind for the sweep.
+     * After an ISO is detached: removes its bind from this node when no VM configuration of the node names it (one VM that still has the ISO keeps it
+     * for them all). Best effort: a failure is logged and leaves the bind for the sweep.
      */
     void release(TemplateObjectTO iso) {
         try {
-            Iso parsed = parse(iso);
-            String directory = directory();
-            String volume = ProxmoxStorageNames.isoSharedStorageId(directory) + ":iso/" + parsed.name;
-            String target = directory + ISO_DIR + parsed.name;
-            try (ProxmoxSsh ssh = logins.get()) {
-                ExecResult result = ssh.sudo("if grep -lF -- " + ProxmoxSsh.quote(volume) + " /etc/pve/nodes/*/qemu-server/*.conf >/dev/null 2>&1; then exit 0; fi; "
-                        + "if mountpoint -q " + ProxmoxSsh.quote(target) + "; then timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount " + ProxmoxSsh.quote(target)
-                        + " || timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount -l " + ProxmoxSsh.quote(target) + "; fi; rm -f " + ProxmoxSsh.quote(target), null,
-                        ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
-                if (!result.isSuccess()) {
-                    LOGGER.warn("Could not remove the bind of the ISO {} on node {}: {}", parsed.relative, node, result.describeFailure());
-                }
-            }
-        } catch (ProxmoxApiException | ProxmoxSshException e) {
+            releaseFiles(Collections.singletonList(parse(iso).name));
+        } catch (ProxmoxApiException e) {
             LOGGER.warn("Could not remove the bind of an ISO on node {}: {}", node, e.getMessage());
         }
     }
 
     /**
-     * The first time this agent needs a bind, the binds of this node that no VM configuration names any more are removed (an ISO that was left attached
-     * when its VM was removed, or an agent that stopped before the detach). Other callers wait for it, so no bind that is being made is taken away.
+     * Removes the binds of these files ("cs-....iso") from this node unless a VM configuration of the node still names them: after a VM left the node, was
+     * deleted, or started without them. Best effort, as {@link #release(TemplateObjectTO)}.
      */
-    private synchronized void sweepOnce(ProxmoxSsh ssh, String directory) {
-        if (swept) {
+    void releaseFiles(Collection<String> names) {
+        if (names.isEmpty()) {
             return;
         }
-        swept = true;
+        try {
+            String directory = directory();
+            String configs = configs();
+            try (ProxmoxSsh ssh = logins.get()) {
+                for (String name : names) {
+                    if (!name.matches("cs-[A-Za-z0-9-]+\\.(iso|img)")) {
+                        continue;
+                    }
+                    String volume = ProxmoxStorageNames.isoSharedStorageId(directory) + ":iso/" + name;
+                    String target = directory + ISO_DIR + name;
+                    ExecResult result = ssh.sudo("if grep -lF -- " + ProxmoxSsh.quote(volume) + " " + configs + " >/dev/null 2>&1; then exit 0; fi; "
+                            + "if mountpoint -q " + ProxmoxSsh.quote(target) + "; then timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount " + ProxmoxSsh.quote(target)
+                            + " || timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount -l " + ProxmoxSsh.quote(target) + "; fi; rm -f " + ProxmoxSsh.quote(target), null,
+                            ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+                    if (!result.isSuccess()) {
+                        LOGGER.warn("Could not remove the bind {} on node {}: {}", name, node, result.describeFailure());
+                    }
+                }
+            }
+        } catch (ProxmoxApiException | ProxmoxSshException e) {
+            LOGGER.warn("Could not remove the ISO binds on node {}: {}", node, e.getMessage());
+        }
+    }
+
+    /**
+     * Whenever this agent makes a bind, the binds of this node that no VM configuration of the node names are removed (an ISO that was left attached when
+     * its VM was deleted, or detached while the VM was stopped). The binds this agent made in the last minutes are kept, and other callers wait for the
+     * sweep, so no bind that is being made is taken away.
+     */
+    private synchronized void sweep(ProxmoxSsh ssh, String directory) {
+        long now = System.currentTimeMillis();
+        recentBinds.values().removeIf(at -> now - at > SWEEP_GRACE_MS);
+        String keep = recentBinds.isEmpty() ? "" : String.join("|", recentBinds.keySet()) + ") continue;; ";
         String base = directory + ISO_DIR;
         ExecResult result = ssh.sudo("for t in $(awk -v d=" + ProxmoxSsh.quote(base) + " 'index($2, d) == 1 { print $2 }' /proc/mounts); do b=${t##*/}; "
-                + "case \"$b\" in cs-????????????????.iso|cs-????????????????.img) ;; *) continue;; esac; "
-                + "grep -lF -- \":iso/$b\" /etc/pve/nodes/*/qemu-server/*.conf >/dev/null 2>&1 || "
+                + "case \"$b\" in " + keep + "cs-*.iso|cs-*.img) ;; *) continue;; esac; "
+                + "grep -lF -- \":iso/$b\" " + configs() + " >/dev/null 2>&1 || "
                 + "{ timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount \"$t\" || timeout " + UNMOUNT_TIMEOUT_SECONDS + " umount -l \"$t\"; rm -f \"$t\"; }; done", null,
                 ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
         if (!result.isSuccess()) {

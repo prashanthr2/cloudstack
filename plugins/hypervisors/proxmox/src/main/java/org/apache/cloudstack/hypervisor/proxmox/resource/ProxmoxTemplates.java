@@ -60,13 +60,14 @@ import com.cloud.storage.Storage;
 class ProxmoxTemplates {
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxTemplates.class);
 
-    /** The name of a template VM is this and a UUID of the pool and the file on the secondary store. */
+    /** The name of a template VM is this, the UUID of the template in CloudStack and the first 8 characters of the UUID of the pool. */
     static final String NAME_PREFIX = "cs-tmpl-";
     private static final String MEMORY_MIB = "256";
     private static final int CREATE_ATTEMPTS = 10;
     private static final long CREATE_RETRY_WAIT_MS = 500;
     private static final long GIB = 1024L * 1024 * 1024;
 
+    private static final Pattern TEMPLATE_UUID = Pattern.compile("^[A-Za-z0-9-]{1,36}$");
     private static final Pattern POOL_UUID = Pattern.compile("^[A-Za-z0-9-]{1,64}$");
     private static final Pattern DISK_PATH = Pattern.compile("^[0-9]+/vm-[0-9]+-[A-Za-z0-9-]+\\.qcow2$");
     /** The path of a template on primary: the base disk of a template VM, "&lt;vmid&gt;/base-&lt;vmid&gt;-disk-0.qcow2". */
@@ -107,9 +108,20 @@ class ProxmoxTemplates {
         return version + "|" + address[0] + "|" + address[1] + "|" + ProxmoxSecondaryMounts.relativePath(relativePath, "the template file");
     }
 
-    /** The name of the template VM of a file on a store on a pool, which a repeated copy finds again. */
+    /**
+     * The name of the template VM of a template on a pool, which a repeated copy finds again: the UUID of the template in CloudStack and the start of the
+     * pool's UUID, so that the VM can be traced to both. A template without a UUID gets a name from the pool and the file on the store instead.
+     */
+    static String vmName(String poolUuid, String templateUuid, String sourceKey) {
+        String pool = checkedPool(poolUuid);
+        if (templateUuid != null && TEMPLATE_UUID.matcher(templateUuid).matches()) {
+            return NAME_PREFIX + templateUuid + "-" + StringUtils.left(pool, 8);
+        }
+        return NAME_PREFIX + UUID.nameUUIDFromBytes((pool + "|" + sourceKey).getBytes(StandardCharsets.UTF_8));
+    }
+
     static String vmName(String poolUuid, String sourceKey) {
-        return NAME_PREFIX + UUID.nameUUIDFromBytes((checkedPool(poolUuid) + "|" + sourceKey).getBytes(StandardCharsets.UTF_8));
+        return vmName(poolUuid, null, sourceKey);
     }
 
     private static String checkedPool(String poolUuid) {
@@ -142,7 +154,7 @@ class ProxmoxTemplates {
             NfsTO store = (NfsTO) source.getDataStore();
             String relative = ProxmoxSecondaryMounts.relativePath(StringUtils.removeStart(StringUtils.defaultString(source.getPath()), "/"), "the template file");
             String poolUuid = checkedPool(((PrimaryDataStoreTO) destination.getDataStore()).getUuid());
-            String name = vmName(poolUuid, sourceKey(store, relative));
+            String name = vmName(poolUuid, source.getUuid(), sourceKey(store, relative));
             ProxmoxApiClient client = clients.get();
             try (ProxmoxSsh ssh = logins.get()) {
                 ProxmoxSecondaryMounts.ImageInfo[] image = new ProxmoxSecondaryMounts.ImageInfo[1];

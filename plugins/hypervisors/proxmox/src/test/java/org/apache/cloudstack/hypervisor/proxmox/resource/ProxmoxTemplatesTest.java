@@ -199,6 +199,18 @@ public class ProxmoxTemplatesTest {
     }
 
     @Test
+    public void theNameOfATemplateVmCarriesTheUuidOfTheTemplateAndTheStartOfThePoolUuid() {
+        String template = "c936cffb-9d93-3547-bae4-9f3b9e5d2c83";
+
+        String name = ProxmoxTemplates.vmName(POOL_UUID, template, SOURCE_KEY);
+
+        assertEquals("cs-tmpl-" + template + "-" + POOL_UUID.substring(0, 8), name);
+        assertTrue(name, name.length() <= 63);
+        assertNotEquals(name, ProxmoxTemplates.vmName("047ccc61-dc29-3d58-9c73-dd1ab2c100cf", template, SOURCE_KEY));
+        assertEquals(ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY), ProxmoxTemplates.vmName(POOL_UUID, "bad uuid", SOURCE_KEY));
+    }
+
+    @Test
     public void aPoolUuidThatIsNotOneThePluginUsesIsRefused() {
         for (String bad : new String[] {"abc; reboot", "", null, "a b"}) {
             try {

@@ -280,6 +280,20 @@ public class ProxmoxVmHandlerTest {
     }
 
     @Test
+    public void aMoveBeforeTheStartThatProxmoxRefusesFailsTheStartAndNamesTheVmAndBothNodes() {
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"));
+        when(client.migrateVm("pve2", 9204L, NODE)).thenReturn("UPID:pve2:1:2:3:qmigrate:9204:u:");
+        doThrow(new ProxmoxApiException("Host key verification failed.")).when(client).waitForTask("UPID:pve2:1:2:3:qmigrate:9204:u:", 600);
+
+        Answer answer = handler.start(startCommand("9204/vm-9204-disk-0.qcow2"));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("i-2-10-VM") && answer.getDetails().contains("from node pve2 to node " + NODE)
+                && answer.getDetails().contains("Host key verification failed"));
+        verify(client, never()).startVm(anyString(), anyLong());
+    }
+
+    @Test
     public void startingAVmThatIsAlreadyRunningChangesNothing() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
 

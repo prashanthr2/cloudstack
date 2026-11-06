@@ -921,3 +921,19 @@ Unit tests: `ProxmoxIsosTest` (14), `ProxmoxVmHandlerIsoTest` (29), the client, 
 | IS9 | Remove the ISO file from the store behind the ISO, then attach it | Fails with "does not exist on the secondary store" |
 | IS10 | Leave an ISO attached, expunge the instance, restart the agent (restart the management server or reconnect the host) and attach another ISO | The first attach after the restart removes the bind that no VM names (sweep: `mount` shows only the binds in use) |
 
+### Results of the first run (2026-11-06)
+
+| Test | Result |
+|---|---|
+| IS1 | **Pass.** One `csiso-6cbdeba0-...` entry (dir), one bind `cs-f931e8389c2189dc.iso` with `ro,soft,nosharecache`, `ide2: csiso-...:iso/cs-....iso,media=cdrom`, no `css-tmp` directory; the guest saw the CD (as `/dev/sr2`, the first two slots are the empty CD drives) |
+| IS2 | **Pass.** Two binds, `ide2` and `ide3` hold the two ISOs |
+| IS3 | **Pass.** Attach to a running instance: bind made, disc seen at once; detach: `ide2: none,media=cdrom`, that bind gone, the other two stay |
+| IS4 | **Pass** for the shared bind (both instances on one node: one bind, it stays after the first detach). **Finding:** with the instance *stopped* both ISOs were detached and the binds stayed, also after 10 minutes. Cause: CloudStack sends no command to the host to detach an ISO from a stopped instance (the DB changes only), so the plugin never knew. Fixed: a start that no longer lists an ISO removes its bind, and the sweep now runs before every bind (see below) |
+| IS5 | **Pass** for the boot from the ISO (blank root disk 5G, `ide2` holds the ISO, one bind). **Finding:** the bind stayed after the instance was expunged. Fixed: the delete of the VM removes the binds of the VM's configuration when the delete reaches the VM's node, and the sweep removes the others |
+| IS6 | **Pass** for the move: no bind on the destination before, the bind there during the migration, the move back worked. **Finding:** the bind stayed on the source node. Fixed: after a successful `MigrateCommand` the source removes the binds the VM's configuration named (the check is now per node: a bind is only used by the VMs of its own node). The blocked-NFS step did not fail at once: `PrepareForMigrationCommand` waits for the temporary mount, which `timeout 60` ends after a minute (the mount client retries for up to two minutes by default); not run to its end |
+| IS7 | **Pass.** After `umount` of the bind and a start from CloudStack the bind is back (`sj` shows the temporary mount, `mount --bind`, the check, the unmount; the management log has no line for it because the plugin logs only the entry creation and the attach) |
+| IS8 | **Not valid.** The instances were *stopped*: an attach to a stopped instance sends no command to the host either, so nothing ran. Repeat with a **running** instance on the node whose NFS access is blocked |
+| IS9 | **Pass.** "Failed to attach ISO" with the file missing from the store |
+| IS10 | **Pass** for the sweep (after the host reconnect and an attach of another ISO the old bind was gone). **Finding:** the bind stayed after the expunge, as IS5 |
+
+Changes after this run: the names carry CloudStack's UUIDs (`cs-<ISO uuid>.iso` for the bind, `cs-tmpl-<template uuid>-<8 characters of the pool uuid>` for the template VM); a bind is removed after a migration, a delete and a start that does not list it; the sweep runs before every bind (not only the first) and skips binds made in the last 10 minutes; a move before a start that Proxmox refuses fails with the VM, both nodes and the reason.

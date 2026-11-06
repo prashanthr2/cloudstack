@@ -121,6 +121,31 @@ public class ProxmoxIsosTest {
         assertEquals(NAME, isos.nameOf(iso(RELATIVE)));
     }
 
+    @Test
+    public void theNameOfABindIsTheUuidOfTheIsoInCloudStackWhenThereIsOne() {
+        String uuid = "c936cffb-9d93-3547-bae4-9f3b9e5d2c83";
+        assertEquals("cs-" + uuid + ".iso", ProxmoxIsos.fileName(uuid, SOURCE_KEY, RELATIVE));
+        assertEquals("cs-" + uuid + ".img", ProxmoxIsos.fileName(uuid, SOURCE_KEY, "a/b.img"));
+        assertEquals(NAME, ProxmoxIsos.fileName("bad uuid; reboot", SOURCE_KEY, RELATIVE));
+        TemplateObjectTO withUuid = iso(RELATIVE);
+        when(withUuid.getUuid()).thenReturn(uuid);
+
+        assertEquals("cs-" + uuid + ".iso", isos.nameOf(withUuid));
+        assertEquals(ENTRY + ":iso/cs-" + uuid + ".iso", isos.volume(withUuid));
+        assertTrue(link.commandsWith("mount --bind").get(0).contains("'" + DIRECTORY + "/template/iso/cs-" + uuid + ".iso'"));
+    }
+
+    @Test
+    public void theBoundFilesOfAConfigurationAreTheOnesOfTheSharedEntryOnItsCdromDrives() {
+        Map<String, String> config = new LinkedHashMap<>();
+        config.put("ide2", ENTRY + ":iso/cs-c936cffb-9d93-3547-bae4-9f3b9e5d2c83.iso,media=cdrom,size=9150K");
+        config.put("ide3", "none,media=cdrom");
+        config.put("ide0", "local:iso/ubuntu.iso,media=cdrom");
+        config.put("scsi0", "cs-x:104/vm-104-disk-0.qcow2");
+
+        assertEquals(java.util.Collections.singletonList("cs-c936cffb-9d93-3547-bae4-9f3b9e5d2c83.iso"), ProxmoxIsos.boundNames(config));
+    }
+
     // ---- making an ISO available ----
 
     @Test
@@ -229,24 +254,22 @@ public class ProxmoxIsosTest {
     // ---- the binds that no VM names ----
 
     @Test
-    public void theBindsThatNoVmConfigurationNamesAreRemovedOnceBeforeTheFirstBindAndNotAgain() {
+    public void theBindsThatNoConfigurationOfTheNodeNamesAreRemovedBeforeEveryBindExceptTheOnesJustMade() {
         isos.volume(iso(RELATIVE));
         isos.volume(iso(RELATIVE));
 
-        assertEquals(1, link.commandsWith("/proc/mounts").size());
-        String sweep = link.commandsWith("/proc/mounts").get(0);
-        assertTrue(sweep, sweep.contains("'" + DIRECTORY + "/template/iso/'") && sweep.contains("/etc/pve/nodes/*/qemu-server/*.conf"));
-        assertTrue(sweep, sweep.contains("cs-????????????????.iso|cs-????????????????.img"));
-        assertTrue(link.commands.indexOf(sweep) < link.commands.indexOf(link.commandsWith("mount --bind").get(0)));
+        assertEquals(2, link.commandsWith("/proc/mounts").size());
+        String first = link.commandsWith("/proc/mounts").get(0);
+        assertTrue(first, first.contains("'" + DIRECTORY + "/template/iso/'") && first.contains("'/etc/pve/nodes/pve1/qemu-server/'*.conf"));
+        assertTrue(first, first.contains("cs-*.iso|cs-*.img") && first.contains(NAME + ") continue;;"));
+        assertTrue(link.commands.indexOf(first) < link.commands.indexOf(link.commandsWith("mount --bind").get(0)));
     }
 
     @Test
-    public void aFailureOfTheSweepIsNotFatalAndNotRepeated() {
+    public void aFailureOfTheSweepIsNotFatal() {
         replies.put("/proc/mounts", new ExecResult(1, "", "awk: error"));
 
         assertEquals(ENTRY + ":iso/" + NAME, isos.volume(iso(RELATIVE)));
-        isos.volume(iso(RELATIVE));
-        assertEquals(1, link.commandsWith("/proc/mounts").size());
     }
 
     // ---- release ----
@@ -257,8 +280,19 @@ public class ProxmoxIsosTest {
 
         String release = link.commandsWith("grep -lF").get(0);
         String target = DIRECTORY + "/template/iso/" + NAME;
-        assertTrue(release, release.contains("grep -lF -- '" + ENTRY + ":iso/" + NAME + "' /etc/pve/nodes/*/qemu-server/*.conf"));
+        assertTrue(release, release.contains("grep -lF -- '" + ENTRY + ":iso/" + NAME + "' '/etc/pve/nodes/pve1/qemu-server/'*.conf"));
         assertTrue(release, release.contains("then exit 0; fi") && release.contains("umount '" + target + "'") && release.contains("rm -f '" + target + "'"));
+    }
+
+    @Test
+    public void filesThatAVmLeftOrThatNoStartListsAreReleasedOneByOneAndOddNamesAreSkipped() {
+        isos.releaseFiles(java.util.Arrays.asList(NAME, "cs-2.img", "x;reboot.iso"));
+
+        assertEquals(1, logins);
+        assertEquals(2, link.commandsWith("grep -lF").size());
+        assertFalse(ran("x;reboot"));
+        isos.releaseFiles(java.util.Collections.emptyList());
+        assertEquals(1, logins);
     }
 
     @Test
