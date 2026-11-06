@@ -895,3 +895,11 @@ Unit tests: `ProxmoxTemplatesTest`, `ProxmoxVmHandlerTemplateTest`, the new clie
 | TV7 | Pass: with `tv-f` alive the template VM and row stayed; after the expunge and two cycles the log shows `Removed the template VM ... (109) from the pool` and `Successfully evicted`, and the VM and row were gone. The eviction of a template whose VM was removed by hand answered `nothing to remove` and cleared the row. The failure of `tv-g` at 23:28:15 is the bug of TV1 (a copy to a pool that had no row, then no template VM found); its second attempt worked |
 | TV10 | One row per pool (`109/...` on pool 7, `110/...` on pool 8) and one `Made the template VM` per pool, but **2 of 10 deploys failed**: `Proxmox task qmclone failed: clone failed: cfs-lock 'storage-cs-7fd5565c-...' error: got lock request timeout`. The plugin now tries a clone that fails with that error again with a new VM id (unit test added); to check again with the ten parallel deploys, and if some still fail, limit the clones that run at once per pool (open-issues.md) |
 
+
+### Results of the third run (2026-11-06, with the template VM read from its configuration and the clone retry)
+
+| # | Result |
+|---|---|
+| TV1 | Pass. One `Made the template VM cs-tmpl-e0ae7df7-... (101) on cs-f7c5790d-...: 101/base-101-disk-0.qcow2` for the deploy, and no failed first attempt (before the fix: two failures and a copy to two pools). The path in the log is the one core keeps |
+| TV4 | Pass: after the system VM template rows were deleted and the console proxy VM destroyed, one copy only (before the fix: two); the row is `103/base-103-disk-0.qcow2` in both columns, pool 7, Ready. The state of the new console proxy VM was not pasted |
+| TV10 | Pass: 12 parallel deploys, all succeeded (before the fix: 2 of 10 failed on the pool lock). The log has 0 lines with `lock request timeout` or `locked command timed out`, so the pool lock was not hit this time and **the retry was not exercised on the lab** (it is covered by unit tests only); not pasted: how long the deploys took |
