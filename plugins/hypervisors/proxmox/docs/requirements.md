@@ -224,6 +224,13 @@ A new secondary storage VM or console proxy VM needs the Java agent (`agent.zip`
   `template/iso` folder on each node when the entry is activated there: nothing is made by hand. It uploads `agent.zip` once per node and version as `cs-patch-<16 characters>.iso` (a file whose name ends in `.iso`; the bytes are not an ISO image) and removes the files of older versions.
 - **Privileges:** creating the entry and uploading need `Datastore.Allocate` and `Datastore.AllocateTemplate` on `/storage`, which the role `PVEDatastoreAdmin` that the token already has for primary storage includes (lab P1 and P2, no extra privilege). `Sys.Modify` is not needed.
 - **Room:** 110 MiB on the node's disk under that path, once per version of the management server.
+
+## ISOs of the secondary storage (design-phase11, step 3)
+
+- **Entry:** `csiso-<uuid>` (a `dir` storage that **is shared**), path from the global setting **`proxmox.iso.path`** (default `/var/lib/cloudstack-iso`), content `iso`, created by CloudStack when the first ISO is attached or a VM with an ISO starts; Proxmox makes the directory and `template/iso` on each node. The token needs what it needs for the `csp-` entry (`PVEDatastoreAdmin` on `/storage`).
+- **SSH:** the ISO file is bound onto a file of that directory over the SSH login of the host (`mount`, `mountpoint`, `touch`, `rm`, run with `sudo sh -c`), from a short read-only NFS mount of the secondary store, so the user needs full `sudo` as for volume snapshots, and the node needs a route to the NFS server (firewall) and an export that the node may read.
+- **Upgrade note:** the plugin no longer makes or uses the entries `css-*` (the NFS mount of the secondary store), `cst-*` (templates) and `csi-*` (ISOs). Those that exist can be removed by hand with `pvesm remove <id>` once no instance and no template uses them (instances that were started with an ISO keep a drive that names a `csi-` volume until they are started again or the ISO is detached); a `hard` NFS mount of the old `css-` entry that is still on a node goes with the entry.
+
 - **The management server** needs `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` in `/usr/share/cloudstack-common/vms/` (the package `cloudstack-common` installs them). If they are missing, the start of the system VM fails with a message that names the directory.
 - The entry appears in the Proxmox web interface as one fixed entry named `csp-...`; it is not removed when the last SSVM goes away.
 

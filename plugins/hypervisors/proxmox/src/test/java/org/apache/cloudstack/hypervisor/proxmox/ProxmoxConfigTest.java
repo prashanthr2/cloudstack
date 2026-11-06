@@ -52,7 +52,7 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(10, config.getConfigKeys().length);
+        assertEquals(11, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
@@ -72,6 +72,10 @@ public class ProxmoxConfigTest {
         assertEquals("proxmox.secondary.mount.options", ProxmoxConfig.SecondaryMountOptions.key());
         assertEquals("soft,timeo=30,retrans=2,nosharecache", ProxmoxConfig.SecondaryMountOptions.value());
         assertTrue(ProxmoxConfig.SecondaryMountOptions.isDynamic());
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.IsoPath));
+        assertEquals("proxmox.iso.path", ProxmoxConfig.IsoPath.key());
+        assertEquals("/var/lib/cloudstack-iso", ProxmoxConfig.IsoPath.value());
+        assertTrue(ProxmoxConfig.IsoPath.isDynamic());
         assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
         assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());

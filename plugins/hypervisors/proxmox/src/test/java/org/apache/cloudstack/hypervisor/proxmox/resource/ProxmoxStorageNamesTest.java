@@ -52,31 +52,14 @@ public class ProxmoxStorageNamesTest {
     }
 
     @Test
-    public void aSecondaryStoreHasOneNfsEntryThatEveryCommandFindsAgain() {
-        String id = ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary");
+    public void theSharedIsoEntryIsNamedFromItsPathStartsWithALetterAndIsNotATemplateEntry() {
+        String id = ProxmoxStorageNames.isoSharedStorageId("/var/lib/cloudstack-iso");
 
-        assertEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary"));
-        assertNotEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.5", "/acs/secondary"));
-        assertNotEquals(id, ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/other"));
-        assertTrue(id, id.startsWith("css-"));
-        assertEquals("/mnt/" + id, ProxmoxStorageNames.secondaryMountPath(id));
-    }
-
-    @Test
-    public void theStoreEntryAndTheTemplateEntriesCannotBeMistakenForEachOther() {
-        assertFalse(ProxmoxStorageNames.isTemplateStorageId(ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary")));
-    }
-
-    @Test
-    public void anIsoEntryStartsWithALetterIsDerivedFromTheFolderAndIsNotATemplateEntry() {
-        String first = ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211");
-
-        assertTrue(first, first.startsWith("csi-") && ProxmoxStorageNames.isIsoStorageId(first));
-        assertEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/211"));
-        assertNotEquals(first, ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", "template/tmpl/2/212"));
-        assertFalse(ProxmoxStorageNames.isTemplateStorageId(first));
-        assertFalse(ProxmoxStorageNames.isIsoStorageId("cst-3f2a8c1e-0000-3000-8000-000000000000"));
-        assertFalse(ProxmoxStorageNames.isIsoStorageId(null));
+        assertTrue(id, id.startsWith("csiso-"));
+        assertEquals(id, ProxmoxStorageNames.isoSharedStorageId("/var/lib/cloudstack-iso"));
+        assertNotEquals(id, ProxmoxStorageNames.isoSharedStorageId("/other"));
+        assertNotEquals(id, ProxmoxStorageNames.patchStorageId("/var/lib/cloudstack-iso"));
+        assertFalse(ProxmoxStorageNames.isTemplateStorageId(id));
     }
 
     @Test

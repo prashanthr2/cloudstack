@@ -67,6 +67,12 @@ public class ProxmoxConfig implements Configurable {
                     + "storage VM or console proxy VM, as one Proxmox storage entry. Proxmox creates the directory; the API token needs the "
                     + "privileges to create a storage entry and to upload to it (PVEDatastoreAdmin on /storage)", true);
 
+    public static final ConfigKey<String> IsoPath = new ConfigKey<>("Advanced", String.class,
+            "proxmox.iso.path", "/var/lib/cloudstack-iso",
+            "Directory on every Proxmox node where the ISOs of the secondary storage (and the config drive) are bound, one file each, for the time they are "
+                    + "attached, as one shared Proxmox storage entry. Proxmox creates the directory; the API token needs the privileges to create a "
+                    + "storage entry (PVEDatastoreAdmin on /storage). Every node needs the same path, and an SSH login with sudo", true);
+
     public static final ConfigKey<String> SystemVmSshKey = new ConfigKey<>("Advanced", String.class,
             "proxmox.systemvm.ssh.key", "",
             "Public SSH key(s), the contents of a .pub file, that CloudStack adds to /root/.ssh/authorized_keys of every system VM and router on "
@@ -90,6 +96,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey, SecondaryMountOptions};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey, SecondaryMountOptions, IsoPath};
     }
 }

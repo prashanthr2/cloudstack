@@ -37,6 +37,10 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ExecResult;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ScriptedSshLink;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CreateObjectAnswer;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
@@ -49,6 +53,7 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
 import com.cloud.agent.api.Answer;
+import com.cloud.agent.api.PrepareForMigrationCommand;
 import com.cloud.agent.api.StartCommand;
 import com.cloud.agent.api.UnsupportedAnswer;
 import com.cloud.agent.api.to.DiskTO;
@@ -63,21 +68,30 @@ public class ProxmoxVmHandlerIsoTest {
     private static final String VM = "i-2-10-VM";
     private static final String FOLDER = "template/tmpl/2/211";
     private static final String FILE = "211-2-654b5686.iso";
-    private static final String STORE_ENTRY = ProxmoxStorageNames.secondaryStorageId("10.0.32.4", "/acs/secondary");
-    private static final String STORE_MOUNT = "/mnt/" + STORE_ENTRY;
-    private static final String ISO_ENTRY = ProxmoxStorageNames.isoStorageId("10.0.32.4", "/acs/secondary", FOLDER);
-    private static final String ISO_VOLUME = ISO_ENTRY + ":iso/" + FILE;
+    private static final String ISO_DIRECTORY = "/var/lib/cloudstack-iso";
+    private static final String RELATIVE = FOLDER + "/" + FILE;
+    private static final String ISO_ENTRY = ProxmoxStorageNames.isoSharedStorageId(ISO_DIRECTORY);
+    private static final String ISO_NAME = ProxmoxIsos.fileName("3|10.0.32.4|/acs/secondary|" + RELATIVE, RELATIVE);
+    private static final String ISO_VOLUME = ISO_ENTRY + ":iso/" + ISO_NAME;
     private static final String POOL = "cs-7fd5565c-6c1e-3032-81ec-d404812915ab";
     private static final long GIB = 1024L * 1024 * 1024;
 
     private ProxmoxApiClient client;
     private ProxmoxVmHandler handler;
+    private ScriptedSshLink link;
 
     @Before
     public void setUp() {
         client = mock(ProxmoxApiClient.class);
+        link = new ScriptedSshLink();
         handler = new ProxmoxVmHandler(() -> client, NODE, "10.0.32.198", 8006, () -> "x", millis -> { }, () -> 600);
+        handler.setIsos(new ProxmoxIsos(() -> client, NODE, () -> ProxmoxSsh.open(new SshTarget("10.0.0.1", 22, "root", null, "pw", null), () -> link),
+                new ProxmoxSecondaryMounts(() -> ProxmoxSecondaryMounts.DEFAULT_OPTIONS), () -> ISO_DIRECTORY, millis -> { }));
         storageBehavesLikeProxmox();
+    }
+
+    private boolean ran(String text) {
+        return !link.commandsWith(text).isEmpty();
     }
 
     private static ProxmoxApiClient.StorageConfig aStorage(String id) {
@@ -89,9 +103,7 @@ public class ProxmoxVmHandlerIsoTest {
         Set<String> created = new HashSet<>();
         when(client.findStorage(anyString())).thenAnswer(invocation -> created.contains(invocation.<String>getArgument(0))
                 ? aStorage(invocation.getArgument(0)) : null);
-        doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client)
-                .createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
-        doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client).createIsoDirStorage(anyString(), anyString(), anyString());
+        doAnswer(invocation -> created.add(invocation.getArgument(0))).when(client).createSharedIsoStorage(anyString(), anyString());
         when(client.getStorageStatus(eq(NODE), anyString())).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
     }
 
@@ -126,27 +138,51 @@ public class ProxmoxVmHandlerIsoTest {
     // ---- attach ----
 
     @Test
-    public void anIsoIsPutInTheDriveOfItsSlotAfterItsFolderGotAnEntryOnTheMountedStore() {
+    public void anIsoIsPutInTheDriveOfItsSlotAfterItsFileWasBoundFromTheStoreIntoTheSharedEntry() {
         theVmIs("running", config("ide2", "none,media=cdrom"));
 
-        Answer answer = handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM));
+        Answer answer = handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM));
 
         assertTrue(answer.getDetails(), answer.getResult());
-        verify(client).createSecondaryNfsStorage(STORE_ENTRY, "10.0.32.4", "/acs/secondary", STORE_MOUNT, "vers=3,ro");
-        verify(client).createIsoDirStorage(ISO_ENTRY, STORE_MOUNT, FOLDER);
+        verify(client).createSharedIsoStorage(ISO_ENTRY, ISO_DIRECTORY);
+        assertTrue(link.commands.toString(), ran("mount --bind '/mnt/css-tmp-"));
+        assertTrue(link.commands.toString(), ran(ISO_DIRECTORY + "/template/iso/" + ISO_NAME));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("ide2", ISO_VOLUME + ",media=cdrom"));
     }
 
     @Test
     public void theSecondSlotIsTheSecondDriveAndAnotherAttachOfTheSameIsoCreatesNoEntry() {
         theVmIs("running", config("ide2", "none,media=cdrom", "ide3", "none,media=cdrom"));
-        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
 
-        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 4), VM)).getResult());
+        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 4), VM)).getResult());
 
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("ide3", ISO_VOLUME + ",media=cdrom"));
-        verify(client, times(1)).createIsoDirStorage(anyString(), anyString(), anyString());
-        verify(client, times(1)).createSecondaryNfsStorage(anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(client, times(1)).createSharedIsoStorage(anyString(), anyString());
+    }
+
+    @Test
+    public void anIsoWhoseBindCannotBeMadeFailsTheAttachWithTheReasonAndTheAdviceAndChangesNothing() {
+        theVmIs("running", config("ide2", "none,media=cdrom"));
+        link.answers = command -> command.contains("mount -t nfs") ? new ExecResult(32, "", "mount.nfs: access denied by server") : new ExecResult(0, "", "");
+
+        Answer answer = handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("access denied by server"));
+        assertTrue(answer.getDetails(), answer.getDetails().contains("Detach the ISO"));
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
+    }
+
+    @Test
+    public void withoutTheSshLoginAnIsoCannotBeMadeAvailableAndTheReasonSaysSo() {
+        ProxmoxVmHandler without = new ProxmoxVmHandler(() -> client, NODE, "10.0.32.198", 8006, () -> "x", millis -> { }, () -> 600);
+        theVmIs("running", config("ide2", "none,media=cdrom"));
+
+        Answer answer = without.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("no SSH login"));
     }
 
     @Test
@@ -154,7 +190,7 @@ public class ProxmoxVmHandlerIsoTest {
         // Proxmox keeps a drive added to a running VM pending, and answers 200: it must not be tried
         theVmIs("running", config("scsi0", "x"));
 
-        Answer answer = handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM));
+        Answer answer = handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM));
 
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("stop and start"));
@@ -165,7 +201,7 @@ public class ProxmoxVmHandlerIsoTest {
     public void aStoppedVmGetsTheDriveEvenIfItHadNone() {
         theVmIs("stopped", config("scsi0", "x"));
 
-        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertTrue(handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("ide2", ISO_VOLUME + ",media=cdrom"));
     }
 
@@ -173,7 +209,7 @@ public class ProxmoxVmHandlerIsoTest {
     public void anIsoThatCannotBeUsedFailsWithAReason() {
         theVmIs("running", config("ide2", "none,media=cdrom"));
 
-        Answer wrongSlot = handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 9), VM));
+        Answer wrongSlot = handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 9), VM));
         assertFalse(wrongSlot.getResult());
         assertTrue(wrongSlot.getDetails(), wrongSlot.getDetails().contains("CD-ROM slot 9"));
 
@@ -181,8 +217,8 @@ public class ProxmoxVmHandlerIsoTest {
         assertFalse(wrongName.getResult());
         assertTrue(wrongName.getDetails(), wrongName.getDetails().contains(".iso"));
 
-        Answer noFolder = handler.attachIso(new AttachCommand(isoDisk(iso(FILE), 3), VM));
-        assertFalse(noFolder.getResult());
+        Answer leavesTheStore = handler.attachIso(new AttachCommand(isoDisk(iso("../" + FILE), 3), VM));
+        assertFalse(leavesTheStore.getResult());
 
         TemplateObjectTO onPrimary = mock(TemplateObjectTO.class);
         when(onPrimary.getDataStore()).thenReturn(mock(PrimaryDataStoreTO.class));
@@ -194,7 +230,7 @@ public class ProxmoxVmHandlerIsoTest {
 
     @Test
     public void aVmProxmoxDoesNotKnowCannotTakeAnIso() {
-        assertFalse(handler.attachIso(new AttachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertFalse(handler.attachIso(new AttachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
     }
 
     @Test
@@ -211,22 +247,33 @@ public class ProxmoxVmHandlerIsoTest {
     public void detachingEjectsTheDiscAndKeepsTheDrive() {
         theVmIs("running", config("ide2", ISO_VOLUME + ",media=cdrom,size=350K"));
 
-        Answer answer = handler.detachIso(new DettachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM));
+        Answer answer = handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM));
 
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("ide2", "none,media=cdrom"));
+        // the bind goes unless a VM configuration of the cluster still names the volume
+        String release = link.commandsWith("grep -lF").get(0);
+        assertTrue(release, release.contains(ISO_VOLUME) && release.contains("umount '" + ISO_DIRECTORY + "/template/iso/" + ISO_NAME + "'"));
+    }
+
+    @Test
+    public void aFailureToRemoveTheBindDoesNotFailTheDetach() {
+        theVmIs("running", config("ide2", ISO_VOLUME + ",media=cdrom,size=350K"));
+        link.answers = command -> command.contains("grep -lF") ? new ExecResult(1, "", "umount: busy") : new ExecResult(0, "", "");
+
+        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
     }
 
     @Test
     public void detachingAnEmptyDriveOrAnotherIsoOrAGoneVmIsASuccessWithoutAChange() {
         theVmIs("running", config("ide2", "none,media=cdrom"));
-        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
 
         theVmIs("running", config("ide2", ISO_ENTRY + ":iso/other.iso,media=cdrom,size=1M"));
-        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
 
         when(client.findVmByName(VM)).thenReturn(null);
-        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(FOLDER + "/" + FILE), 3), VM)).getResult());
+        assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
     }
 
@@ -265,7 +312,7 @@ public class ProxmoxVmHandlerIsoTest {
     @Test
     public void everyCdromSlotOfTheStartCommandBecomesADriveAndABootableIsoIsBootedFirst() {
         TemplateObjectTO empty = mock(TemplateObjectTO.class);
-        StartCommand cmd = startWithIsos(BootloaderType.CD, isoDisk(iso(FOLDER + "/" + FILE), 3), isoDisk(empty, 4));
+        StartCommand cmd = startWithIsos(BootloaderType.CD, isoDisk(iso(RELATIVE), 3), isoDisk(empty, 4));
 
         Answer answer = handler.start(cmd);
 
@@ -278,7 +325,7 @@ public class ProxmoxVmHandlerIsoTest {
 
     @Test
     public void withoutABootableIsoTheVmBootsFromItsDisk() {
-        StartCommand cmd = startWithIsos(null, isoDisk(iso(FOLDER + "/" + FILE), 3));
+        StartCommand cmd = startWithIsos(null, isoDisk(iso(RELATIVE), 3));
 
         assertTrue(handler.start(cmd).getResult());
         Map<String, String> options = startOptions();
@@ -299,6 +346,28 @@ public class ProxmoxVmHandlerIsoTest {
     }
 
     @Test
+    public void anIsoWhoseBindCannotBeMadeFailsTheStartWithTheReasonAndTheAdvice() {
+        StartCommand cmd = startWithIsos(null, isoDisk(iso(RELATIVE), 3));
+        link.answers = command -> command.contains("mount --bind") ? new ExecResult(32, "", "mount: wrong fs type") : new ExecResult(0, "", "");
+
+        Answer answer = handler.start(cmd);
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("wrong fs type") && answer.getDetails().contains("Detach the ISO"));
+        verify(client, never()).startVm(anyString(), anyLong());
+    }
+
+    @Test
+    public void theBindIsMadeBeforeTheDrivesAreWrittenSoAStartAfterANodeRebootWorks() {
+        StartCommand cmd = startWithIsos(null, isoDisk(iso(RELATIVE), 3));
+
+        assertTrue(handler.start(cmd).getResult());
+
+        assertTrue(link.commands.toString(), ran("mount --bind"));
+        assertEquals(ISO_VOLUME + ",media=cdrom", startOptions().get("ide2"));
+    }
+
+    @Test
     public void anIsoThatCannotBeUsedFailsTheStartWithTheReason() {
         StartCommand cmd = startWithIsos(null, isoDisk(iso(FOLDER + "/template.properties"), 3));
 
@@ -307,6 +376,48 @@ public class ProxmoxVmHandlerIsoTest {
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains(".iso"));
         verify(client, never()).startVm(anyString(), anyLong());
+    }
+
+    // ---- the destination of a migration ----
+
+    private PrepareForMigrationCommand prepareWithIsos(DiskTO... isos) {
+        StartCommand start = startWithIsos(null, isos);
+        VirtualMachineTO machine = start.getVirtualMachine();
+        PrepareForMigrationCommand cmd = mock(PrepareForMigrationCommand.class);
+        when(cmd.getVirtualMachine()).thenReturn(machine);
+        when(client.getClusterNodes(null)).thenReturn(java.util.Arrays.asList(new ProxmoxApiClient.NodeInfo(NODE, "10.0.32.198", true),
+                new ProxmoxApiClient.NodeInfo("pve2", "10.0.32.199", true)));
+        when(client.findVmByName(VM)).thenReturn(new ProxmoxApiClient.VmLocation(9204, VM, "pve2", "running"));
+        when(client.getMigrationProblems("pve2", 9204L, NODE)).thenReturn(Collections.emptyList());
+        return cmd;
+    }
+
+    @Test
+    public void theDestinationBindsTheIsosOfTheVmBeforeTheVmMovesThere() {
+        Answer answer = handler.prepareForMigration(prepareWithIsos(isoDisk(iso(RELATIVE), 3)));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertTrue(link.commands.toString(), ran("mount --bind"));
+        verify(client).createSharedIsoStorage(ISO_ENTRY, ISO_DIRECTORY);
+    }
+
+    @Test
+    public void aVmWhoseIsoCannotBeBoundOnTheDestinationIsNotMoved() {
+        link.answers = command -> command.contains("mount -t nfs") ? new ExecResult(32, "", "mount.nfs: Connection timed out") : new ExecResult(0, "", "");
+
+        Answer answer = handler.prepareForMigration(prepareWithIsos(isoDisk(iso(RELATIVE), 3)));
+
+        assertFalse(answer.getResult());
+        assertTrue(answer.getDetails(), answer.getDetails().contains("cannot move to Proxmox node pve1") && answer.getDetails().contains("Connection timed out"));
+        verify(client, never()).getMigrationProblems(anyString(), anyLong(), anyString());
+    }
+
+    @Test
+    public void anEmptyDriveNeedsNoBindOnTheDestination() {
+        Answer answer = handler.prepareForMigration(prepareWithIsos(isoDisk(mock(TemplateObjectTO.class), 3)));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertTrue(link.commands.isEmpty());
     }
 
     // ---- a blank root volume ----
@@ -395,7 +506,7 @@ public class ProxmoxVmHandlerIsoTest {
 
     @Test
     public void aBootableIsoIsBootedBeforeTheMovedRootDisk() {
-        StartCommand cmd = startWithIsos(BootloaderType.CD, isoDisk(iso(FOLDER + "/" + FILE), 3));
+        StartCommand cmd = startWithIsos(BootloaderType.CD, isoDisk(iso(RELATIVE), 3));
         when(cmd.getVirtualMachine().getDetails()).thenReturn(Collections.singletonMap("rootDiskController", "virtio"));
         when(client.getVmConfig(NODE, 9204L)).thenReturn(config("scsi0", ROOT_VOLUME + ",size=8G"));
 

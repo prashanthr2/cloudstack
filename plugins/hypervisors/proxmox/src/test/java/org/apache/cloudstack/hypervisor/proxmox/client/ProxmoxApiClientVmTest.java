@@ -354,21 +354,6 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
-    public void theSecondaryStoreIsAddedAsAnNfsEntryThatDoesNotTryToCreateFoldersInTheReadOnlyShare() {
-        answer("POST /api2/json/storage", "{\"data\":{\"type\":\"nfs\",\"storage\":\"css-1\"}}");
-
-        client.createSecondaryNfsStorage("css-1", "10.0.32.4", "/acs/secondary", "/mnt/css-1", "vers=3,ro");
-
-        String body = bodies.get(0);
-        assertTrue(body, body.contains("storage=css-1"));
-        assertTrue(body, body.contains("type=nfs"));
-        assertTrue(body, body.contains("export=%2Facs%2Fsecondary"));
-        assertTrue(body, body.contains("path=%2Fmnt%2Fcss-1"));
-        assertTrue(body, body.contains("options=vers%3D3%2Cro"));
-        assertTrue(body, body.contains("create-subdirs=0"));
-    }
-
-    @Test
     public void aConsoleIsOpenedForAWebsocketAndItsPortTicketAndPasswordAreRead() {
         answer("POST /api2/json/nodes/pve1/qemu/9204/vncproxy", "{\"data\":{\"port\":5900,\"ticket\":\"PVEVNC:68F1::abc\",\"password\":\"s3cr3t!!\","
                 + "\"user\":\"pveaudit@pam!cloudstack\",\"upid\":\"UPID:x\"}}");
@@ -496,16 +481,15 @@ public class ProxmoxApiClientVmTest {
     // ---- ISOs (Phase 6) ----
 
     @Test
-    public void theEntryOfAnIsoFolderIsADirectoryOnTheSecondaryMountThatIsSharedAndReadOnlyLike() {
-        answer("POST /api2/json/storage", "{\"data\":{\"storage\":\"csi-x\",\"type\":\"dir\"}}");
+    public void theIsoEntryIsASharedDirectoryEntryForIsoFiles() {
+        answer("POST /api2/json/storage", "{\"data\":{\"storage\":\"csiso-x\",\"type\":\"dir\"}}");
 
-        client.createIsoDirStorage("csi-x", "/mnt/css-y", "template/tmpl/2/211");
+        client.createSharedIsoStorage("csiso-x", "/var/lib/cloudstack-iso");
 
         String body = bodies.get(0);
-        assertTrue(body, body.contains("storage=csi-x") && body.contains("type=dir") && body.contains("path=%2Fmnt%2Fcss-y"));
-        assertTrue(body, body.contains("content=iso") && body.contains("content-dirs=iso%3Dtemplate%2Ftmpl%2F2%2F211"));
-        assertTrue(body, body.contains("is_mountpoint=yes") && body.contains("shared=1"));
-        assertTrue(body, body.contains("create-subdirs=0") && body.contains("create-base-path=0"));
+        assertTrue(body, body.contains("storage=csiso-x") && body.contains("type=dir") && body.contains("path=%2Fvar%2Flib%2Fcloudstack-iso"));
+        assertTrue(body, body.contains("content=iso") && body.contains("shared=1"));
+        assertFalse(body, body.contains("content-dirs") || body.contains("is_mountpoint"));
     }
 
     @Test

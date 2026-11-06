@@ -618,14 +618,6 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Adds the NFS entry of a secondary store: the only entry that mounts it. The store is read-only, so Proxmox is told not to create the
-     * folders of the content type in it ({@code create-subdirs 0}); without that, adding the entry fails with "mkdir ... Read-only file system".
-     */
-    /**
-     * Creates the entry that exposes one ISO folder of the secondary store's mount as {@code <id>:iso/<file>}: read-only like the mount, so Proxmox must
-     * not create folders in it, and shared because the same file is seen by every node (a VM with the ISO can then move between nodes).
-     */
-    /**
      * Adds a plain directory entry for ISO files that live on each node's own disk: not shared, and Proxmox itself makes the directory and its
      * sub-folders ({@code template/iso}) on a node when it activates the entry there (lab P1), so nothing has to be created by hand.
      */
@@ -636,6 +628,20 @@ public class ProxmoxApiClient implements Closeable {
         form.put("path", path);
         form.put("content", "iso");
         form.put("shared", "0");
+        post("/storage", form);
+    }
+
+    /**
+     * Adds a directory entry for the ISOs that the plugin binds from the secondary store, shared because every node has the same files (a VM with an ISO
+     * can then move between nodes); Proxmox makes the directory and its sub-folders on a node when it activates the entry there.
+     */
+    public void createSharedIsoStorage(String id, String path) {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("storage", id);
+        form.put("type", "dir");
+        form.put("path", path);
+        form.put("content", "iso");
+        form.put("shared", "1");
         post("/storage", form);
     }
 
@@ -750,35 +756,6 @@ public class ProxmoxApiClient implements Closeable {
             request.setEntity(entity);
             return request;
         }));
-    }
-
-    public void createIsoDirStorage(String id, String mountPath, String folder) {
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("storage", id);
-        form.put("type", "dir");
-        form.put("path", mountPath);
-        form.put("content", "iso");
-        form.put("content-dirs", "iso=" + folder);
-        form.put("is_mountpoint", "yes");
-        form.put("shared", "1");
-        form.put("create-subdirs", "0");
-        form.put("create-base-path", "0");
-        post("/storage", form);
-    }
-
-    public void createSecondaryNfsStorage(String id, String server, String export, String mountPath, String options) {
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("storage", id);
-        form.put("type", "nfs");
-        form.put("server", server);
-        form.put("export", export);
-        form.put("content", "import");
-        form.put("path", mountPath);
-        form.put("create-subdirs", "0");
-        if (StringUtils.isNotBlank(options)) {
-            form.put("options", options);
-        }
-        post("/storage", form);
     }
 
     /** A console session of a VM: valid for seconds and for one connection (see docs/design-phase4-console.md). */

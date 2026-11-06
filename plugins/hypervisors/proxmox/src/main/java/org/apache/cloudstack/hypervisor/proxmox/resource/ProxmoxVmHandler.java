@@ -16,7 +16,6 @@
 // under the License.
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
-import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -100,8 +99,6 @@ import com.cloud.vm.VirtualMachine;
 class ProxmoxVmHandler {
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxVmHandler.class);
     /** A new storage entry is mounted by the node a moment after it is added, so its content is polled for a while. */
-    static final int ENTRY_ACTIVATION_ATTEMPTS = 15;
-    static final long ENTRY_ACTIVATION_WAIT_MS = 2000;
     /** How long a guest is given to shut down by itself before Proxmox stops it by force. */
     static final int SHUTDOWN_TIMEOUT_SECONDS = 60;
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
@@ -136,6 +133,7 @@ class ProxmoxVmHandler {
     private final Map<String, Long> migrationMarks = new ConcurrentHashMap<>();
     private volatile ProxmoxSystemVms systemVms;
     private volatile ProxmoxTemplates templates;
+    private volatile ProxmoxIsos isos;
     private volatile Supplier<String> controlBridge = () -> "cloud0";
 
     ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
@@ -168,6 +166,11 @@ class ProxmoxVmHandler {
     /** The template VMs that cache the templates on the pools (design-phase11, step 2). Without it a template cannot be copied to a pool. */
     void setTemplates(ProxmoxTemplates templates) {
         this.templates = templates;
+    }
+
+    /** The ISOs of the secondary stores as CD-ROMs (design-phase11, step 3). Without it a VM with an ISO cannot be started or get one attached. */
+    void setIsos(ProxmoxIsos isos) {
+        this.isos = isos;
     }
 
     /** The name of the node's host-only bridge for the control NIC of system VMs (the setting {@code proxmox.control.bridge}). */
@@ -292,51 +295,6 @@ class ProxmoxVmHandler {
             return new CopyCmdAnswer("Proxmox node " + node + " cannot make templates on a pool: no SSH login was given for it");
         }
         return made.copyToPrimary(template, destination);
-    }
-
-    /**
-     * Makes sure the cluster has the NFS entry that mounts the secondary store (the only mount; the template and ISO entries are directories on it),
-     * and that this node has it mounted. Returns the mount path.
-     */
-    private String ensureSecondaryMount(ProxmoxApiClient client, NfsTO secondary, String server, String export) {
-        String options = StringUtils.isBlank(secondary.getNfsVersion()) ? "ro" : "vers=" + secondary.getNfsVersion() + ",ro";
-        String storeId = ProxmoxStorageNames.secondaryStorageId(server, export);
-        String mountPath = ProxmoxStorageNames.secondaryMountPath(storeId);
-        ensureStorage(client, storeId, () -> client.createSecondaryNfsStorage(storeId, server, export, mountPath, options));
-        if (!waitForStorage(client, storeId)) {
-            throw new ProxmoxApiException(String.format("Proxmox node %s did not mount %s:%s as storage %s: check that the NFS server exports the "
-                    + "secondary store to the Proxmox nodes", node, server, export, storeId));
-        }
-        return mountPath;
-    }
-
-    /** Creates the entry unless it exists; one that another host's command created a moment ago counts as existing. */
-    private void ensureStorage(ProxmoxApiClient client, String id, Runnable create) {
-        if (client.findStorage(id) != null) {
-            return;
-        }
-        try {
-            create.run();
-            LOGGER.info("Created Proxmox storage {}", id);
-        } catch (ProxmoxApiException e) {
-            if (client.findStorage(id) == null) {
-                throw e;
-            }
-        }
-    }
-
-    private boolean waitForStorage(ProxmoxApiClient client, String storageId) {
-        for (int attempt = 0; attempt < ENTRY_ACTIVATION_ATTEMPTS; attempt++) {
-            try {
-                if (client.getStorageStatus(node, storageId).isActive()) {
-                    return true;
-                }
-            } catch (ProxmoxApiException e) {
-                LOGGER.debug("Storage {} is not ready on node {} yet: {}", storageId, node, e.getMessage());
-            }
-            pauser.accept(ENTRY_ACTIVATION_WAIT_MS);
-        }
-        return false;
     }
 
     /**
@@ -605,7 +563,7 @@ class ProxmoxVmHandler {
             }
             TemplateObjectTO iso = disk.getData() instanceof TemplateObjectTO ? (TemplateObjectTO) disk.getData() : null;
             drives.put(ProxmoxVmConfig.cdromDrive(disk.getDiskSeq()),
-                    iso == null || StringUtils.isBlank(iso.getPath()) ? ProxmoxVmConfig.EMPTY_CDROM : ProxmoxVmConfig.cdromValue(isoVolume(client, iso)));
+                    iso == null || StringUtils.isBlank(iso.getPath()) ? ProxmoxVmConfig.EMPTY_CDROM : ProxmoxVmConfig.cdromValue(isoVolume(iso)));
         }
         return drives;
     }
@@ -905,36 +863,15 @@ class ProxmoxVmHandler {
     // ---- ISOs ----
 
     /**
-     * The Proxmox volume of an ISO on the secondary store ("&lt;entry&gt;:iso/&lt;file&gt;"), after making sure its entry exists and is active on this
-     * node. The entry is a directory on the mount of the secondary store that exposes the ISO's own folder, because Proxmox allows no folder below
-     * "iso/" and CloudStack keeps every ISO in a folder of its own ("template/tmpl/&lt;account&gt;/&lt;id&gt;/&lt;file&gt;"). Entries are kept after use.
+     * The Proxmox volume of an ISO on the secondary store, after its file was bound from the store on this node (ProxmoxIsos). Fails with the reason
+     * when that cannot be done, so a start or an attach does not go on without the ISO.
      */
-    private String isoVolume(ProxmoxApiClient client, TemplateObjectTO iso) {
-        if (!(iso.getDataStore() instanceof NfsTO)) {
-            throw new ProxmoxApiException("The ISO " + iso.getPath() + " is not on an NFS secondary store; only those are supported for Proxmox");
+    private String isoVolume(TemplateObjectTO iso) {
+        ProxmoxIsos made = isos;
+        if (made == null) {
+            throw new ProxmoxApiException("Proxmox node " + node + " cannot make an ISO available: no SSH login was given for it");
         }
-        NfsTO secondary = (NfsTO) iso.getDataStore();
-        URI url = URI.create(StringUtils.removeEnd(secondary.getUrl(), "/"));
-        String server = url.getHost();
-        String export = url.getPath();
-        String path = StringUtils.removeStart(StringUtils.defaultString(iso.getPath()), "/");
-        String file = StringUtils.substringAfterLast(path, "/");
-        String folder = StringUtils.substringBeforeLast(path, "/");
-        if (StringUtils.isAnyBlank(server, export, file, folder) || path.contains("..")) {
-            throw new ProxmoxApiException(String.format("Cannot find the ISO file from the secondary store %s and the path %s: expected <folder>/<file>",
-                    secondary.getUrl(), iso.getPath()));
-        }
-        String lower = file.toLowerCase(java.util.Locale.ROOT);
-        if (!lower.endsWith(".iso") && !lower.endsWith(".img")) {
-            throw new ProxmoxApiException("Proxmox lists only files ending in .iso or .img as ISOs, not " + file);
-        }
-        String mountPath = ensureSecondaryMount(client, secondary, server, export);
-        String id = ProxmoxStorageNames.isoStorageId(server, export, folder);
-        ensureStorage(client, id, () -> client.createIsoDirStorage(id, mountPath, folder));
-        if (!waitForStorage(client, id)) {
-            throw new ProxmoxApiException(String.format("Proxmox storage %s for the ISO in %s is not active on node %s", id, folder, node));
-        }
-        return id + ":iso/" + file;
+        return made.volume(iso);
     }
 
     /**
@@ -957,13 +894,22 @@ class ProxmoxVmHandler {
                 return new Answer(cmd, false, String.format("%s has no CD-ROM drive %s while it runs, and Proxmox cannot add one to a running VM: stop and "
                         + "start the instance (the drives are made when it starts)", cmd.getVmName(), drive));
             }
-            String volume = isoVolume(client, (TemplateObjectTO) disk.getData());
+            String volume = isoVolume((TemplateObjectTO) disk.getData());
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, ProxmoxVmConfig.cdromValue(volume)));
             LOGGER.info("Attached {} to {} as {}", volume, cmd.getVmName(), drive);
             return new Answer(cmd, true, "Attached " + volume + " as " + drive);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not attach an ISO to {}: {}", node, cmd.getVmName(), e.getMessage());
             return new Answer(cmd, false, e.getMessage());
+        }
+    }
+
+    /** The name of the bound file of an ISO (what a drive holds since step 3), or null when it has none (no SSH login, or an ISO that cannot be bound). */
+    private String boundName(TemplateObjectTO iso) {
+        try {
+            return isos == null ? null : isos.nameOf(iso);
+        } catch (ProxmoxApiException e) {
+            return null;
         }
     }
 
@@ -984,11 +930,16 @@ class ProxmoxVmHandler {
                     : client.getVmConfig(location.getNode(), location.getVmid())).get(drive);
             String path = ((TemplateObjectTO) disk.getData()).getPath();
             String file = StringUtils.substringAfterLast(StringUtils.defaultString(path), "/");
-            if (!ProxmoxVmConfig.isCdrom(current) || ProxmoxVmConfig.isEmptyCdrom(current) || (StringUtils.isNotBlank(file) && !current.contains(file))) {
+            String bound = boundName((TemplateObjectTO) disk.getData());
+            boolean holdsThis = StringUtils.isBlank(file) || current != null && (current.contains(file) || bound != null && current.contains(bound));
+            if (!ProxmoxVmConfig.isCdrom(current) || ProxmoxVmConfig.isEmptyCdrom(current) || !holdsThis) {
                 return new Answer(cmd, true, "Drive " + drive + " does not hold this ISO, nothing to detach");
             }
             client.updateVmConfig(location.getNode(), location.getVmid(), Collections.singletonMap(drive, ProxmoxVmConfig.EMPTY_CDROM));
             LOGGER.info("Ejected the ISO from {} of {}", drive, cmd.getVmName());
+            if (isos != null) {
+                isos.release((TemplateObjectTO) disk.getData());
+            }
             return new Answer(cmd, true, "Ejected the ISO from " + drive);
         } catch (ProxmoxApiException e) {
             LOGGER.error("Proxmox node {} could not detach an ISO from {}: {}", node, cmd.getVmName(), e.getMessage());
@@ -1379,6 +1330,10 @@ class ProxmoxVmHandler {
             if (missing != null) {
                 return new PrepareForMigrationAnswer(cmd, missing);
             }
+            String isoProblem = bindIsos(vm);
+            if (isoProblem != null) {
+                return new PrepareForMigrationAnswer(cmd, isoProblem);
+            }
             List<String> problems = client.getMigrationProblems(location.getNode(), location.getVmid(), node);
             if (!problems.isEmpty()) {
                 return new PrepareForMigrationAnswer(cmd, String.format("%s cannot move from node %s to %s: %s", vm.getName(), location.getNode(),
@@ -1390,6 +1345,27 @@ class ProxmoxVmHandler {
             LOGGER.error("Proxmox node {} could not prepare for the migration of {}: {}", node, vm.getName(), e.getMessage());
             return new PrepareForMigrationAnswer(cmd, e.getMessage());
         }
+    }
+
+    /**
+     * The ISOs of the VM are bound on this node before the VM moves here (the path is the same on every node), so the CD-ROMs keep reading after the
+     * move. The reason one cannot be, or null.
+     */
+    private String bindIsos(VirtualMachineTO vm) {
+        if (vm.getDisks() == null) {
+            return null;
+        }
+        for (DiskTO disk : vm.getDisks()) {
+            if (disk.getType() != Volume.Type.ISO || !(disk.getData() instanceof TemplateObjectTO) || StringUtils.isBlank(((TemplateObjectTO) disk.getData()).getPath())) {
+                continue;
+            }
+            try {
+                isoVolume((TemplateObjectTO) disk.getData());
+            } catch (ProxmoxApiException e) {
+                return String.format("%s cannot move to Proxmox node %s: %s", vm.getName(), node, e.getMessage());
+            }
+        }
+        return null;
     }
 
     /** The reason the VM's NICs cannot be attached on this node, or null. */

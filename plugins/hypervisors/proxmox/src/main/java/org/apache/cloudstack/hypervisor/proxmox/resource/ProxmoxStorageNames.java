@@ -34,20 +34,16 @@ public final class ProxmoxStorageNames {
     public static final String MOUNT_PATH_PREFIX = "/mnt/";
 
     /**
-     * The one NFS entry of a secondary store: it is the only thing that mounts the store on the nodes. Same letter-first rule as above.
-     */
-    public static final String SECONDARY_STORAGE_ID_PREFIX = "css-";
-    /**
      * The directory entries that an earlier version made for the templates of one account folder (a template that was copied then still has a path
      * that names one). No new ones are made: a template is a Proxmox template VM now (ProxmoxTemplates). Only used to recognise the old paths.
      */
     public static final String TEMPLATE_STORAGE_ID_PREFIX = "cst-";
 
     /**
-     * A directory entry on the mount of a secondary store that exposes the one folder of an ISO ("template/tmpl/&lt;account&gt;/&lt;id&gt;"), so the ISO
-     * is the volume "&lt;entry&gt;:iso/&lt;file&gt;" (Proxmox allows no folder below "iso/"). Same letter-first rule as above.
+     * The one directory entry for the ISOs of the secondary stores, which the plugin binds there file by file while they are attached (ProxmoxIsos). It
+     * is shared (the same files on every node), so a VM with an ISO can migrate online. Same letter-first rule as above.
      */
-    public static final String ISO_STORAGE_ID_PREFIX = "csi-";
+    public static final String ISO_SHARED_STORAGE_ID_PREFIX = "csiso-";
 
     /**
      * The one directory entry for the files that patch system VMs (the payload CD with the agent). It is not shared: each node has its own
@@ -68,22 +64,9 @@ public final class ProxmoxStorageNames {
         return MOUNT_PATH_PREFIX + poolUuid;
     }
 
-    /**
-     * The NFS entry of the secondary store {@code server:export}. Derived from the two values, so every command for a template on the same
-     * store finds the same entry, on any management server and after a restart.
-     */
-    public static String secondaryStorageId(String server, String export) {
-        return SECONDARY_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export).getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** Where the nodes mount that entry. */
-    public static String secondaryMountPath(String secondaryStorageId) {
-        return MOUNT_PATH_PREFIX + secondaryStorageId;
-    }
-
-    /** The entry for the ISO folder {@code folder} of the NFS export {@code server:export}, derived like the template entry. */
-    public static String isoStorageId(String server, String export, String folder) {
-        return ISO_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes((server + ":" + export + ":" + folder).getBytes(StandardCharsets.UTF_8));
+    /** The shared ISO entry for a directory path, derived from it so that every command, management server and restart finds the same one. */
+    public static String isoSharedStorageId(String path) {
+        return ISO_SHARED_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes(path.getBytes(StandardCharsets.UTF_8));
     }
 
     /** The patch entry for a directory path, derived from it so that every command, management server and restart finds the same one. */
@@ -94,10 +77,6 @@ public final class ProxmoxStorageNames {
     /** The file of a payload: "cs-patch-" and the first 16 characters of the SHA-512 of the content, so a new version is a new file. */
     public static String patchFileName(String sha512) {
         return PATCH_FILE_PREFIX + sha512.substring(0, 16) + ".iso";
-    }
-
-    public static boolean isIsoStorageId(String id) {
-        return id != null && id.startsWith(ISO_STORAGE_ID_PREFIX);
     }
 
     public static boolean isTemplateStorageId(String id) {

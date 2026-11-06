@@ -903,3 +903,21 @@ Unit tests: `ProxmoxTemplatesTest`, `ProxmoxVmHandlerTemplateTest`, the new clie
 | TV1 | Pass. One `Made the template VM cs-tmpl-e0ae7df7-... (101) on cs-f7c5790d-...: 101/base-101-disk-0.qcow2` for the deploy, and no failed first attempt (before the fix: two failures and a copy to two pools). The path in the log is the one core keeps |
 | TV4 | Pass: after the system VM template rows were deleted and the console proxy VM destroyed, one copy only (before the fix: two); the row is `103/base-103-disk-0.qcow2` in both columns, pool 7, Ready. The state of the new console proxy VM was not pasted |
 | TV10 | Pass: 12 parallel deploys, all succeeded (before the fix: 2 of 10 failed on the pool lock). The log has 0 lines with `lock request timeout` or `locked command timed out`, so the pool lock was not hit this time and **the retry was not exercised on the lab** (it is covered by unit tests only); not pasted: how long the deploys took |
+
+## ISOs as bind mounts, step 3 (built 2026-11-06)
+
+Unit tests: `ProxmoxIsosTest` (14), `ProxmoxVmHandlerIsoTest` (29), the client, names and config tests; plugin total 680 pass. **Lab checks, not run yet** (behaviour.md section 13). Set `proxmox.iso.path` is left at its default; check the node with `sj`, `mount | grep cloudstack-iso`, `pvesm status` and the VM configurations, and CloudStack with the instance's state:
+
+| # | Check | Expected |
+|---|---|---|
+| IS1 | Register an ISO, attach it to a **stopped** instance and start it | `pvesm status` shows one new entry `csiso-<uuid>` (type dir, shared), `mount \| grep cloudstack-iso` shows one bind `.../template/iso/cs-<16 hex>.iso` on the node that ran it, no `css-tmp` directory and no NFS mount of the secondary store is left (`findmnt -t nfs4,nfs`), `qm config <vmid>` shows `ide2: csiso-...:iso/cs-....iso,media=cdrom`, and the guest sees the CD (`blkid /dev/sr0`) |
+| IS2 | Attach a second, different ISO to a second CD slot (`vm.iso.max.count` raised) of the same instance | A second bind and drive `ide3`; the first is untouched |
+| IS3 | Attach the same ISO to a **running** instance that has an empty CD drive; detach it | Attach: the guest sees the disc at once. Detach: the drive is `none,media=cdrom`, the bind is gone from `mount` (no other VM has it), and the file is gone from the directory |
+| IS4 | The same ISO attached to two instances; detach it from one | The bind stays (the other VM's configuration names it); after the second detach it is gone |
+| IS5 | Deploy an instance from an ISO (boot from the ISO) and finish a boot | The blank root volume is made as before, the VM boots from the CD |
+| IS6 | Online migration of an instance with an ISO attached, to another node and back | `PrepareForMigrationCommand` makes the bind on the destination first (`mount` there), the migration works, the guest still reads the CD; the instance of a node without the ISO bound is refused with the reason when the NFS export is not reachable from the destination (stop the export route for that node) |
+| IS7 | Reboot the node that runs an instance with an ISO, start the instance again from CloudStack | The start makes the bind again and works |
+| IS8 | Attach an ISO whose store cannot be mounted from the node (block the NFS server with `iptables` on that node, or use an ISO of a store the node cannot reach) | The attach and the start fail within about a minute with the reason and "Detach the ISO ..."; nothing is changed in the VM; the node and `pvesm status` stay responsive |
+| IS9 | Remove the ISO file from the store behind the ISO, then attach it | Fails with "does not exist on the secondary store" |
+| IS10 | Leave an ISO attached, expunge the instance, restart the agent (restart the management server or reconnect the host) and attach another ISO | The first attach after the restart removes the bind that no VM names (sweep: `mount` shows only the binds in use) |
+
