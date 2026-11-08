@@ -93,7 +93,7 @@ Revised on 2026-11-05. The first version of this step (the store address in the 
 - Unit tests and lab checks as for step 2, plus: attach and detach on a running VM, an instance restarted after a node reboot, migration both ways with an ISO and with a config drive, two VMs with the same ISO (one detach keeps the bind), the sweep.
 
 ### Step 4 (own design first): template from a volume and from a snapshot
-Writes the qcow2 and `template.properties` below `template/tmpl/<account>/<id>/` through the rw mount. Not started.
+Writes the qcow2 and `template.properties` below `template/tmpl/<account>/<id>/` through the rw mount. Design written 2026-11-06 in [design-phase11-step4-template-from-volume.md](design-phase11-step4-template-from-volume.md) (decisions D1 to D6 open); not built.
 
 ### Lab check before step 3 (M7: pass 2026-11-05, section 6)
 M7: mount the store in a directory, bind an ISO file from it, unmount the directory, and check that the bind still reads (and `umount` does not say busy), that a VM attached to it keeps reading, and that unmounting the bind takes the NFS mount away.

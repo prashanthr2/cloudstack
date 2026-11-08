@@ -124,6 +124,14 @@ class ProxmoxSecondaryMounts {
      * A user's template is untrusted, which is why Proxmox's own {@code import-from} makes the same check.
      */
     ImageInfo checkImage(ProxmoxSsh ssh, String file) {
+        return checkImage(ssh, file, false);
+    }
+
+    /**
+     * As {@link #checkImage(ProxmoxSsh, String)}; {@code ownImage} is for a disk that the plugin made itself (the volume a template is made from), which may
+     * have a backing file (a linked clone): it is read through it and the copy is flat.
+     */
+    ImageInfo checkImage(ProxmoxSsh ssh, String file, boolean ownImage) {
         ExecResult result = ssh.sudo("timeout " + IMAGE_TIMEOUT_SECONDS + " qemu-img info -U --output=json " + ProxmoxSsh.quote(file), null,
                 ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
         if (!result.isSuccess()) {
@@ -139,7 +147,7 @@ class ProxmoxSecondaryMounts {
         if (!"qcow2".equals(format) && !"raw".equals(format)) {
             throw new IllegalArgumentException("The image " + file + " is of the format '" + format + "'; only qcow2 and raw images are used");
         }
-        if (info.hasNonNull("backing-filename") || info.hasNonNull("full-backing-filename")) {
+        if (!ownImage && (info.hasNonNull("backing-filename") || info.hasNonNull("full-backing-filename"))) {
             throw new IllegalArgumentException("The image " + file + " has a backing file (" + info.path("backing-filename").asText() + "), which is not allowed");
         }
         if (info.path("format-specific").path("data").hasNonNull("data-file")) {

@@ -29,6 +29,8 @@ public class ScriptedSshLink implements SshLink {
     public final List<String> commands = new ArrayList<>();
     public Function<String, ExecResult> answers = command -> new ExecResult(0, "", "");
     public boolean closed;
+    /** The last standard input that a command was given, or null. */
+    public byte[] lastInput;
 
     @Override
     public void connect(int timeoutMillis, HostKeyCheck check) throws IOException {
@@ -50,6 +52,9 @@ public class ScriptedSshLink implements SshLink {
     @Override
     public ExecResult exec(String command, byte[] stdin, int timeoutMillis) {
         commands.add(command);
+        if (stdin != null) {
+            lastInput = stdin;
+        }
         return answers.apply(command);
     }
 

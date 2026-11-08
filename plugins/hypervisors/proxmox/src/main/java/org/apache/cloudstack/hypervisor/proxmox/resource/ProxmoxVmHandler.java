@@ -239,6 +239,14 @@ class ProxmoxVmHandler {
                     && dest.getDataStore() instanceof PrimaryDataStoreTO) {
                 return copyDataVolume((VolumeObjectTO) src, (VolumeObjectTO) dest);
             }
+            if (src instanceof VolumeObjectTO && dest instanceof TemplateObjectTO && src.getDataStore() instanceof PrimaryDataStoreTO
+                    && dest.getDataStore() instanceof NfsTO) {
+                ProxmoxTemplates made = templates;
+                if (made == null) {
+                    return new CopyCmdAnswer("Proxmox node " + node + " cannot make templates: no SSH login was given for it");
+                }
+                return made.createFromVolume((VolumeObjectTO) src, (TemplateObjectTO) dest, cmd.getWait());
+            }
             return new CopyCmdAnswer("Copying " + (src == null ? null : src.getObjectType()) + " to " + (dest == null ? null : dest.getObjectType())
                     + " is not supported for Proxmox");
         } catch (ProxmoxApiException | ProxmoxSshException | IllegalArgumentException e) {

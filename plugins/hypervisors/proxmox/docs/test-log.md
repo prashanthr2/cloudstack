@@ -947,3 +947,19 @@ Changes after this run: the names carry CloudStack's UUIDs (`cs-<ISO uuid>.iso` 
 | IS5 | **Pass** (repeated). With `expunge=true` the bind was gone once the instance was expunged. The first attempt left it because the instance was only destroyed (its configuration still named the bind) and the ISO would not boot, so the VM had to be force-stopped in Proxmox |
 | IS6 | **Pass.** The bind moved with the instance |
 | IS8 | **Pass.** The attach on a running instance failed with the mount error (`exit code 124` is the 60 s timeout) and "Detach the ISO ..."; `pvesm status` and `qm list` answered, no bind, no ISO on the drives |
+
+## Template from a volume, step 4 (built 2026-11-08)
+
+Unit tests: `ProxmoxTemplatesFromVolumeTest` (12), 700 in the plugin. Lab checks to run (design-phase11-step4-template-from-volume.md, section 7):
+
+| Test | What | Expected |
+|---|---|---|
+| T1 | `cat template.properties` of a template that the secondary storage VM registered, and of the new one (T2) | The same keys (`id`, `public`, `uniquename`, `qcow2`, `qcow2.filename`, `qcow2.size`, `qcow2.virtualsize`, `virtualsize`, `size`; the registered one may also have `filename`, which the plugin does not write: note it). The new template is in the store's template list after "Sync templates" (`listTemplates`, state Ready, size and physical size) |
+| T2 | Stopped instance from template T1: Create template from its root volume | Ready; folder `template/tmpl/<account>/<id>` on the store with `<template uuid>.qcow2` and `template.properties`; sizes in the UI equal `qemu-img info` of the file; no `css-tmp` mount left (`findmnt -t nfs,nfs4`) |
+| T3 | Deploy an instance from the new template | A template VM `cs-tmpl-<new uuid>-<pool>` is made on the pool; the clone boots with the data of the source instance |
+| T4 | Create a template from a data volume | Works, the template deploys |
+| T5 | Volume snapshot, create a volume from it, create a template from that volume (the snapshot workaround) | Works |
+| T6 | Instance running: Create template from its root volume | Core refuses it ("attached to a non-stopped Instance") |
+| T7 | Block NFS from the node, then Create template from a volume | Fails with the mount reason within about a minute; nothing left on the store or the node |
+| T8 | Remove the volume's file by hand (on a detached volume), then Create template | Fails with "does not exist on the Proxmox node"; nothing left on the store |
+| T9 | Create template from a snapshot | Fails (core/SSVM, open-issues.md) |

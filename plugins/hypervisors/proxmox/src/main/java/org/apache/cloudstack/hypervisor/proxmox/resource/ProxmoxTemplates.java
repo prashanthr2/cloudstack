@@ -17,6 +17,10 @@
 package org.apache.cloudstack.hypervisor.proxmox.resource;
 
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +37,7 @@ import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
 import org.apache.cloudstack.storage.command.CopyCmdAnswer;
 import org.apache.cloudstack.storage.to.PrimaryDataStoreTO;
 import org.apache.cloudstack.storage.to.TemplateObjectTO;
+import org.apache.cloudstack.storage.to.VolumeObjectTO;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -40,7 +45,10 @@ import org.apache.logging.log4j.Logger;
 import com.cloud.agent.api.Answer;
 import com.cloud.agent.api.storage.DestroyCommand;
 import com.cloud.agent.api.to.NfsTO;
+import com.cloud.storage.JavaStorageLayer;
 import com.cloud.storage.Storage;
+import com.cloud.storage.template.Processor.FormatInfo;
+import com.cloud.storage.template.TemplateLocation;
 
 /**
  * A CloudStack template on a primary storage pool is a Proxmox <b>template VM</b> (design-phase11-secondary-mounts.md, step 2; the base of linked
@@ -306,6 +314,105 @@ class ProxmoxTemplates {
         } catch (RuntimeException e) {
             ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
             throw e;
+        }
+    }
+
+    // ---- a template from a volume ----
+
+    /**
+     * Makes a template on the secondary store from a volume (core's "Create template" of a volume: a root volume of a stopped instance, or a data volume,
+     * also one made from a snapshot; design-phase11-step4-template-from-volume.md). Over SSH, with the store mounted read-write for this one command:
+     * {@code qemu-img convert} writes the flat qcow2 {@code <template uuid>.qcow2} into the template folder (under a temporary name, then moved), and
+     * {@code template.properties} is written last, in the form CloudStack's own {@link TemplateLocation} writes. A failure removes what this call made.
+     * Core refuses a volume of a running instance, so the file is not open anywhere.
+     */
+    CopyCmdAnswer createFromVolume(VolumeObjectTO volume, TemplateObjectTO destination, long waitSeconds) {
+        try {
+            if (volume.getDataStore() == null || !(volume.getDataStore() instanceof PrimaryDataStoreTO) || !(destination.getDataStore() instanceof NfsTO)) {
+                throw new IllegalArgumentException("Proxmox makes a template from a volume on a primary storage onto an NFS secondary store only");
+            }
+            if (volume.requiresEncryption()) {
+                throw new IllegalArgumentException("Templates of encrypted volumes are not supported for Proxmox");
+            }
+            String volumePath = volume.getPath();
+            if (volumePath == null || !DISK_PATH.matcher(volumePath).matches()) {
+                throw new IllegalArgumentException("The volume path " + volumePath + " is not a Proxmox qcow2 disk (expected <vmid>/vm-<vmid>-<name>.qcow2)");
+            }
+            NfsTO store = (NfsTO) destination.getDataStore();
+            String folder = ProxmoxSecondaryMounts.relativePath(StringUtils.removeStart(StringUtils.defaultString(destination.getPath()), "/"),
+                    "the template folder on the secondary store");
+            String uuid = destination.getUuid() != null && TEMPLATE_UUID.matcher(destination.getUuid()).matches() ? destination.getUuid() : UUID.randomUUID().toString();
+            String file = ProxmoxStorageNames.mountPath(checkedPool(((PrimaryDataStoreTO) volume.getDataStore()).getUuid())) + "/images/" + volumePath;
+            int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(taskTimeoutSeconds.getAsInt(), waitSeconds) * 1000L);
+            try (ProxmoxSsh ssh = logins.get()) {
+                TemplateObjectTO made = mounts.withMount(ssh, store, false, mount -> writeTemplate(ssh, mount, folder, file, uuid, destination, timeout));
+                LOGGER.info("Made the template {} on the secondary store from the volume {}: {}", uuid, volumePath, made.getPath());
+                return new CopyCmdAnswer(made);
+            }
+        } catch (ProxmoxApiException | ProxmoxSshException | IllegalArgumentException e) {
+            LOGGER.error("Proxmox node {} could not make a template from the volume {}: {}", node, volume.getPath(), e.getMessage());
+            return new CopyCmdAnswer(e.getMessage());
+        }
+    }
+
+    private TemplateObjectTO writeTemplate(ProxmoxSsh ssh, String mount, String folder, String file, String uuid, TemplateObjectTO destination, int timeout) {
+        requireFile(ssh, file);
+        ProxmoxSecondaryMounts.ImageInfo image = mounts.checkImage(ssh, file, true);
+        String directory = mount + "/" + folder;
+        String fileName = uuid + ".qcow2";
+        String target = directory + "/" + fileName;
+        String temporary = target + ".tmp";
+        String properties = directory + "/" + TemplateLocation.Filename;
+        boolean existed = ssh.sudo("test -d " + ProxmoxSsh.quote(directory), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS).isSuccess();
+        runOrFail(ssh, "make the template folder", "mkdir -p " + ProxmoxSsh.quote(directory));
+        try {
+            ExecResult converted = ssh.sudo("qemu-img convert -O qcow2 " + ProxmoxSsh.quote(file) + " " + ProxmoxSsh.quote(temporary), null, timeout);
+            if (!converted.isSuccess()) {
+                throw new ProxmoxSshException("qemu-img could not copy " + file + ": " + converted.describeFailure());
+            }
+            runOrFail(ssh, "put the template into place", "mv -f " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(target));
+            long physical = Long.parseLong(runOrFail(ssh, "read the size of the template", "stat -c %s " + ProxmoxSsh.quote(target)).trim());
+            ssh.writeFile(properties, propertiesFile(destination, uuid, fileName, physical, image.getVirtualSize()), "644");
+            TemplateObjectTO made = new TemplateObjectTO();
+            made.setPath(folder + "/" + fileName);
+            made.setSize(image.getVirtualSize());
+            made.setPhysicalSize(physical);
+            made.setFormat(Storage.ImageFormat.QCOW2);
+            made.setName(uuid);
+            return made;
+        } catch (RuntimeException e) {
+            ssh.sudo("rm -f " + ProxmoxSsh.quote(temporary) + " " + ProxmoxSsh.quote(target) + " " + ProxmoxSsh.quote(properties)
+                    + (existed ? "" : " && rmdir " + ProxmoxSsh.quote(directory)), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
+            throw e;
+        }
+    }
+
+    /** The content of {@code template.properties}, written by CloudStack's {@link TemplateLocation} on a local temporary directory. */
+    private static byte[] propertiesFile(TemplateObjectTO destination, String uuid, String fileName, long physicalSize, long virtualSize) {
+        Path directory = null;
+        try {
+            directory = Files.createTempDirectory("cs-template-");
+            TemplateLocation location = new TemplateLocation(new JavaStorageLayer(), directory.toString());
+            location.create(destination.getId() > 0 ? destination.getId() : 1, true, StringUtils.defaultIfBlank(destination.getName(), uuid));
+            FormatInfo info = new FormatInfo();
+            info.format = Storage.ImageFormat.QCOW2;
+            info.filename = fileName;
+            info.size = physicalSize;
+            info.virtualSize = virtualSize;
+            if (!location.addFormat(info) || !location.save()) {
+                throw new ProxmoxSshException("The properties of the template could not be made");
+            }
+            return Files.readAllBytes(directory.resolve(TemplateLocation.Filename));
+        } catch (IOException e) {
+            throw new ProxmoxSshException("The properties of the template could not be made: " + e.getMessage(), e);
+        } finally {
+            if (directory != null) {
+                try (java.util.stream.Stream<Path> files = Files.walk(directory)) {
+                    files.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+                } catch (IOException e) {
+                    LOGGER.debug("Could not remove {}: {}", directory, e.getMessage());
+                }
+            }
         }
     }
 
