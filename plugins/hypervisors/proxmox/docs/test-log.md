@@ -982,3 +982,9 @@ Notes:
 
 1. The plugin's `template.properties` lacks `filename`, `hvm` and `description`. Core showed the template as Ready and deployable, so nothing in the flows tested needs them; whether the secondary storage VM keeps the template Ready after its template sync (restart of the SSVM) is not yet checked.
 2. A mount that times out (exit code 124) now says "the mount did not finish within 60 seconds (is the NFS server reachable from the node?)".
+
+### Finding after the restart of the management server (2026-11-09)
+
+All templates made from volumes went back to "processing" after the management server was restarted. Cause (V, `TemplateLocation.getTemplateInfo`): the secondary storage VM builds the install path from the plain `filename` property, which `TemplateLocation.save()` does not write, so the path it reported ended in `null` and core took the template out of the Ready state. This confirms note 1 above. Fixed: the plugin now appends `filename=<file>` and `hvm=true` to `template.properties` (unit test checks both). Templates made by the earlier build need the line added by hand on the store.
+
+**Correction (same day, from the SSVM's template list after adding `filename`):** adding `filename` was not the cause. The list the SSVM returned had no entry for the templates 226 to 229 at all. Core stores the name of the copy answer as the unique name of the template (`TemplateServiceImpl`, `setUniqueName(newTemplate.getName())`), and the SSVM lists templates by the `uniquename` of `template.properties`. The plugin answered the template uuid but wrote `uniquename=<id>-<account>-<hash>` (the name of the destination object), so the sync did not find the template. Fixed: `uniquename` is the uuid, the same as the answer (unit test). The `filename` and `hvm` lines stay, as KVM writes `filename` too. Templates made by the earlier build need `uniquename` set to their uuid on the store.

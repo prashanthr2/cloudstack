@@ -165,9 +165,11 @@ public class ProxmoxTemplatesFromVolumeTest {
 
         String properties = new String(link.lastInput, StandardCharsets.UTF_8);
         assertTrue(properties, properties.contains("id=301"));
-        assertTrue(properties, properties.contains("uniquename=301-2-abc"));
+        assertTrue(properties, properties.contains("uniquename=" + TEMPLATE_UUID + "\n"));
         assertTrue(properties, properties.contains("filename=" + TEMPLATE_UUID + ".qcow2"));
         assertTrue(properties, properties.contains("qcow2.filename=" + TEMPLATE_UUID + ".qcow2"));
+        assertTrue(properties, properties.contains("\nfilename=" + TEMPLATE_UUID + ".qcow2\n"));
+        assertTrue(properties, properties.contains("\nhvm=true\n"));
         assertTrue(properties, properties.contains("qcow2.virtualsize=10737418240") && properties.contains("virtualsize=10737418240"));
         assertTrue(properties, properties.contains("qcow2.size=1234567") && properties.contains("size=1234567"));
         assertTrue(properties, properties.contains("qcow2=true"));

@@ -393,7 +393,9 @@ class ProxmoxTemplates {
         try {
             directory = Files.createTempDirectory("cs-template-");
             TemplateLocation location = new TemplateLocation(new JavaStorageLayer(), directory.toString());
-            location.create(destination.getId() > 0 ? destination.getId() : 1, true, StringUtils.defaultIfBlank(destination.getName(), uuid));
+            // The unique name must be the name that the answer returns (the uuid): core stores the answer's name as the unique name of the template,
+            // and the secondary storage VM lists the templates by the "uniquename" of this file, so a different value here makes the sync not find it.
+            location.create(destination.getId() > 0 ? destination.getId() : 1, true, uuid);
             FormatInfo info = new FormatInfo();
             info.format = Storage.ImageFormat.QCOW2;
             info.filename = fileName;
@@ -402,7 +404,10 @@ class ProxmoxTemplates {
             if (!location.addFormat(info) || !location.save()) {
                 throw new ProxmoxSshException("The properties of the template could not be made");
             }
-            return Files.readAllBytes(directory.resolve(TemplateLocation.Filename));
+            // TemplateLocation.save() does not write the plain "filename" (and "hvm") that the secondary storage VM reads back when it lists
+            // the templates: without "filename" the install path it reports ends in "null" and core takes the template out of the Ready state.
+            String text = new String(Files.readAllBytes(directory.resolve(TemplateLocation.Filename)), java.nio.charset.StandardCharsets.UTF_8);
+            return (text + "filename=" + fileName + "\nhvm=true\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new ProxmoxSshException("The properties of the template could not be made: " + e.getMessage(), e);
         } finally {
