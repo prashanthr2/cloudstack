@@ -220,7 +220,7 @@ public class ProxmoxTemplatesFromVolumeTest {
     public void aMissingVolumeFileFailsBeforeAnythingIsWrittenAndTheStoreIsUnmounted() {
         replies.put("test -f '" + FILE + "'", new ExecResult(1, "", ""));
 
-        refused(templates.createFromVolume(volume(VOLUME_PATH), destination(FOLDER, TEMPLATE_UUID), 3600), "does not exist");
+        refused(templates.createFromVolume(volume(VOLUME_PATH), destination(FOLDER, TEMPLATE_UUID), 3600), "does not exist on the primary storage");
 
         assertFalse(ran("qemu-img convert"));
         assertFalse(ran("/" + FOLDER + "'"));

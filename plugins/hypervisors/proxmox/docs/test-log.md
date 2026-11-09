@@ -963,3 +963,22 @@ Unit tests: `ProxmoxTemplatesFromVolumeTest` (12), 700 in the plugin. Lab checks
 | T7 | Block NFS from the node, then Create template from a volume | Fails with the mount reason within about a minute; nothing left on the store or the node |
 | T8 | Remove the volume's file by hand (on a detached volume), then Create template | Fails with "does not exist on the Proxmox node"; nothing left on the store |
 | T9 | Create template from a snapshot | Fails (core/SSVM, open-issues.md) |
+
+### Results of the first run (2026-11-09)
+
+| Check | Result |
+|---|---|
+| T1 | Pass. The template the secondary storage VM registered has the keys `id`, `public`, `uniquename`, `qcow2*`, `size`, `virtualsize` and also `filename`, `hvm`, `description`. The plugin's file has the same keys except `filename`, `hvm` and `description` (see note 1) |
+| T2 | Pass. Ready, `template/tmpl/2/226/<template uuid>.qcow2` + `template.properties`; `physicalsize` 3413114880 equals the file length, `virtualsize` 100 GiB equals `qemu-img info`. About 31 s for a 3.2 GiB image |
+| T3 | Pass. Template VM `cs-tmpl-<uuid of tv-root2>-7fd5565c` (101) on the pool, 100G; the clone has the data of the source instance. (The second deploy, that must not make another template VM, was not shown) |
+| T4 | Pass. A detached data volume gives a Ready template (5 GiB virtual, 4.2 MiB on disk); an instance deploys from it and cannot boot because it has no OS, as expected |
+| T5 | Pass. Snapshot, volume from the snapshot (a data volume), template from that volume: Ready, 3428122624 bytes. (Deploying from `tv-snap` and booting was not shown) |
+| T6 | Pass. Core refuses: "attached to a non-stopped Instance" |
+| T7 | Pass. Fails after exactly 60 s with "Could not mount the secondary store ...: exit code 124"; no `css-tmp` mount on any node and no `.tmp` file on the store. The text of the reason was improved afterwards (note 2) |
+| T8 | Pass, but the text was wrong: "does not exist on the secondary store" for a file on the primary storage. Fixed to "does not exist on the primary storage" |
+| T9 | Pass (the expected failure). Core answers only "Failed to create Template", the secondary storage VM gives no reason (open-issues.md, workaround T5) |
+
+Notes:
+
+1. The plugin's `template.properties` lacks `filename`, `hvm` and `description`. Core showed the template as Ready and deployable, so nothing in the flows tested needs them; whether the secondary storage VM keeps the template Ready after its template sync (restart of the SSVM) is not yet checked.
+2. A mount that times out (exit code 124) now says "the mount did not finish within 60 seconds (is the NFS server reachable from the node?)".

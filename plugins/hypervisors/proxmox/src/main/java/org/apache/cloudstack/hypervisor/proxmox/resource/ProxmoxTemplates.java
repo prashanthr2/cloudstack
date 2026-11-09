@@ -168,7 +168,7 @@ class ProxmoxTemplates {
                 ProxmoxSecondaryMounts.ImageInfo[] image = new ProxmoxSecondaryMounts.ImageInfo[1];
                 OnPool template = mounts.withMount(ssh, store, true, mount -> {
                     String from = mount + "/" + relative;
-                    requireFile(ssh, from);
+                    requireFile(ssh, from, "secondary store");
                     image[0] = mounts.checkImage(ssh, from);
                     ProxmoxApiClient.VmLocation existing = client.findVmOrTemplateByName(name);
                     if (existing != null && ProxmoxApiClient.isTemplate(client.getVmConfig(existing.getNode(), existing.getVmid()))) {
@@ -356,7 +356,7 @@ class ProxmoxTemplates {
     }
 
     private TemplateObjectTO writeTemplate(ProxmoxSsh ssh, String mount, String folder, String file, String uuid, TemplateObjectTO destination, int timeout) {
-        requireFile(ssh, file);
+        requireFile(ssh, file, "primary storage");
         ProxmoxSecondaryMounts.ImageInfo image = mounts.checkImage(ssh, file, true);
         String directory = mount + "/" + folder;
         String fileName = uuid + ".qcow2";
@@ -471,9 +471,9 @@ class ProxmoxTemplates {
         }
     }
 
-    private static void requireFile(ProxmoxSsh ssh, String file) {
+    private static void requireFile(ProxmoxSsh ssh, String file, String where) {
         if (!ssh.sudo("test -f " + ProxmoxSsh.quote(file), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS).isSuccess()) {
-            throw new ProxmoxSshException("The template file " + file + " does not exist on the secondary store");
+            throw new ProxmoxSshException("The template file " + file + " does not exist on the " + where);
         }
     }
 

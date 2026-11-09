@@ -109,7 +109,10 @@ class ProxmoxSecondaryMounts {
                 + " " + ProxmoxSsh.quote(address[0] + ":" + address[1]) + " " + ProxmoxSsh.quote(directory), null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
         if (!mounted.isSuccess()) {
             release(ssh, directory);
-            throw new ProxmoxSshException("Could not mount the secondary store " + address[0] + ":" + address[1] + " on the Proxmox node: " + mounted.describeFailure());
+            String reason = mounted.getExitCode() == 124
+                    ? "the mount did not finish within " + MOUNT_TIMEOUT_SECONDS + " seconds (is the NFS server reachable from the node?)"
+                    : mounted.describeFailure();
+            throw new ProxmoxSshException("Could not mount the secondary store " + address[0] + ":" + address[1] + " on the Proxmox node: " + reason);
         }
         try {
             return action.apply(directory);
