@@ -30,6 +30,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
+import java.util.function.LongPredicate;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -136,6 +137,8 @@ class ProxmoxVmHandler {
     private volatile ProxmoxTemplates templates;
     private volatile ProxmoxIsos isos;
     private volatile Supplier<String> controlBridge = () -> "cloud0";
+    /** Whether the root volumes of a primary storage (its id) are full copies of the template VM (the setting proxmox.create.full.clone); without a setter, always. */
+    private volatile LongPredicate fullClone = poolId -> true;
 
     ProxmoxVmHandler(Supplier<ProxmoxApiClient> clients, String node, String nodeAddress, int apiPort, Supplier<String> authorization,
             LongConsumer pauser, IntSupplier taskTimeoutSeconds) {
@@ -153,6 +156,11 @@ class ProxmoxVmHandler {
         this.taskTimeoutSeconds = taskTimeoutSeconds;
         this.migrationTimeoutSeconds = migrationTimeoutSeconds;
         this.manageHa = manageHa;
+    }
+
+    /** The setting {@code proxmox.create.full.clone} of a primary storage (design-phase12-linked-clones.md). */
+    void setFullClone(LongPredicate fullClone) {
+        this.fullClone = fullClone;
     }
 
     void setClock(LongSupplier clock) {
@@ -319,13 +327,16 @@ class ProxmoxVmHandler {
             if (made == null) {
                 return new CopyCmdAnswer("Proxmox node " + node + " cannot make templates on a pool: no SSH login was given for it");
             }
-            String poolUuid = ((PrimaryDataStoreTO) volume.getDataStore()).getUuid();
+            PrimaryDataStoreTO pool = (PrimaryDataStoreTO) volume.getDataStore();
+            String poolUuid = pool.getUuid();
             ProxmoxApiClient client = clients.get();
             ProxmoxApiClient.VmLocation templateVm = made.requireTemplateVm(poolUuid, templatePath);
             String poolStorage = ProxmoxStorageNames.storageId(poolUuid);
             String name = StringUtils.defaultIfBlank(volume.getVmName(), "cs-" + volume.getUuid());
+            boolean linked = ProxmoxCloneMode.linked(fullClone.test(pool.getId()), volume.getProvisioningType());
+            LOGGER.info("Making the root volume of {} as a {} clone of the template VM {} on {}", name, linked ? "linked" : "full", templateVm.getVmid(), poolStorage);
             return new CopyCmdAnswer(createVmWithRootDisk(client, volume, name,
-                    vmid -> client.cloneVm(templateVm.getNode(), templateVm.getVmid(), vmid, name, true, node, poolStorage)));
+                    vmid -> client.cloneVm(templateVm.getNode(), templateVm.getVmid(), vmid, name, !linked, node, poolStorage)));
         }
         String templateVolume = templatePath;
         String templateEntry = StringUtils.substringBefore(StringUtils.defaultString(templateVolume), ":");
@@ -1114,7 +1125,7 @@ class ProxmoxVmHandler {
         String rootId = rootVolume == null || StringUtils.isBlank(rootVolume.getPath()) || !(rootVolume.getDataStore() instanceof PrimaryDataStoreTO) ? null : volumeId(rootVolume);
         String rootPath = rootVolume == null ? null : rootVolume.getPath();
         for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(node, location.getVmid())).entrySet()) {
-            String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
+            String volumeId = ProxmoxVmConfig.shortVolumeId(ProxmoxHolderVms.volumeIdOf(existing.getValue()));
             // the root disk may still be on the drive it was moved from (moveRootDisk), so it is told by its volume id, not its drive
             if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && !existing.getKey().equals(rootDrive) && volumeId != null
                     && !volumeId.equals(rootId) && !(rootId == null && rootPath != null && volumeId.endsWith(":" + rootPath))
@@ -1130,7 +1141,7 @@ class ProxmoxVmHandler {
             return;
         }
         for (Map.Entry<String, String> existing : new LinkedHashMap<>(client.getVmConfig(location.getNode(), location.getVmid())).entrySet()) {
-            String volumeId = ProxmoxHolderVms.volumeIdOf(existing.getValue());
+            String volumeId = ProxmoxVmConfig.shortVolumeId(ProxmoxHolderVms.volumeIdOf(existing.getValue()));
             if (existing.getKey().matches("(scsi|virtio|sata)\\d+") && volumeId != null && Long.valueOf(location.getVmid()).equals(ownerVm(volumeId))
                     && !volumeId.equals(volumeId(root))) {
                 giveBackToHolder(client, location, volumeId, root.getAccountId(), true);

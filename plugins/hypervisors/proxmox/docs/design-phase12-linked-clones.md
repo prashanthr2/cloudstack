@@ -1,6 +1,6 @@
-# Phase 12 design: linked clones for root volumes (parked)
+# Phase 12 design: linked clones for root volumes
 
-Status: **design only, parked 2026-11-05.** Nothing is built and the lab spike (section 8) has not been run. It builds on step 2 of design-phase11-secondary-mounts.md, which since 2026-11-05 (option C) already makes the **template VM** at the copy to primary and creates root volumes as **full clones** of it (`clone full=1`); this phase adds the choice of `full=0`, the setting and the short path.
+Status: **built 2026-11-09** (decisions D1 to D6 in section 10 made by the user; lab spike LC1 to LC10 run and passed, section 11; unit tested, **lab checks LK1 to LK9 of test-log.md not yet run through CloudStack**). First written and parked 2026-11-05. It builds on step 2 of design-phase11-secondary-mounts.md, which since 2026-11-05 (option C) already makes the **template VM** at the copy to primary and creates root volumes as **full clones** of it (`clone full=1`); this phase adds the choice of `full=0`, the setting and the short path.
 
 Requested on 2026-11-05: Proxmox root volumes can be **linked clones** of the template, controlled by a **setting at cluster and zone level**, and honouring the other places where KVM decides it (the offering and so on).
 
@@ -89,3 +89,51 @@ No new API or UI: a global setting with scope StoragePool appears in **Global Se
 | LC8 | The plugin's `qemu-img` calls on an `extended_l2` overlay: `info`, `snapshot -c/-d`, `convert`, `map` | All work |
 | LC9 | Clone with `--target` another node while the template VM is on a different node | Works on shared storage |
 | LC10 | Ten clones in a row and ten in parallel | Time, and no failures |
+
+## 9. Refresh of 2026-11-09 (read in the code, not run)
+
+What is different from the text above, now that steps 1 to 4 of design-phase11 are built and lab-tested.
+
+**What exists and is reused**
+- The template VM (step 2): `cs-tmpl-<template uuid>-<first 8 of the pool uuid>`, a Proxmox template VM per template and pool, disk `<pool entry>:<vmid>/base-<vmid>-disk-0.qcow2`. `createRootVolume` finds it by the VM id in the stored path (`ProxmoxTemplates.requireTemplateVm`) and clones it today with `cloneVm(..., full=true, target=<this node>, storage=<pool>)` (`ProxmoxVmHandler.createRootVolume`). `ProxmoxApiClient.cloneVm` already supports `full=false` (it then sends neither `storage` nor `format`, as Proxmox requires). So the build is small: one decision function and one different call.
+- The grow-after-clone is already there (`createVmWithRootDisk` resizes the disk to the volume's size when that is bigger than the image), so a bigger volume works the same for a linked clone; it is an overlay that grows (spike LC3).
+- The plugin runs in the management server, so the setting is read there with `valueIn(poolId)` (`PrimaryDataStoreTO.getId()`); no agent property is needed. A `ConfigKey` is added in `ProxmoxConfig` as the other settings are, with scope `StoragePool`.
+- `VolumeObjectTO.getProvisioningType()` is in the command, so the offering's provisioning type is available at the clone.
+
+**What Proxmox does that the first version did not know (read from `qemu-server` and `pve-storage`)**
+- `target` (the node where the new VM is made) is allowed for a linked clone exactly as for a full one: the check is that the template VM's disks are on **shared** storage (`$sharedvm`, `die "can't clone VM to node ... (VM uses local storage)"`). The NFS entries the plugin makes are shared, and full clones with `target` already pass the same check, so no new condition.
+- **Preallocation is a property of the storage entry**, not of a clone or a disk (`preallocation` in the storage definition, applied by `clone_image` and `alloc_image`). So the offering's provisioning type cannot make one volume `metadata` or `full` through the clone API as KVM does with `qemu-img -o preallocation`. Item 2 of section 3 is changed accordingly (decision D2): sparse and fat give a **full** clone, without preallocation, and the limit is documented.
+- A linked clone's disk in the VM configuration is `<pool entry>:<basevmid>/<basename>/<vmid>/<name>`; `ProxmoxVmConfig.diskPath` returns everything after the first colon, so it would store `101/base-101-disk-0.qcow2/104/vm-104-disk-0.qcow2`, which the validators (`DISK_PATH` in `ProxmoxTemplates`, `VOLUME_PATH` in `ProxmoxVolumeSnapshots`) refuse and the later commands do not expect. The build changes `diskPath` to return the last two parts (`104/vm-104-disk-0.qcow2`), which Proxmox's `parse_volname` accepts for the same file.
+
+**Places that touch a root volume, one line each (what must hold for a clone)**
+| Place | Needs |
+|---|---|
+| Volume snapshot backup (`ProxmoxVolumeSnapshots`, `qemu-img convert -U -l` of the snapshot) | Reads through the backing file; the backup is complete (LC5) |
+| Revert of a volume snapshot (`ProxmoxVolumeSnapshots.revert`, stopped instance) | Replaces the file with a flat copy: the volume stops depending on the base (LC5) |
+| Create volume from snapshot | A standalone volume, as now |
+| Template from a volume (step 4, `createFromVolume`, `checkImage(ownImage=true)`) | `qemu-img convert` flattens: the template has no backing file (this is the planned step 4 check T8) |
+| Storage migration of a root drive (`ProxmoxVmHandler` `move_disk`) | A full copy on the other pool: the clone is flattened (LC7) |
+| Instance snapshots (Proxmox's own) | On the overlay (LC6) |
+| Template eviction (`ProxmoxTemplates.destroy`, `DestroyCommand`) | Proxmox refuses to destroy a base with clones; already answered as a failure so core keeps the row and retries (LC4) |
+| VM delete | Destroys the overlay only |
+
+**What becomes riskier with a linked clone (new since the first version)**
+- As with a linked clone on any hypervisor, a clone reads its base file for as long as it runs. Proxmox's own protection (it refuses to destroy a base that has clones, LC4) is the same kind of guard as for a KVM template file; nothing more is built.
+- All clones **read the base from the same NFS file**, so a busy base is a shared hot spot for reads; writes go to each overlay. To measure with ten running clones (LC10).
+- The same base also decides **where** the clone can be made: the template VM's configuration is on one node (open-issues.md, "A template VM is on one node"); that is unchanged by `full=0`.
+- Core's template cleanup (`storage.template.cleanup.enabled`) will try to evict an unused template that still has clones; the refusal is logged by core on every cycle. Accepted.
+
+**What the change buys (measured on the lab, open-issues.md, TV10)**: a full clone of the 100 GiB template took 22 to 26 s alone and 205 to 243 s each with ten in parallel, with two failures on the pool's lock. A linked clone creates a small overlay file and takes the storage lock for a moment, so it should be seconds and removes the parallel-deploy failures. Space: a root volume starts at a few MiB instead of the template's size.
+
+## 10. Decisions wanted (recommendations first)
+
+- **D1: default of `proxmox.create.full.clone`.** Recommended: `false` (linked, as on KVM, VMware and XenServer), but only after the spike has passed; the code is built with the setting, and the default is switched to `false` in the same change as the passed spike results. Until then the default stays `true`, which is today's behaviour and keeps every existing lab as it is. Alternative: ship `true` and leave the switch to the administrator.
+- **D2: provisioning type.** Recommended: `THIN` follows the setting; `SPARSE` and `FAT` always give a full clone **without** preallocation (not possible per volume on Proxmox, see section 9), documented as a limit. Alternative: ignore the provisioning type altogether (only the setting decides).
+- **D3: a volume bigger than the template.** Recommended: still a linked clone, grown (as KVM; the grow code exists). Alternative: a full clone in that case (as VMware).
+- **D4: where the setting lives (decided 2026-11-09, changed the same day from the scope list to StoragePool and Global).** One Boolean `proxmox.create.full.clone`, category Storage, dynamic, declared with the single scope **StoragePool**. A key with one scope is looked up at the pool and then **globally** (`ConfigKey.valueInGlobalOrAvailableParentScope` returns the global value when `scopes.size() <= 1`), which is exactly how `vmware.create.full.clone` and `xenserver.create.full.clone` behave (they have no cluster or zone value either; the text of section 1 that calls it a chain of four levels is wrong). So: a value on the primary storage wins, else the global value; there is nothing to rank. It appears in Global Settings and in the Settings tab of each primary storage. Reason for no cluster or zone level: the template VM and its base file are per pool, so a pool is where the dependency is, and Proxmox clusters have few pools. Cluster and zone can be added later without breaking anything (pool values and the global value stay). **Default: false (linked), D1.**
+- **D5: the stored volume path.** Recommended: the short form `<vmid>/vm-<vmid>-disk-0.qcow2` (no change anywhere else), after LC2 shows Proxmox accepts it in every call the plugin makes on a clone. If it does not, the long form is stored and the validators are widened.
+- **D6: what a revert and a storage migration do.** Recommended: accept that they flatten the volume (it stops depending on the base), without any message.
+
+## 11. Spike results (2026-11-09, test-log.md "Linked clones, lab spike")
+
+LC1 to LC4, LC6, LC8, LC9 and LC10 passed; LC2 confirms D5 (the short id works in the content call, and the plugin lists content only for ISOs); LC7 passed for the offline and the online migration; the backup of a clone through its backing file is complete (LC5). Still open: (a) after a revert (the overlay replaced by a flat file) whether Proxmox still treats the VM as a clone of the base, because the VM configuration keeps the long id and so the base may stay "in use" (decides whether the revert must also rewrite the disk entry); (b) `move_disk` of a clone to another pool. New facts: the linked clone is 1.6 s against 50 s for a full clone, ten at once take 7 s without failures; the overlay is `extended_l2=off` on this Proxmox version; The base cannot be made immutable on NFS (`chattr +i` fails), the same as a KVM template file there.

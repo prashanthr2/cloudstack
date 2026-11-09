@@ -201,6 +201,7 @@ public class ProxmoxResource implements ServerResource {
         volumeSnapshots = new ProxmoxVolumeSnapshots(() -> client, this::openLogin, secondaryMounts, ProxmoxConfig.TaskTimeout::value);
         templates = new ProxmoxTemplates(() -> client, node, this::openLogin, secondaryMounts, ProxmoxConfig.TaskTimeout::value, this::pause);
         vmHandler.setTemplates(templates);
+        vmHandler.setFullClone(poolId -> Boolean.TRUE.equals(ProxmoxConfig.CreateFullClone.valueIn(poolId)));
         vmHandler.setIsos(new ProxmoxIsos(() -> client, node, this::openLogin, secondaryMounts, ProxmoxConfig.IsoPath::value, this::pause));
         routerDeployer = new ProxmoxRouterDeployer(() -> client, this::pause, System::currentTimeMillis);
         routingResource = new VirtualRoutingResource(routerDeployer);

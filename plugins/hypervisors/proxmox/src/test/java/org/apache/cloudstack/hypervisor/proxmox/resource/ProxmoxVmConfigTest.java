@@ -574,4 +574,36 @@ public class ProxmoxVmConfigTest {
 
         assertEquals("product=Q2xvdWRTdGFjayBQcm94bW94IEh5cGVydmlzb3I=,base64=1", ProxmoxVmConfig.startOptions(vm, 0).get("smbios1"));
     }
+    // ---- linked clones: the disk of a clone names its base, the path CloudStack keeps does not ----
+
+    private static final String CLONE_DISK = "cs-pool:8100/base-8100-disk-0.qcow2/8001/vm-8001-disk-0.qcow2,size=100G";
+
+    @Test
+    public void theDiskPathOfALinkedCloneIsTheShortForm() {
+        assertEquals("8001/vm-8001-disk-0.qcow2", ProxmoxVmConfig.diskPath(CLONE_DISK));
+        assertEquals("8001/vm-8001-disk-0.qcow2", ProxmoxVmConfig.diskPath("cs-pool:8001/vm-8001-disk-0.qcow2,size=100G"));
+        assertEquals("8100/base-8100-disk-0.qcow2", ProxmoxVmConfig.diskPath("cs-pool:8100/base-8100-disk-0.qcow2,size=100G"));
+        assertEquals("", ProxmoxVmConfig.diskPath(null));
+    }
+
+    @Test
+    public void aVolumeIdOfALinkedCloneIsShortenedAndOtherIdsAreNot() {
+        assertEquals("cs-pool:8001/vm-8001-disk-0.qcow2", ProxmoxVmConfig.shortVolumeId("cs-pool:8100/base-8100-disk-0.qcow2/8001/vm-8001-disk-0.qcow2"));
+        assertEquals("cs-pool:8001/vm-8001-disk-0.qcow2", ProxmoxVmConfig.shortVolumeId("cs-pool:8001/vm-8001-disk-0.qcow2"));
+        assertEquals("none", ProxmoxVmConfig.shortVolumeId("none"));
+        assertNull(ProxmoxVmConfig.shortVolumeId(null));
+    }
+
+    @Test
+    public void aDriveThatHoldsALinkedCloneIsFoundByTheShortPathAndTheShortId() {
+        Map<String, String> config = Map.of("scsi0", CLONE_DISK, "scsi1", "cs-pool:900000002/vm-900000002-abc.qcow2,size=5G");
+
+        assertEquals("scsi0", ProxmoxVmConfig.driveHolding(config, "8001/vm-8001-disk-0.qcow2"));
+        assertEquals(java.util.Collections.singletonList("scsi0"), ProxmoxVmConfig.drivesHolding(config, "8001/vm-8001-disk-0.qcow2"));
+        assertEquals("scsi0", ProxmoxVmConfig.driveHoldingVolume(config, "cs-pool:8001/vm-8001-disk-0.qcow2"));
+        assertEquals("scsi0", ProxmoxVmConfig.rootDriveOf(config, "8001/vm-8001-disk-0.qcow2"));
+        assertEquals("scsi1", ProxmoxVmConfig.driveHolding(config, "900000002/vm-900000002-abc.qcow2"));
+        assertNull("another VM's disk is not found", ProxmoxVmConfig.driveHolding(config, "8002/vm-8002-disk-0.qcow2"));
+        assertNull("a path that only ends the same is not the volume", ProxmoxVmConfig.driveHolding(config, "1/vm-8001-disk-0.qcow2"));
+    }
 }

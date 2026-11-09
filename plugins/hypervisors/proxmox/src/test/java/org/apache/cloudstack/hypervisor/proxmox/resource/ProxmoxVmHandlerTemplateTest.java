@@ -327,4 +327,62 @@ public class ProxmoxVmHandlerTemplateTest {
         assertFalse(answer.getResult());
         verify(client, never()).cloneVm(anyString(), anyLong(), anyLong(), anyString(), anyBoolean(), anyString(), anyString());
     }
+    // ---- linked clones (design-phase12-linked-clones.md) ----
+
+    private static final String LINKED_DISK = POOL + ":9050/base-9050-disk-0.qcow2/9204/vm-9204-disk-0.qcow2,size=5G";
+
+    @Test
+    public void withTheSettingOffTheRootVolumeIsALinkedCloneAndItsPathIsTheShortForm() {
+        handler.setFullClone(poolId -> false);
+        templateVmExistsAndCloneGets(9204, LINKED_DISK);
+        when(client.getImageInfo(NODE, POOL + ":9050/base-9050-disk-0.qcow2/9204/vm-9204-disk-0.qcow2")).thenReturn(new ProxmoxApiClient.ImageInfo(5242880000L, 0, "qcow2", "/x"));
+
+        CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(rootVolumeFromTemplate(PATH, 5242880000L));
+
+        verify(client).cloneVm("pve2", 9050L, 9204L, "i-2-10-VM", false, NODE, POOL);
+        assertTrue(answer.getDetails(), answer.getResult());
+        assertEquals("9204/vm-9204-disk-0.qcow2", ((VolumeObjectTO) answer.getNewData()).getPath());
+    }
+
+    @Test
+    public void theSettingIsReadForThePoolOfTheVolume() {
+        long[] poolIds = new long[1];
+        handler.setFullClone(poolId -> {
+            poolIds[0] = poolId;
+            return true;
+        });
+        templateVmExistsAndCloneGets(9204, POOL + ":9204/vm-9204-disk-0.qcow2,size=5G");
+        CopyCommand cmd = rootVolumeFromTemplate(PATH, 5242880000L);
+        PrimaryDataStoreTO pool = (PrimaryDataStoreTO) ((VolumeObjectTO) cmd.getDestTO()).getDataStore();
+        when(pool.getId()).thenReturn(42L);
+
+        handler.copy(cmd);
+
+        assertEquals(42L, poolIds[0]);
+        verify(client).cloneVm("pve2", 9050L, 9204L, "i-2-10-VM", true, NODE, POOL);
+    }
+
+    @Test
+    public void aSparseOrFatOfferingIsAFullCopyWhateverTheSetting() {
+        handler.setFullClone(poolId -> false);
+        templateVmExistsAndCloneGets(9204, POOL + ":9204/vm-9204-disk-0.qcow2,size=5G");
+        CopyCommand cmd = rootVolumeFromTemplate(PATH, 5242880000L);
+        when(((VolumeObjectTO) cmd.getDestTO()).getProvisioningType()).thenReturn(Storage.ProvisioningType.FAT);
+
+        handler.copy(cmd);
+
+        verify(client).cloneVm("pve2", 9050L, 9204L, "i-2-10-VM", true, NODE, POOL);
+    }
+
+    @Test
+    public void aLinkedCloneBiggerThanTheTemplateIsGrownAndKeepsTheShortPath() {
+        handler.setFullClone(poolId -> false);
+        templateVmExistsAndCloneGets(9204, LINKED_DISK);
+
+        CopyCmdAnswer answer = (CopyCmdAnswer) handler.copy(rootVolumeFromTemplate(PATH, 20L * GIB));
+
+        verify(client).resizeDisk(NODE, 9204L, "scsi0", Long.toString(20L * GIB));
+        assertEquals("9204/vm-9204-disk-0.qcow2", ((VolumeObjectTO) answer.getNewData()).getPath());
+        assertEquals(Long.valueOf(20L * GIB), ((VolumeObjectTO) answer.getNewData()).getSize());
+    }
 }

@@ -52,7 +52,7 @@ public class ProxmoxConfigTest {
     @Test
     public void allSettingsAreRegisteredAndCanBeChangedWithoutARestart() {
         ProxmoxConfig config = new ProxmoxConfig();
-        assertEquals(11, config.getConfigKeys().length);
+        assertEquals(12, config.getConfigKeys().length);
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiConnectTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiReadTimeout));
         assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.ApiVerifyTls));
@@ -76,6 +76,11 @@ public class ProxmoxConfigTest {
         assertEquals("proxmox.iso.path", ProxmoxConfig.IsoPath.key());
         assertEquals("/var/lib/cloudstack-iso", ProxmoxConfig.IsoPath.value());
         assertTrue(ProxmoxConfig.IsoPath.isDynamic());
+        assertTrue(Arrays.asList(config.getConfigKeys()).contains(ProxmoxConfig.CreateFullClone));
+        assertEquals("proxmox.create.full.clone", ProxmoxConfig.CreateFullClone.key());
+        assertFalse("root volumes are linked clones unless the setting says otherwise", ProxmoxConfig.CreateFullClone.value());
+        assertTrue(ProxmoxConfig.CreateFullClone.isDynamic());
+        assertEquals(java.util.Collections.singletonList(org.apache.cloudstack.framework.config.ConfigKey.Scope.StoragePool), ProxmoxConfig.CreateFullClone.getScopes());
         assertTrue(ProxmoxConfig.MigrationTimeout.isDynamic());
         assertTrue(ProxmoxConfig.HaManage.isDynamic());
         assertTrue(ProxmoxConfig.TaskTimeout.isDynamic());

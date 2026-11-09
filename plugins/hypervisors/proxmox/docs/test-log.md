@@ -996,3 +996,40 @@ All templates made from volumes went back to "processing" after the management s
 - Not yet run again with the fixed jar: a second deploy from a volume template (no new template VM), a boot from a template made from a snapshot-volume, and a template from a data volume after the sync.
 
 Follow-up checks on the fixed jar (2026-11-09), all as expected: R1 (a second deploy from a volume template makes no new template VM), R2 (deploy and boot from a template made through the snapshot workaround), R3 (a template from a data volume stays Ready after the SSVM was recreated). **Step 4 is closed.**
+
+## Linked clones, lab spike (2026-11-09, design-phase12 section 8)
+
+Run by hand with `qm`, `pvesm` and the REST API (token of a throw-away user) on pve3 against a spare base VM 8100 (a full clone of the template VM 107, 100 GiB, on pool `cs-f7c5790d-...`); nothing through CloudStack or the plugin yet.
+
+| Check | Result |
+|---|---|
+| LC1 | **Pass.** `qm clone --full 0` took 1.6 s (a full clone of the same 100 GiB took 50 s); the overlay is 196 KiB with `backing file: ../8100/base-8100-disk-0.qcow2`; the VM config holds the long id `<pool>:8100/base-8100-disk-0.qcow2/8001/vm-8001-disk-0.qcow2`; the file is `images/8001/vm-8001-disk-0.qcow2` |
+| LC2 | **Pass for the calls the plugin makes.** `GET .../storage/<pool>/content/<volid>` answers the **short** id (`<pool>:8001/vm-8001-disk-0.qcow2`) and the **long** id with the same size, format and path. `qm resize` works on a clone (the config keeps the long id). `pvesm list` shows only the long id for a clone. The plugin lists storage content only for ISOs, so nothing compares root-volume ids. D5 (short path) is confirmed |
+| LC3 | **Pass.** `qm resize` to 110G on a clone: virtual size 110 GiB, overlay 53 MiB after a boot, base unchanged (100 GiB), the VM starts |
+| LC4 | **Pass.** `qm destroy` of a base with clones, and the same through the API with a token: both refused, `base volume '<pool>:8100/base-8100-disk-0.qcow2' is still in use by linked cloned` (Proxmox's own text, with the typo); through the API it is a task that ends with that status |
+| LC5 | **Backup pass; the revert question is still open.** A snapshot of a stopped clone read with `qemu-img convert -l snapshot.name=...` is `Images are identical.` to the base and has no backing file (the backup reads through the base; 1 min 5 s for 100 GiB with 3.2 GiB of data); the same with `-U` on a running clone (VM snapshot) works. Replacing the overlay with the flat copy gives a file with no backing file and the VM starts. **The probe of the base protection after the flatten was badly made** (other clones existed, so the refusal proves nothing): repeat with one clone only (see below) |
+| LC6 | **Pass.** Instance snapshot without and with memory (`--vmstate 1`) on a running clone, rollback, start, delete: all work |
+| LC7 | **Offline migration and online migration pass:** a stopped clone moved pve3 to pve1 in 2 s (this is the move the plugin does before a start), and the running clone moved pve1 to pve2 online in 9 s; the disk stays on the shared pool. **`move_disk` is not tested:** the command named the same pool (`you can't move to the same storage with same format`); repeat to the other pool |
+| LC8 | **Pass.** On this Proxmox the overlay is `extended l2: false` (not on as the design assumed). `qemu-img snapshot -c/-l/-d`, `map`, `check`, `convert` and `compare` all work on an overlay |
+| LC9 | **Pass.** `qm clone --full 0 --target <other node>` made the VM on the other node (`/etc/pve/nodes/<node>/qemu-server/8006.conf`), and it started there. This is the plugin's deploy path |
+| LC10 | **Pass.** Ten linked clones one after another: 16 s (1.6 s each); ten at once: 7 s, no failure, no error (full clones: 205 to 243 s each with two failures) |
+
+Other things seen:
+- `qm template` of the base printed `chattr +i ... Operation not supported`: Proxmox cannot make the base file immutable on NFS (a KVM template file there is as unprotected). It is a warning, not an error.
+- All clones of the spike and the base 8100, the user and the token of the spike must be removed (cleanup block); not confirmed yet.
+
+## Linked clones, built 2026-11-09 (design-phase12-linked-clones.md; 710 unit tests pass; not yet run through CloudStack)
+
+What was built: the setting `proxmox.create.full.clone` (scope StoragePool, then global, default false), `ProxmoxCloneMode` (thin follows the setting; sparse and fat are full copies), `full=0` in `createRootVolume`, the short volume path (`ProxmoxVmConfig.diskPath`/`shortPath`/`shortVolumeId`) and the drive lookups in the short form. Unit tests: `ProxmoxCloneModeTest` (3), `ProxmoxVmConfigTest` (3 new), `ProxmoxVmHandlerTemplateTest` (4 new), `ProxmoxConfigTest`.
+
+| Check | What | Expected |
+|---|---|---|
+| LK1 | Setting not set (default). Deploy an instance from a template | Log "Making the root volume of <vm> as a linked clone"; the clone takes seconds; `volumes.path` in CloudStack is `<vmid>/vm-<vmid>-disk-0.qcow2`; `qm config <vmid>` shows the long id `<pool>:<base>/base-<base>-disk-0.qcow2/<vmid>/vm-<vmid>-disk-0.qcow2`; `qemu-img info -U` of the file has a `backing file`; the instance boots |
+| LK2 | `update configuration name=proxmox.create.full.clone storageid=<pool uuid> value=true`, deploy | Log "as a full clone"; no `backing file`; the path is the same short form |
+| LK3 | Global value true, pool value false; then the pool without a value | Pool value false: linked. Pool without a value: full (the global value). Set both back to false afterwards |
+| LK4 | A compute offering with provisioning type sparse (or fat), setting false, deploy | A full copy, whatever the setting |
+| LK5 | On a linked instance: stop, start (on another host: the configuration move), reboot, migrate to another host, expunge | All work; after the expunge the overlay is gone and the base stays |
+| LK6 | Deploy with a root disk bigger than the template (`rootdisksize`), and resize the root volume later | The overlay is grown to the size asked; the guest sees it |
+| LK7 | On a linked instance: volume snapshot (running), volume from the snapshot, attach it; instance snapshot with and without memory, revert; stop it and revert the volume snapshot | All work; after the volume revert the file has no backing file |
+| LK8 | Stop a linked instance: create a template from its root volume, deploy from it; move its root volume to the other pool | The template has no backing file and deploys; the moved volume is a flat file on the other pool, the old overlay is gone, the base stays |
+| LK9 | Ten instances at once, then expunge them all and delete the template | All ten succeed in well under a minute with no lock timeout in the log (full copies took 205 to 243 s with failures); deleting the template while instances exist is refused by core; after they are expunged the template VM is destroyed |

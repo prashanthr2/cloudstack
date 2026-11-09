@@ -89,6 +89,15 @@ public class ProxmoxConfig implements Configurable {
                     + "below the export of a primary storage, as the kernel shares one mount between them and the options of the first would win. "
                     + "Empty: the system defaults, which is what KVM uses (hard). A change applies to mounts made after it", true);
 
+    public static final ConfigKey<Boolean> CreateFullClone = new ConfigKey<>("Storage", Boolean.class,
+            "proxmox.create.full.clone", "false",
+            "If false (the default), the root volume of an instance is a linked clone of the template VM that caches the template on the primary storage: "
+                    + "it is made in seconds and starts as a small file that holds only what the instance changes. If true, it is a full, independent copy of "
+                    + "the template disk, which takes as long as the copy of the whole disk and uses its whole size, but does not depend on the template VM. "
+                    + "Can be set per primary storage, and globally for all that have no value of their own. A compute or disk offering with sparse or fat "
+                    + "provisioning always gets a full copy, as on KVM. Instances that exist keep what they were made with; a change applies to the next deploy",
+            true, ConfigKey.Scope.StoragePool);
+
     @Override
     public String getConfigComponentName() {
         return ProxmoxConfig.class.getSimpleName();
@@ -96,6 +105,6 @@ public class ProxmoxConfig implements Configurable {
 
     @Override
     public ConfigKey<?>[] getConfigKeys() {
-        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey, SecondaryMountOptions, IsoPath};
+        return new ConfigKey<?>[] {ApiConnectTimeout, ApiReadTimeout, ApiVerifyTls, TaskTimeout, MigrationTimeout, HaManage, ControlBridge, PatchPath, SystemVmSshKey, SecondaryMountOptions, IsoPath, CreateFullClone};
     }
 }

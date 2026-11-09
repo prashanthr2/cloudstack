@@ -336,7 +336,7 @@ public final class ProxmoxVmConfig {
         }
         for (Map.Entry<String, String> entry : config.entrySet()) {
             String key = entry.getKey();
-            if (key.matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && entry.getValue().contains(":" + volumePath)) {
+            if (key.matches("(scsi|virtio|sata)\\d+") && holds(entry.getValue(), volumePath)) {
                 return key;
             }
         }
@@ -352,7 +352,8 @@ public final class ProxmoxVmConfig {
             return null;
         }
         for (Map.Entry<String, String> entry : config.entrySet()) {
-            if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && volumeId.equals(StringUtils.substringBefore(entry.getValue(), ","))) {
+            if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null
+                    && shortVolumeId(volumeId).equals(shortVolumeId(StringUtils.substringBefore(entry.getValue(), ",")))) {
                 return entry.getKey();
             }
         }
@@ -364,7 +365,7 @@ public final class ProxmoxVmConfig {
         List<String> drives = new ArrayList<>();
         if (StringUtils.isNotBlank(volumePath)) {
             for (Map.Entry<String, String> entry : config.entrySet()) {
-                if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && entry.getValue() != null && entry.getValue().contains(":" + volumePath)) {
+                if (entry.getKey().matches("(scsi|virtio|sata)\\d+") && holds(entry.getValue(), volumePath)) {
                     drives.add(entry.getKey());
                 }
             }
@@ -522,10 +523,32 @@ public final class ProxmoxVmConfig {
         return 0;
     }
 
-    /** The volume path in a disk option: the part after "&lt;storage&gt;:" and before the first comma. */
+    /**
+     * The volume path in a disk option: the part after "&lt;storage&gt;:" and before the first comma, in the short form that CloudStack stores. A linked clone's
+     * disk is "&lt;pool&gt;:&lt;base vmid&gt;/&lt;base name&gt;/&lt;vmid&gt;/&lt;name&gt;" (the file is the same as for a full copy, below &lt;vmid&gt;), and its path is "&lt;vmid&gt;/&lt;name&gt;".
+     */
     public static String diskPath(String diskOption) {
         String volume = StringUtils.substringBefore(StringUtils.defaultString(diskOption), ",");
-        return StringUtils.substringAfter(volume, ":");
+        return shortPath(StringUtils.substringAfter(volume, ":"));
+    }
+
+    /** A volume path without the base of a linked clone: "&lt;base vmid&gt;/&lt;base name&gt;/&lt;vmid&gt;/&lt;name&gt;" is "&lt;vmid&gt;/&lt;name&gt;"; any other path is returned as it is. */
+    public static String shortPath(String path) {
+        String[] parts = StringUtils.split(StringUtils.defaultString(path), '/');
+        return parts.length == 4 ? parts[2] + "/" + parts[3] : path;
+    }
+
+    /** A volume id ("&lt;storage&gt;:&lt;path&gt;") in the short form (see {@link #shortPath}); an id without a storage is returned as it is. */
+    public static String shortVolumeId(String volumeId) {
+        if (volumeId == null || !volumeId.contains(":")) {
+            return volumeId;
+        }
+        return StringUtils.substringBefore(volumeId, ":") + ":" + shortPath(StringUtils.substringAfter(volumeId, ":"));
+    }
+
+    /** True when the value of a drive in a VM configuration holds the volume at {@code volumePath}, whether it is a full copy or a linked clone. */
+    private static boolean holds(String driveValue, String volumePath) {
+        return driveValue != null && driveValue.contains(":") && volumePath.equals(diskPath(driveValue));
     }
 
     static long parseSize(String size) {
