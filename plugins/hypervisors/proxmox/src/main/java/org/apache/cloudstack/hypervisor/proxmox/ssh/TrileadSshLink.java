@@ -20,13 +20,21 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 
 import com.trilead.ssh2.ChannelCondition;
 import com.trilead.ssh2.Connection;
+import com.trilead.ssh2.LocalPortForwarder;
 import com.trilead.ssh2.ServerHostKeyVerifier;
 import com.trilead.ssh2.Session;
 import com.trilead.ssh2.StreamGobbler;
@@ -36,6 +44,7 @@ public class TrileadSshLink implements SshLink {
     private final String host;
     private final int port;
     private Connection connection;
+    private final List<LocalPortForwarder> forwarders = new ArrayList<>();
 
     public TrileadSshLink(String host, int port) {
         this.host = host;
@@ -103,6 +112,53 @@ public class TrileadSshLink implements SshLink {
         }
     }
 
+    /** A free port is looked up first because the forwarder cannot report the one it was given; a port taken in between is tried again. */
+    @Override
+    public int forwardLocalPort(String remoteHost, int remotePort) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            int local;
+            try (ServerSocket probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+                local = probe.getLocalPort();
+            }
+            try {
+                forwarders.add(connection.createLocalPortForwarder(new InetSocketAddress(InetAddress.getLoopbackAddress(), local), remoteHost, remotePort));
+                return local;
+            } catch (IOException e) {
+                last = e;
+            }
+        }
+        throw last;
+    }
+
+    @Override
+    public void upload(Path file, String remotePath, int timeoutMillis) throws IOException {
+        Session session = connection.openSession();
+        try (InputStream in = Files.newInputStream(file)) {
+            session.execCommand("cat > " + ProxmoxSsh.quote(remotePath));
+            OutputStream out = session.getStdin();
+            byte[] buffer = new byte[1 << 16];
+            for (int count = in.read(buffer); count >= 0; count = in.read(buffer)) {
+                out.write(buffer, 0, count);
+            }
+            out.close();
+            int conditions = session.waitForCondition(ChannelCondition.EXIT_STATUS | ChannelCondition.EOF | ChannelCondition.CLOSED, timeoutMillis);
+            if ((conditions & ChannelCondition.TIMEOUT) != 0) {
+                throw new IOException("the copy did not finish within " + timeoutMillis / 1000 + " seconds");
+            }
+            session.waitForCondition(ChannelCondition.EXIT_STATUS, 5000);
+            Integer exit = session.getExitStatus();
+            if (exit == null || exit != 0) {
+                throw new IOException("the write of " + remotePath + " ended with " + (exit == null ? "no exit status" : "exit code " + exit));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("the copy was interrupted", e);
+        } finally {
+            session.close();
+        }
+    }
+
     private static String read(InputStream stream) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         byte[] buffer = new byte[4096];
@@ -115,6 +171,13 @@ public class TrileadSshLink implements SshLink {
 
     @Override
     public void close() {
+        for (LocalPortForwarder forwarder : forwarders) {
+            try {
+                forwarder.close();
+            } catch (IOException e) {
+                // the connection is closed next, which ends the forwarding anyway
+            }
+        }
         if (connection != null) {
             connection.close();
         }

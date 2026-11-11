@@ -171,29 +171,18 @@ public class ProxmoxVmHandlerSystemVmTest {
     }
 
     @Test
-    public void theAgentFileIsPreparedOnTheNodeBeforeAnythingIsChangedOrStarted() {
+    public void theStartOfASystemVmReservesNoCdDriveAndNeedsNothingOnTheNodeFirst() {
         StartCommand cmd = startCommand(VirtualMachine.Type.SecondaryStorageVm);
-        when(systemVms.beforeStart(client, cmd.getVirtualMachine(), NODE)).thenReturn(null);
 
         Answer answer = handler.start(cmd);
 
         assertTrue(answer.getDetails(), answer.getResult());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> options = ArgumentCaptor.forClass(Map.class);
         InOrder order = inOrder(client, systemVms);
-        order.verify(systemVms).beforeStart(client, cmd.getVirtualMachine(), NODE);
-        order.verify(client).updateVmConfig(eq(NODE), eq(9300L), anyMap());
+        order.verify(client).updateVmConfig(eq(NODE), eq(9300L), options.capture());
         order.verify(client).startVm(NODE, 9300L);
-    }
-
-    @Test
-    public void aStartThatCannotGetItsAgentFileOntoTheNodeChangesNothing() {
-        StartCommand cmd = startCommand(VirtualMachine.Type.ConsoleProxy);
-        when(systemVms.beforeStart(client, cmd.getVirtualMachine(), NODE)).thenReturn("Unable to prepare the system VM patch file on Proxmox node pve1: HTTP 403");
-
-        Answer answer = handler.start(cmd);
-
-        assertFalse(answer.getResult());
-        assertTrue(answer.getDetails(), answer.getDetails().contains("HTTP 403"));
-        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
-        verify(client, never()).startVm(anyString(), anyLong());
+        order.verify(systemVms).afterStart(client, cmd.getVirtualMachine(), NODE, 9300L);
+        assertFalse(options.getValue().containsKey("ide2"));
     }
 }

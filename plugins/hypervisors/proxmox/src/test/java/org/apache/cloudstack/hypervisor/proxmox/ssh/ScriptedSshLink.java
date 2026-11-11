@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.ssh;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -56,6 +57,22 @@ public class ScriptedSshLink implements SshLink {
             lastInput = stdin;
         }
         return answers.apply(command);
+    }
+
+    /** The port that {@link #forwardLocalPort} answers, and the remote end it was asked for. */
+    public int forwardedPort = 54321;
+    public String forwardedTo;
+    public final List<String> uploaded = new ArrayList<>();
+
+    @Override
+    public int forwardLocalPort(String host, int port) {
+        forwardedTo = host + ":" + port;
+        return forwardedPort;
+    }
+
+    @Override
+    public void upload(Path file, String remotePath, int timeoutMillis) {
+        uploaded.add(file.getFileName() + " -> " + remotePath);
     }
 
     @Override

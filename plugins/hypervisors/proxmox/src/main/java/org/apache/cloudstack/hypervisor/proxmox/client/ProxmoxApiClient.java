@@ -17,14 +17,9 @@
 package org.apache.cloudstack.hypervisor.proxmox.client;
 
 import java.io.Closeable;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -46,7 +41,6 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
-import org.apache.http.entity.AbstractHttpEntity;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.conn.ssl.TrustAllStrategy;
@@ -618,20 +612,6 @@ public class ProxmoxApiClient implements Closeable {
     }
 
     /**
-     * Adds a plain directory entry for ISO files that live on each node's own disk: not shared, and Proxmox itself makes the directory and its
-     * sub-folders ({@code template/iso}) on a node when it activates the entry there (lab P1), so nothing has to be created by hand.
-     */
-    public void createPatchStorage(String id, String path) {
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("storage", id);
-        form.put("type", "dir");
-        form.put("path", path);
-        form.put("content", "iso");
-        form.put("shared", "0");
-        post("/storage", form);
-    }
-
-    /**
      * Adds a directory entry for the ISOs that the plugin binds from the secondary store, shared because every node has the same files (a VM with an ISO
      * can then move between nodes); Proxmox makes the directory and its sub-folders on a node when it activates the entry there.
      */
@@ -674,88 +654,6 @@ public class ProxmoxApiClient implements Closeable {
             }
         }
         return items;
-    }
-
-    /**
-     * A multipart/form-data body for the storage upload API: the field "content" and one file, followed by zero bytes up to a multiple of
-     * {@code blockBytes} (a CD shows only whole 2048-byte sectors, lab P3). It is written from the file, never held in memory, and can be
-     * written again when the request has to be sent to another address.
-     */
-    static class UploadEntity extends AbstractHttpEntity {
-        private final byte[] head;
-        private final byte[] tail;
-        private final Path file;
-        private final long fileSize;
-        private final long paddedSize;
-
-        UploadEntity(String content, String filename, Path file, int blockBytes) throws IOException {
-            String boundary = "----cloudstack" + java.util.UUID.randomUUID().toString().replace("-", "");
-            this.head = ("--" + boundary + "\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n" + content + "\r\n--" + boundary
-                    + "\r\nContent-Disposition: form-data; name=\"filename\"; filename=\"" + filename + "\"\r\n"
-                    + "Content-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8);
-            this.tail = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
-            this.file = file;
-            this.fileSize = Files.size(file);
-            this.paddedSize = blockBytes <= 1 ? fileSize : (fileSize + blockBytes - 1) / blockBytes * blockBytes;
-            setContentType("multipart/form-data; boundary=" + boundary);
-        }
-
-        long paddedSize() {
-            return paddedSize;
-        }
-
-        @Override
-        public boolean isRepeatable() {
-            return true;
-        }
-
-        @Override
-        public long getContentLength() {
-            return head.length + paddedSize + tail.length;
-        }
-
-        /** Only for small bodies (tests); a request is sent with {@link #writeTo}. */
-        @Override
-        public InputStream getContent() throws IOException {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            writeTo(out);
-            return new java.io.ByteArrayInputStream(out.toByteArray());
-        }
-
-        @Override
-        public void writeTo(OutputStream out) throws IOException {
-            out.write(head);
-            Files.copy(file, out);
-            byte[] zeros = new byte[4096];
-            for (long left = paddedSize - fileSize; left > 0; left -= zeros.length) {
-                out.write(zeros, 0, (int) Math.min(zeros.length, left));
-            }
-            out.write(tail);
-            out.flush();
-        }
-
-        @Override
-        public boolean isStreaming() {
-            return false;
-        }
-    }
-
-    /**
-     * Uploads a file as ISO content of a storage entry on a node, padded with zeros to a multiple of {@code blockBytes}; returns the task id
-     * (the node copies the upload to its place in a task).
-     */
-    public String uploadIso(String node, String storage, String filename, Path file, int blockBytes) {
-        UploadEntity entity;
-        try {
-            entity = new UploadEntity("iso", filename, file, blockBytes);
-        } catch (IOException e) {
-            throw new ProxmoxApiException("Unable to read " + file + " for the upload: " + e.getMessage(), e);
-        }
-        return taskId(execute(api -> {
-            HttpPost request = new HttpPost(api + "/nodes/" + node + "/storage/" + storage + "/upload");
-            request.setEntity(entity);
-            return request;
-        }));
     }
 
     /** A console session of a VM: valid for seconds and for one connection (see docs/design-phase4-console.md). */

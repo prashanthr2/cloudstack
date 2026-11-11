@@ -70,6 +70,15 @@ public class ProxmoxSshTest {
         }
 
         @Override
+        public int forwardLocalPort(String host, int port) {
+            return 0;
+        }
+
+        @Override
+        public void upload(java.nio.file.Path file, String remotePath, int timeoutMillis) {
+        }
+
+        @Override
         public void close() {
             closed = true;
         }

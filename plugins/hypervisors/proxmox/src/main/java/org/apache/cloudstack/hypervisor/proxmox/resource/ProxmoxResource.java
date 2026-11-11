@@ -30,8 +30,10 @@ import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSsh;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxVmShell;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.SshTarget;
 import org.apache.cloudstack.hypervisor.proxmox.ssh.TrileadSshLink;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.TunnelVmShell;
 import org.apache.cloudstack.storage.command.AttachCommand;
 import org.apache.cloudstack.storage.command.CopyCommand;
 import org.apache.cloudstack.storage.command.CreateObjectCommand;
@@ -207,8 +209,8 @@ public class ProxmoxResource implements ServerResource {
         routingResource = new VirtualRoutingResource(routerDeployer);
         routingResource.configure(name, params);
         vmHandler.setControlBridge(ProxmoxConfig.ControlBridge::value);
-        systemVms = new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.PatchPath::value,
-                ProxmoxConfig.SystemVmSshKey::value, ProxmoxConfig.TaskTimeout::value, this::pause, System::currentTimeMillis);
+        systemVms = new ProxmoxSystemVms(routerDeployer, routingResource, ProxmoxPatchFiles::locate, ProxmoxConfig.SystemVmSshKey::value,
+                this::openVmShell, this::pause, System::currentTimeMillis);
         vmHandler.setSystemVms(systemVms);
         return true;
     }
@@ -487,6 +489,15 @@ public class ProxmoxResource implements ServerResource {
             throw new ProxmoxSshException("Proxmox node " + node + " has no SSH login or host key for the commands that run on the node: delete the host and add it again");
         }
         return openSsh(new SshTarget(nodeIp, ProxmoxSsh.DEFAULT_PORT, sshUser, sshPrivateKey, sshPassword, sshFingerprint));
+    }
+
+    /**
+     * A login as root in a system VM or router that runs on this node, through an SSH tunnel to the node (the control address of the VM can only
+     * be reached from the node), with the management server's own key, which every system VM trusts.
+     */
+    private ProxmoxVmShell openVmShell(String controlIp) {
+        return TunnelVmShell.open(openLogin(), controlIp, sshPrivateKey, port -> new TrileadSshLink("127.0.0.1", port),
+                ProxmoxSystemVms.SHELL_WAIT_SECONDS, this::pause, System::currentTimeMillis);
     }
 
     protected ProxmoxSsh openSsh(SshTarget target) {

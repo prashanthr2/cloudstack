@@ -138,6 +138,18 @@ public class ProxmoxSsh implements AutoCloseable {
         return result.getStdout();
     }
 
+    /**
+     * A port on this machine's loopback address that leads to {@code host:port} as seen from the node (for example a system VM's control address,
+     * which only the node can reach). Closed with this SSH access.
+     */
+    public int forward(String host, int port) {
+        try {
+            return link.forwardLocalPort(host, port);
+        } catch (IOException e) {
+            throw new ProxmoxSshException(String.format("%s could not forward a port to %s:%d: %s", target.getHost(), host, port, e.getMessage()), e);
+        }
+    }
+
     /** Writes a file as root, replacing it, with the given mode ("600"). The content travels on standard input, so it is not part of any command line. */
     public void writeFile(String path, byte[] content, String mode) {
         String command = "umask 077 && cat > " + quote(path) + " && chmod " + quote(mode) + " " + quote(path);
@@ -150,6 +162,11 @@ public class ProxmoxSsh implements AutoCloseable {
     /** A word for a shell: in single quotes, with each single quote written as '\''. */
     public static String quote(String word) {
         return "'" + word.replace("'", "'\\''") + "'";
+    }
+
+    @Override
+    public String toString() {
+        return target.toString();
     }
 
     @Override

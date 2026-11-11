@@ -118,10 +118,6 @@ public final class ProxmoxVmConfig {
         if (isSystemVm(vm)) {
             options.put("agent", "1");
         }
-        if (needsAgentPatch(vm) && !options.containsKey(PATCH_CDROM)) {
-            // the drive that carries agent.zip into the VM: a drive cannot be added to a running VM, but its medium can be changed
-            options.put(PATCH_CDROM, EMPTY_CDROM);
-        }
         if (vm.getNics() != null) {
             String model = nicModel(vm);
             for (NicTO nic : vm.getNics()) {
@@ -470,9 +466,6 @@ public final class ProxmoxVmConfig {
         }
         return option.append(",firewall=0").toString();
     }
-
-    /** The CD drive that is reserved in the secondary storage VM and the console proxy VM for the file with the agent. */
-    public static final String PATCH_CDROM = CDROM_DRIVES[0];
 
     /** The VMs whose agent (a Java program) is not in the template: the secondary storage VM and the console proxy VM. */
     public static boolean needsAgentPatch(VirtualMachineTO vm) {

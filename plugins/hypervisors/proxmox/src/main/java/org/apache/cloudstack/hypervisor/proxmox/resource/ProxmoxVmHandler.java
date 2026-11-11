@@ -527,13 +527,6 @@ class ProxmoxVmHandler {
                 control = controlBridge.get();
                 checkControlBridge(client, control);
             }
-            if (systemVms != null) {
-                String problem = systemVms.beforeStart(client, vm, node);
-                if (problem != null) {
-                    LOGGER.error("Proxmox node {} cannot start {}: {}", node, vm.getName(), problem);
-                    return new StartAnswer(cmd, problem);
-                }
-            }
             Map<String, String> options = ProxmoxVmConfig.startOptions(vm, cpuCapacityMhz(client), cdroms, rootDrive, control);
             Map<String, String> dataDrives = dataDrives(client, vm, rootDrive);
             giveBackStaleDataDisks(client, location, vm, rootDrive, dataDrives);

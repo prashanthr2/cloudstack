@@ -216,14 +216,14 @@ Check that `interfaces.new` does not exist first (`ls /etc/network/interfaces.ne
 name and address on every node. The address `169.254.0.1/16` is the link-local gateway CloudStack uses for the control network; it is only needed for the troubleshooting login, the
 bridge alone is enough for a system VM to start.
 
-### The patch file of system VMs (Phase 8a; lab P1 to P3)
+### Patching the system VMs (Phase 8a; changed 2026-11-11)
 
-A new secondary storage VM or console proxy VM needs the Java agent (`agent.zip`, about 110 MiB) from the management server, and the template does not have it. CloudStack delivers it through one storage entry:
+A new secondary storage VM or console proxy VM needs the Java agent (`agent.zip`, about 95 to 115 MB) from the management server, and the template does not have it; every router and system VM also gets `cloud-scripts.tgz` and `patch-sysvms.sh`. CloudStack copies them into the VM over SSH, as it does on KVM, through the node the VM runs on:
 
-- **Entry:** `csp-<uuid>` (a `dir` storage that is not shared), path from the global setting **`proxmox.patch.path`** (default `/var/lib/cloudstack-patch`), content `iso`. CloudStack creates it when the first SSVM or CPVM is started, and Proxmox creates the directory and its
-  `template/iso` folder on each node when the entry is activated there: nothing is made by hand. It uploads `agent.zip` once per node and version as `cs-patch-<16 characters>.iso` (a file whose name ends in `.iso`; the bytes are not an ISO image) and removes the files of older versions.
-- **Privileges:** creating the entry and uploading need `Datastore.Allocate` and `Datastore.AllocateTemplate` on `/storage`, which the role `PVEDatastoreAdmin` that the token already has for primary storage includes (lab P1 and P2, no extra privilege). `Sys.Modify` is not needed.
-- **Room:** 110 MiB on the node's disk under that path, once per version of the management server.
+- **What is needed:** the SSH login to the node that Add Host keeps (the same one that templates and ISOs use), and that `sshd` on the nodes allows TCP forwarding (the default; `sshd -T | grep -i allowtcpforwarding` must say `yes`). Nothing is made on the nodes, there is no storage entry and no setting, and the API token needs no privilege for it.
+- **The key:** the management server's own key pair (`ssh.privatekey`), which every system VM trusts. It is used on the management server only.
+- **The management server** needs `agent.zip`, `cloud-scripts.tgz` and `patch-sysvms.sh` in `/usr/share/cloudstack-common/vms/` (the package `cloudstack-common` installs them). If they are missing, the start of the system VM fails with a message that names the directory.
+- **Upgrade note:** an earlier version made one storage entry `csp-<uuid>` (path `/var/lib/cloudstack-patch`) with files `cs-patch-*.iso` in it. They are not used any more and can be removed once no VM needs them: `pvesm remove csp-<uuid>` on any node (the entry is cluster-wide), then `rm -r /var/lib/cloudstack-patch` on every node. The global setting `proxmox.patch.path` no longer exists.
 
 ## ISOs of the secondary storage (design-phase11, step 3)
 

@@ -58,21 +58,6 @@ public class ProxmoxStorageNamesTest {
         assertTrue(id, id.startsWith("csiso-"));
         assertEquals(id, ProxmoxStorageNames.isoSharedStorageId("/var/lib/cloudstack-iso"));
         assertNotEquals(id, ProxmoxStorageNames.isoSharedStorageId("/other"));
-        assertNotEquals(id, ProxmoxStorageNames.patchStorageId("/var/lib/cloudstack-iso"));
         assertFalse(ProxmoxStorageNames.isTemplateStorageId(id));
-    }
-
-    @Test
-    public void thePatchEntryIsNamedFromItsPathAndStartsWithALetter() {
-        String id = ProxmoxStorageNames.patchStorageId("/var/lib/cloudstack-patch");
-
-        assertTrue(id, id.startsWith("csp-"));
-        assertEquals(id, ProxmoxStorageNames.patchStorageId("/var/lib/cloudstack-patch"));
-        assertTrue(!id.equals(ProxmoxStorageNames.patchStorageId("/other")));
-    }
-
-    @Test
-    public void aPatchFileIsNamedFromTheStartOfItsChecksum() {
-        assertEquals("cs-patch-0123456789abcdef.iso", ProxmoxStorageNames.patchFileName("0123456789abcdef0123456789abcdef"));
     }
 }

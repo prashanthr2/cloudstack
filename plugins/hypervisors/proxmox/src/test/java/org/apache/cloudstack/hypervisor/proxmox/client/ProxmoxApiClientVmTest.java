@@ -703,15 +703,6 @@ public class ProxmoxApiClientVmTest {
     }
 
     @Test
-    public void thePatchEntryIsADirectoryThatIsNotSharedForIsoFiles() {
-        answer("POST /api2/json/storage", "{\"data\":{\"storage\":\"csp-1\",\"type\":\"dir\"}}");
-
-        client.createPatchStorage("csp-1", "/var/lib/cloudstack-patch");
-
-        assertEquals("storage=csp-1&type=dir&path=%2Fvar%2Flib%2Fcloudstack-patch&content=iso&shared=0", bodies.get(0));
-    }
-
-    @Test
     public void theFilesOfAStorageEntryAreListedWithTheirSize() {
         answer("GET /api2/json/nodes/pve1/storage/csp-1/content?content=iso",
                 "{\"data\":[{\"volid\":\"csp-1:iso/a.iso\",\"size\":2048,\"format\":\"iso\"},{\"volid\":\"csp-1:iso/b.iso\",\"size\":4096}]}");
@@ -721,33 +712,6 @@ public class ProxmoxApiClientVmTest {
         assertEquals(2, items.size());
         assertEquals("csp-1:iso/a.iso", items.get(0).getVolid());
         assertEquals(4096L, items.get(1).getSize());
-    }
-
-    @Test
-    public void anIsoIsUploadedAsMultipartWithTheFileFollowedByZerosUpToWholeSectors() throws Exception {
-        java.nio.file.Path file = java.nio.file.Files.createTempFile("payload", ".bin");
-        try {
-            java.nio.file.Files.write(file, new byte[] {1, 2, 3, 4, 5});
-            answer("POST /api2/json/nodes/pve1/storage/csp-1/upload", task("UPID:pve1:00010B1A:00246999:6ACCFCCB:imgcopy::pveaudit@pam!cloudstack:"));
-
-            String upid = client.uploadIso("pve1", "csp-1", "cs-patch-abc.iso", file, 2048);
-
-            assertTrue(upid.startsWith("UPID:pve1"));
-            String body = bodies.get(0);
-            assertTrue(body, body.contains("name=\"content\"\r\n\r\niso\r\n"));
-            assertTrue(body, body.contains("name=\"filename\"; filename=\"cs-patch-abc.iso\""));
-            // the file part is exactly the padded size: 5 bytes then zeros up to 2048
-            int start = body.indexOf("Content-Type: application/octet-stream\r\n\r\n") + "Content-Type: application/octet-stream\r\n\r\n".length();
-            int end = body.indexOf("\r\n--", start);
-            assertEquals(2048, end - start);
-        } finally {
-            java.nio.file.Files.deleteIfExists(file);
-        }
-    }
-
-    @Test(expected = ProxmoxApiException.class)
-    public void anUploadOfAFileThatCannotBeReadFailsWithAMessage() {
-        client.uploadIso("pve1", "csp-1", "x.iso", java.nio.file.Paths.get("/nonexistent/agent.zip"), 2048);
     }
 
     @Test

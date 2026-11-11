@@ -514,13 +514,12 @@ public class ProxmoxVmConfigTest {
     }
 
     @Test
-    public void theSecondaryStorageVmAndTheConsoleProxyVmReserveAnEmptyCdDriveForTheAgent() {
+    public void theSecondaryStorageVmAndTheConsoleProxyVmReserveNoCdDriveBecauseTheAgentComesOverSsh() {
         for (com.cloud.vm.VirtualMachine.Type type : new com.cloud.vm.VirtualMachine.Type[] {com.cloud.vm.VirtualMachine.Type.SecondaryStorageVm,
             com.cloud.vm.VirtualMachine.Type.ConsoleProxy}) {
             VirtualMachineTO vm = vm("l26", controlNic(0));
             when(vm.getType()).thenReturn(type);
-            assertEquals(type.toString(), "none,media=cdrom",
-                    ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0").get("ide2"));
+            assertTrue(type.toString(), !ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>(), "scsi0", "cloud0").containsKey("ide2"));
         }
     }
 

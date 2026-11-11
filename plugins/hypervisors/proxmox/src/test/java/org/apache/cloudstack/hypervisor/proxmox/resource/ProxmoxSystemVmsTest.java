@@ -21,9 +21,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -37,11 +35,16 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiClient;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ExecResult;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxSshException;
+import org.apache.cloudstack.hypervisor.proxmox.ssh.ProxmoxVmShell;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -58,8 +61,51 @@ import com.cloud.vm.VirtualMachine;
 public class ProxmoxSystemVmsTest {
     private static final String BOOT_ARGS = "template=domP type=secstorage name=s-1-VM eth0ip=169.254.3.7";
     private static final String IP = "169.254.3.7";
-    private static final String PATCH_PATH = "/var/lib/cloudstack-patch";
-    private static final String STORAGE = ProxmoxStorageNames.patchStorageId(PATCH_PATH);
+    private static final String CACHE = "/var/cache/cloud/";
+
+    /** A login in the VM for tests: it records what is run and copied, and answers the state check and the checksums as a real VM would. */
+    private class FakeShell implements ProxmoxVmShell {
+        final List<String> commands = new ArrayList<>();
+        final List<String> uploads = new ArrayList<>();
+        String state = "SIG=\nAGENT=no\n";
+        /** The checksum the VM reports for a file it was given; by default the right one. */
+        Function<String, String> sums = name -> {
+            try {
+                return files.sha512(name);
+            } catch (ProxmoxApiException e) {
+                return "";
+            }
+        };
+        ExecResult moveResult = new ExecResult(0, "", "");
+        boolean closed;
+
+        @Override
+        public ExecResult exec(String command, int timeoutMillis) {
+            commands.add(command);
+            if (command.equals(ProxmoxSystemVms.STATE_CHECK)) {
+                return new ExecResult(0, state, "");
+            }
+            if (command.startsWith("sha512sum ")) {
+                String name = command.substring(command.lastIndexOf('/') + 1, command.indexOf(".part"));
+                return new ExecResult(0, sums.apply(name) + "\n", "");
+            }
+            if (command.startsWith("cd ")) {
+                return moveResult;
+            }
+            return new ExecResult(0, "", "");
+        }
+
+        @Override
+        public void upload(Path file, String remotePath, int timeoutMillis) {
+            uploads.add(remotePath);
+            commands.add("upload " + remotePath);
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
 
     @Rule
     public TemporaryFolder folder = new TemporaryFolder();
@@ -69,8 +115,8 @@ public class ProxmoxSystemVmsTest {
     private VirtualRoutingResource routing;
     private ProxmoxPatchFiles files;
     private ProxmoxSystemVms systemVms;
-    private String agentSha;
-    private String scriptsSha;
+    private FakeShell shell;
+    private RuntimeException shellFailure;
     private String sshKeys = "";
     private final AtomicLong now = new AtomicLong();
 
@@ -81,16 +127,19 @@ public class ProxmoxSystemVmsTest {
         Files.write(dir.resolve(ProxmoxPatchFiles.SCRIPTS), "scripts-bytes".getBytes(StandardCharsets.UTF_8));
         Files.write(dir.resolve(ProxmoxPatchFiles.PATCH_SCRIPT), "#!/bin/bash\n".getBytes(StandardCharsets.UTF_8));
         files = new ProxmoxPatchFiles(dir);
-        agentSha = files.sha512(ProxmoxPatchFiles.AGENT_ZIP);
-        scriptsSha = files.sha512(ProxmoxPatchFiles.SCRIPTS);
+        shell = new FakeShell();
         client = mock(ProxmoxApiClient.class);
         deployer = mock(ProxmoxRouterDeployer.class);
         routing = mock(VirtualRoutingResource.class);
-        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> PATCH_PATH, () -> sshKeys, () -> 600, millis -> now.addAndGet(millis), now::get);
+        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> sshKeys, controlIp -> {
+            if (shellFailure != null) {
+                throw shellFailure;
+            }
+            assertEquals(IP, controlIp);
+            return shell;
+        }, millis -> now.addAndGet(millis), now::get);
         when(client.agentPing("pve1", 9300L)).thenReturn(true);
         when(deployer.run(eq(IP), eq(ProxmoxSystemVms.READY_CHECK), any(), any())).thenReturn(new ExecutionResult(true, ""));
-        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any())).thenReturn(new ExecutionResult(true, "SIG=\nAGENT=no\n"));
-        when(deployer.writeBytes(eq(IP), anyString(), any())).thenReturn(new ExecutionResult(true, "ok"));
         when(routing.isSystemVMSetup(anyString(), eq(IP))).thenReturn(true);
     }
 
@@ -121,103 +170,115 @@ public class ProxmoxSystemVmsTest {
     public void theControlAddressIsThatOfTheControlNicNotTheFirstNic() {
         assertEquals(IP, ProxmoxSystemVms.controlIp(router()));
     }
-
     // ---- after the start
 
     @Test
-    public void aRouterGetsItsBootArgumentsThenItsScriptsAndIsWaitedForUntilItIsSetUp() throws Exception {
+    public void aRouterGetsItsBootArgumentsThenItsScriptsOverSshAndIsWaitedForUntilItIsSetUp() throws Exception {
         assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
 
         verify(deployer).register(IP, "s-1-VM");
         InOrder order = inOrder(client, deployer, routing);
         order.verify(client).agentPing("pve1", 9300L);
         order.verify(client).agentFileWrite("pve1", 9300L, ProxmoxSystemVms.CMDLINE, BOOT_ARGS);
-        order.verify(deployer).run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any());
-        order.verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any());
-        order.verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/patch-sysvms.sh"), any());
         order.verify(deployer).run(eq(IP), eq(ProxmoxSystemVms.READY_CHECK), any(), any());
         order.verify(routing).isSystemVMSetup("s-1-VM", IP);
-        // a router has no agent to carry in: no CD is touched
-        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
+        // a router has no agent to carry in, and the scripts come last: the VM waits for cloud-scripts.tgz
+        assertEquals(java.util.Arrays.asList(CACHE + "patch-sysvms.sh.part", CACHE + "cloud-scripts.tgz.part"), shell.uploads);
+        assertEquals("cd /var/cache/cloud/ && mv -f patch-sysvms.sh.part patch-sysvms.sh && mv -f cloud-scripts.tgz.part cloud-scripts.tgz",
+                shell.commands.get(shell.commands.size() - 1));
+        assertTrue(shell.closed);
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    public void theFilesAreMovedIntoPlaceOnlyAfterEveryCopyWasChecked() {
+        assertNull(systemVms.afterStart(client, ssvm(), "pve1", 9300L));
+
+        List<String> expected = java.util.Arrays.asList(
+                ProxmoxSystemVms.STATE_CHECK,
+                "upload " + CACHE + "agent.zip.part", "sha512sum " + CACHE + "agent.zip.part | cut -d' ' -f1",
+                "upload " + CACHE + "patch-sysvms.sh.part", "sha512sum " + CACHE + "patch-sysvms.sh.part | cut -d' ' -f1",
+                "upload " + CACHE + "cloud-scripts.tgz.part", "sha512sum " + CACHE + "cloud-scripts.tgz.part | cut -d' ' -f1",
+                "cd /var/cache/cloud/ && mv -f agent.zip.part agent.zip && mv -f patch-sysvms.sh.part patch-sysvms.sh && mv -f cloud-scripts.tgz.part cloud-scripts.tgz");
+        assertEquals(expected, shell.commands);
     }
 
     @Test
     public void aRouterWithTheCurrentScriptsStillGetsThemBecauseItRemovesItsAgentDirectoryAtEveryBoot() {
-        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any())).thenReturn(new ExecutionResult(true, "SIG=" + scriptsSha + "\nAGENT=no\n"));
+        shell.state = "SIG=" + files.sha512(ProxmoxPatchFiles.SCRIPTS) + "\nAGENT=no\n";
 
         assertNull(systemVms.afterStart(client, router(), "pve1", 9300L));
 
-        verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any());
-    }
-
-    @Test
-    public void aNewSecondaryStorageVmGetsTheAgentFromThePayloadCdThenTheScriptsLast() {
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("head -c"), any(), any())).thenReturn(new ExecutionResult(true, agentSha + "\n"));
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.startsWith("mv -f"), any(), any())).thenReturn(new ExecutionResult(true, ""));
-
-        assertNull(systemVms.afterStart(client, ssvm(), "pve1", 9300L));
-
-        String volume = STORAGE + ":iso/" + ProxmoxStorageNames.patchFileName(agentSha);
-        InOrder order = inOrder(client, deployer);
-        order.verify(client).agentFileWrite("pve1", 9300L, ProxmoxSystemVms.CMDLINE, BOOT_ARGS);
-        order.verify(client).updateVmConfig("pve1", 9300L, Collections.singletonMap("ide2", volume + ",media=cdrom"));
-        order.verify(deployer).run(eq(IP), org.mockito.ArgumentMatchers.contains("head -c 22 /dev/sr0 > /var/cache/cloud/agent.zip.part"), any(), any());
-        order.verify(deployer).run(eq(IP), eq("mv -f /var/cache/cloud/agent.zip.part /var/cache/cloud/agent.zip"), any(), any());
-        order.verify(client).updateVmConfig("pve1", 9300L, Collections.singletonMap("ide2", "none,media=cdrom"));
-        order.verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any());
-        order.verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/patch-sysvms.sh"), any());
-    }
-
-    @Test
-    public void theCopyWaitsForTheGuestToSeeAllWholeSectorsOfThePaddedFile() {
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("head -c"), any(), any())).thenReturn(new ExecutionResult(true, agentSha));
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.startsWith("mv -f"), any(), any())).thenReturn(new ExecutionResult(true, ""));
-
-        systemVms.afterStart(client, ssvm(), "pve1", 9300L);
-
-        // 22 bytes pad to one 2048 byte sector, which is 4 sectors of 512 bytes in /sys/block/sr0/size
-        verify(deployer).run(eq(IP), org.mockito.ArgumentMatchers.contains("-ge 4 ]"), any(), any());
+        assertTrue(shell.uploads.contains(CACHE + "cloud-scripts.tgz.part"));
     }
 
     @Test
     public void aRestartedSecondaryStorageVmThatHasTheAgentAndTheCurrentScriptsNeedsNothing() {
-        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any())).thenReturn(new ExecutionResult(true, "SIG=" + scriptsSha + "\nAGENT=yes\n"));
+        shell.state = "SIG=" + files.sha512(ProxmoxPatchFiles.SCRIPTS) + "\nAGENT=yes\n";
 
         assertNull(systemVms.afterStart(client, ssvm(), "pve1", 9300L));
 
-        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
-        verify(deployer, never()).writeBytes(anyString(), anyString(), any());
+        assertTrue(shell.uploads.isEmpty());
+        assertEquals(java.util.Collections.singletonList(ProxmoxSystemVms.STATE_CHECK), shell.commands);
+        assertTrue(shell.closed);
     }
 
     @Test
     public void aSecondaryStorageVmWithOldScriptsIsPatchedAgainEvenIfItHasAnAgent() {
-        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.STATE_CHECK), any(), any())).thenReturn(new ExecutionResult(true, "SIG=oldsignature\nAGENT=yes\n"));
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("head -c"), any(), any())).thenReturn(new ExecutionResult(true, agentSha));
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.startsWith("mv -f"), any(), any())).thenReturn(new ExecutionResult(true, ""));
+        shell.state = "SIG=oldsignature\nAGENT=yes\n";
 
         assertNull(systemVms.afterStart(client, ssvm(), "pve1", 9300L));
 
-        verify(deployer).writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any());
+        assertTrue(shell.uploads.contains(CACHE + "agent.zip.part"));
+        assertTrue(shell.uploads.contains(CACHE + "cloud-scripts.tgz.part"));
     }
 
     @Test
-    public void aDamagedCopyOfTheAgentFailsTheStartAndTheCdIsEjectedAnyway() {
-        when(deployer.run(eq(IP), org.mockito.ArgumentMatchers.contains("head -c"), any(), any())).thenReturn(new ExecutionResult(true, "deadbeef"));
+    public void aDamagedCopyOfTheAgentFailsTheStartAndNothingIsMovedIntoPlace() {
+        shell.sums = name -> name.equals(ProxmoxPatchFiles.AGENT_ZIP) ? "deadbeef" : files.sha512(name);
 
         String problem = systemVms.afterStart(client, ssvm(), "pve1", 9300L);
 
         assertTrue(problem, problem.contains("damaged") && problem.contains("agent.zip"));
-        verify(client).updateVmConfig("pve1", 9300L, Collections.singletonMap("ide2", "none,media=cdrom"));
-        verify(deployer, never()).writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any());
+        assertTrue(shell.commands.stream().noneMatch(c -> c.startsWith("cd ")));
+        assertTrue(shell.closed);
     }
 
     @Test
-    public void aFailedScriptsFileFailsTheStartWithItsName() {
-        when(deployer.writeBytes(eq(IP), eq("/var/cache/cloud/cloud-scripts.tgz"), any())).thenReturn(new ExecutionResult(false, "no space left"));
+    public void aDamagedScriptsFileIsCaughtToo() {
+        shell.sums = name -> name.equals(ProxmoxPatchFiles.SCRIPTS) ? "deadbeef" : files.sha512(name);
 
         String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
 
-        assertTrue(problem, problem.contains("cloud-scripts.tgz") && problem.contains("no space left"));
+        assertTrue(problem, problem.contains("damaged") && problem.contains("cloud-scripts.tgz"));
+    }
+
+    @Test
+    public void aFailedMoveFailsTheStartWithWhatTheVmSaid() {
+        shell.moveResult = new ExecResult(1, "", "mv: cannot move: no space left");
+
+        String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        assertTrue(problem, problem.contains("in place") && problem.contains("no space left"));
+    }
+
+    @Test
+    public void aVmThatCannotBeLoggedInToFailsTheStartWithTheReason() {
+        shellFailure = new ProxmoxSshException("Unable to log in over SSH to the system VM at 169.254.3.7 through Proxmox node root@10.0.0.1:22 within 120 seconds: Connection refused");
+
+        String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        assertTrue(problem, problem.contains("s-1-VM") && problem.contains("Connection refused") && problem.contains("over SSH"));
+        verify(deployer, never()).run(eq(IP), eq(ProxmoxSystemVms.READY_CHECK), any(), any());
+    }
+
+    @Test
+    public void aMissingPatchFileFailsTheStartWithItsNameAndDirectory() {
+        files = new ProxmoxPatchFiles(folder.getRoot().toPath().resolve("nowhere"));
+
+        String problem = systemVms.afterStart(client, vm(VirtualMachine.Type.ConsoleProxy, BOOT_ARGS, IP), "pve1", 9300L);
+
+        assertTrue(problem, problem.contains("cloud-scripts.tgz") && problem.contains("cloudstack-common"));
     }
 
     @Test
@@ -283,118 +344,6 @@ public class ProxmoxSystemVmsTest {
         String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
 
         assertTrue(problem, problem.contains("403"));
-    }
-
-    // ---- before the start: the payload on the node
-
-    private void storageIsActive() {
-        when(client.getStorageStatus(eq("pve1"), anyString())).thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
-    }
-
-    @Test
-    public void theEntryAndTheUploadAreMadeWhenTheNodeHasNeitherAndOlderFilesAreRemoved() {
-        storageIsActive();
-        when(client.uploadIso(anyString(), anyString(), anyString(), any(), anyInt())).thenReturn("UPID:pve1:1:2:3:imgcopy::u:");
-        String current = STORAGE + ":iso/" + ProxmoxStorageNames.patchFileName(agentSha);
-        String old = STORAGE + ":iso/cs-patch-0123456789abcdef.iso";
-        String foreign = STORAGE + ":iso/debian.iso";
-        when(client.listContent("pve1", STORAGE, "iso")).thenReturn(java.util.Arrays.asList(new ProxmoxApiClient.ContentItem(current, 2048),
-                new ProxmoxApiClient.ContentItem(old, 2048), new ProxmoxApiClient.ContentItem(foreign, 5)));
-
-        assertNull(systemVms.beforeStart(client, ssvm(), "pve1"));
-
-        verify(client).createPatchStorage(STORAGE, PATCH_PATH);
-        verify(client).uploadIso(eq("pve1"), eq(STORAGE), eq(ProxmoxStorageNames.patchFileName(agentSha)), eq(files.path(ProxmoxPatchFiles.AGENT_ZIP)), eq(2048));
-        verify(client).waitForTask("UPID:pve1:1:2:3:imgcopy::u:", 600);
-        verify(client).deleteImage("pve1", old);
-        verify(client, never()).deleteImage("pve1", foreign);
-        verify(client, never()).deleteImage("pve1", current);
-    }
-
-    @Test
-    public void aFileThatIsAlreadyOnTheNodeWithTheRightSizeIsNotUploadedAgain() {
-        storageIsActive();
-        when(client.findStorage(STORAGE)).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        when(client.getImageInfo("pve1", STORAGE + ":iso/" + ProxmoxStorageNames.patchFileName(agentSha))).thenReturn(new ProxmoxApiClient.ImageInfo(2048, 2048, "iso", null));
-
-        assertNull(systemVms.beforeStart(client, ssvm(), "pve1"));
-
-        verify(client, never()).createPatchStorage(anyString(), anyString());
-        verify(client, never()).uploadIso(anyString(), anyString(), anyString(), any(), anyInt());
-    }
-
-    @Test
-    public void aFileOfAnotherSizeIsUploadedAgain() {
-        storageIsActive();
-        when(client.findStorage(STORAGE)).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        when(client.getImageInfo(eq("pve1"), anyString())).thenReturn(new ProxmoxApiClient.ImageInfo(100, 100, "iso", null));
-        when(client.uploadIso(anyString(), anyString(), anyString(), any(), anyInt())).thenReturn("UPID:pve1:1:2:3:imgcopy::u:");
-
-        assertNull(systemVms.beforeStart(client, ssvm(), "pve1"));
-
-        verify(client).uploadIso(anyString(), anyString(), anyString(), any(), anyInt());
-    }
-
-    @Test
-    public void anEntryThatAnotherStartMadeAMomentAgoIsUsed() {
-        storageIsActive();
-        when(client.findStorage(STORAGE)).thenReturn(null).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        doThrow(new ProxmoxApiException("storage ID already defined", 500, null)).when(client).createPatchStorage(anyString(), anyString());
-        when(client.getImageInfo(eq("pve1"), anyString())).thenReturn(new ProxmoxApiClient.ImageInfo(2048, 2048, "iso", null));
-
-        assertNull(systemVms.beforeStart(client, ssvm(), "pve1"));
-    }
-
-    @Test
-    public void theEntryIsWaitedForUntilTheNodeHasItActive() {
-        when(client.findStorage(STORAGE)).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        when(client.getStorageStatus(eq("pve1"), anyString())).thenReturn(new ProxmoxApiClient.StorageStatus(false, true, 0, 0, 0))
-                .thenReturn(new ProxmoxApiClient.StorageStatus(true, true, 1L, 1L, 1L));
-        when(client.getImageInfo(eq("pve1"), anyString())).thenReturn(new ProxmoxApiClient.ImageInfo(2048, 2048, "iso", null));
-
-        assertNull(systemVms.beforeStart(client, ssvm(), "pve1"));
-
-        assertEquals(ProxmoxSystemVms.STORAGE_ACTIVATION_WAIT_MS, now.get());
-    }
-
-    @Test
-    public void aRefusedUploadFailsTheStartWithWhatTheTokenNeeds() {
-        storageIsActive();
-        when(client.findStorage(STORAGE)).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        when(client.uploadIso(anyString(), anyString(), anyString(), any(), anyInt())).thenThrow(new ProxmoxApiException("HTTP 403", 403, null));
-
-        String problem = systemVms.beforeStart(client, ssvm(), "pve1");
-
-        assertTrue(problem, problem.contains("pve1") && problem.contains("403") && problem.contains("PVEDatastoreAdmin") && problem.contains(PATCH_PATH));
-    }
-
-    @Test
-    public void aRouterNeedsNoPayloadOnTheNode() {
-        assertNull(systemVms.beforeStart(client, router(), "pve1"));
-        assertNull(systemVms.beforeStart(client, vm(VirtualMachine.Type.User, "", IP), "pve1"));
-
-        verify(client, never()).findStorage(anyString());
-    }
-
-    @Test
-    public void aMissingPatchFileFailsTheStartWithItsNameAndDirectory() {
-        storageIsActive();
-        when(client.findStorage(STORAGE)).thenReturn(mock(ProxmoxApiClient.StorageConfig.class));
-        files = new ProxmoxPatchFiles(folder.getRoot().toPath().resolve("nowhere"));
-
-        String problem = systemVms.beforeStart(client, vm(VirtualMachine.Type.ConsoleProxy, BOOT_ARGS, IP), "pve1");
-
-        assertTrue(problem, problem.contains("agent.zip") && problem.contains("cloudstack-common"));
-    }
-
-    @Test
-    public void aPathThatIsNotADirectoryPathIsRefused() {
-        systemVms = new ProxmoxSystemVms(deployer, routing, () -> files, () -> "relative path", () -> "", () -> 600, millis -> { }, now::get);
-
-        String problem = systemVms.beforeStart(client, ssvm(), "pve1");
-
-        assertTrue(problem, problem.contains("proxmox.patch.path"));
-        verify(client, never()).createPatchStorage(anyString(), anyString());
     }
 
     // ---- the administrator's login keys

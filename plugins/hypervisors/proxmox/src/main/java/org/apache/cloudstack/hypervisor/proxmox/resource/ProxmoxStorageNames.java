@@ -45,14 +45,6 @@ public final class ProxmoxStorageNames {
      */
     public static final String ISO_SHARED_STORAGE_ID_PREFIX = "csiso-";
 
-    /**
-     * The one directory entry for the files that patch system VMs (the payload CD with the agent). It is not shared: each node has its own
-     * directory under the path, which Proxmox creates. Same letter-first rule as above.
-     */
-    public static final String PATCH_STORAGE_ID_PREFIX = "csp-";
-    /** Files in the patch entry that this plugin made and may remove again. */
-    public static final String PATCH_FILE_PREFIX = "cs-patch-";
-
     private ProxmoxStorageNames() {
     }
 
@@ -67,16 +59,6 @@ public final class ProxmoxStorageNames {
     /** The shared ISO entry for a directory path, derived from it so that every command, management server and restart finds the same one. */
     public static String isoSharedStorageId(String path) {
         return ISO_SHARED_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes(path.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** The patch entry for a directory path, derived from it so that every command, management server and restart finds the same one. */
-    public static String patchStorageId(String path) {
-        return PATCH_STORAGE_ID_PREFIX + UUID.nameUUIDFromBytes(path.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** The file of a payload: "cs-patch-" and the first 16 characters of the SHA-512 of the content, so a new version is a new file. */
-    public static String patchFileName(String sha512) {
-        return PATCH_FILE_PREFIX + sha512.substring(0, 16) + ".iso";
     }
 
     public static boolean isTemplateStorageId(String id) {

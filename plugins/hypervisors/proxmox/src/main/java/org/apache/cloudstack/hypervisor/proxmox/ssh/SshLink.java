@@ -17,6 +17,7 @@
 package org.apache.cloudstack.hypervisor.proxmox.ssh;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 /**
  * One SSH connection to a node, as little as {@link ProxmoxSsh} needs of it. The implementation on the Trilead library is
@@ -38,6 +39,15 @@ public interface SshLink extends AutoCloseable {
 
     /** Runs a command with {@code stdin} as its standard input (may be null) and waits for it. */
     ExecResult exec(String command, byte[] stdin, int timeoutMillis) throws IOException;
+
+    /**
+     * Opens a TCP port on this machine's loopback address whose connections the other side forwards to {@code host:port}, and returns the local port. It
+     * is closed with the link.
+     */
+    int forwardLocalPort(String host, int port) throws IOException;
+
+    /** Writes a local file to {@code remotePath} on the other side, replacing it. The file is read as a stream, not into memory. */
+    void upload(Path file, String remotePath, int timeoutMillis) throws IOException;
 
     @Override
     void close();

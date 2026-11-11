@@ -118,6 +118,8 @@ No core change was made for the migration of a router or system VM (`migrateSyst
 
 ### 4.8 The patch storage entry
 
+> **Superseded 2026-11-11.** The payload CD and this entry were replaced by a copy over SSH through the node (behaviour.md section 17, test-log.md "System VM patching, SSH-tunnel spike"). The text below is how it was first done and why.
+
 One storage entry of type `dir` is created by the plugin when the first patch is needed (and found again by name afterwards): name `csp-<hash of the path>`, path from the setting `proxmox.patch.path` (default `/var/lib/cloudstack-patch`), content `iso`, **not shared**
 (each node has its own directory under the same entry). The API can make the directory: a `dir` storage creates its base path and the standard sub-directories (`template/iso`) on a node when it is activated there (`create-base-path` and `create-subdirs`, both default on; read in
 `DirPlugin.pm`), so nothing is created by hand and no SSH is needed. The file for `agent.zip` is `iso/cs-patch-<first 16 characters of the SHA-512 of agent.zip>.iso`, so a new management server version uploads a new file; files of earlier versions on a node are removed when a new one is
