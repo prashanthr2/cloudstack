@@ -49,7 +49,7 @@ public class ProxmoxSystemVms {
     /** Where the system VM template reads its boot arguments from (init.sh waits for the host to write it). */
     static final String CMDLINE = "/var/cache/cloud/cmdline";
     static final int AGENT_WAIT_SECONDS = 300;
-    static final long AGENT_POLL_MILLIS = 2000;
+    static final long AGENT_POLL_MILLIS = 500;
     static final int WRITE_ATTEMPTS = 10;
     static final long WRITE_RETRY_MILLIS = 3000;
     static final int READY_WAIT_SECONDS = 300;

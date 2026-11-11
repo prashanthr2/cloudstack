@@ -103,6 +103,8 @@ class ProxmoxVmHandler {
     /** A new storage entry is mounted by the node a moment after it is added, so its content is polled for a while. */
     /** How long a guest is given to shut down by itself before Proxmox stops it by force. */
     static final int SHUTDOWN_TIMEOUT_SECONDS = 60;
+    /** The name of a system VM or router (s-1-VM, v-1-VM, r-1-VM, b-1-VM): one letter and the id, where an instance has the account in it (i-2-10-VM). */
+    static final Pattern SYSTEM_VM_NAME = Pattern.compile("[a-z]-\\d+-VM");
     /** The VM is created with this much memory and a small CPU count; the real size is set when it is started. */
     private static final String CREATE_MEMORY_MIB = "256";
     /** Several VMs created at once can be given the same free id (Proxmox does not reserve it), so a taken id is retried with a short pause. */
@@ -236,6 +238,30 @@ class ProxmoxVmHandler {
         String status = client.getVmStatus(location.getNode(), location.getVmid());
         return status == null || status.equals(location.getStatus())
                 ? location : new ProxmoxApiClient.VmLocation(location.getVmid(), location.getName(), location.getNode(), status);
+    }
+
+    /**
+     * Empties the boot arguments that a system VM keeps on its disk, as it is stopped. At its next boot the VM looks for a non-empty file and uses
+     * whatever is there, so with the file of the last boot it would set up its network from the old arguments (the control address, the private
+     * and public addresses) and only the arguments written later, once the guest agent answers, would reach its agent: the VM then has addresses
+     * other than the ones CloudStack gave it (lab 2026-11-11: eth0 169.254.236.134 while the start command said 169.254.135.67). Without the file
+     * the VM waits for the new one, as a new VM does. A VM that is stopped by force or crashes keeps its file; a failure here is only logged.
+     */
+    private void forgetBootArguments(ProxmoxApiClient client, ProxmoxApiClient.VmLocation location, String vmName) {
+        if (vmName == null || !SYSTEM_VM_NAME.matcher(vmName).matches()) {
+            return;
+        }
+        try {
+            long pid = client.agentExec(location.getNode(), location.getVmid(), Arrays.asList("/bin/sh", "-c", "rm -f " + ProxmoxSystemVms.CMDLINE + " && sync"), null);
+            for (int attempt = 0; attempt < 10; attempt++) {
+                if (client.agentExecStatus(location.getNode(), location.getVmid(), pid).isExited()) {
+                    return;
+                }
+                pauser.accept(300);
+            }
+        } catch (ProxmoxApiException e) {
+            LOGGER.warn("Could not empty the boot arguments of {} before it stops, so its next start may set up its network from the old ones: {}", vmName, e.getMessage());
+        }
     }
 
     private static boolean isStopped(ProxmoxApiClient.VmLocation location) {
@@ -807,6 +833,9 @@ class ProxmoxVmHandler {
             location = withLiveStatus(client, location);
             if (!location.isRunning()) {
                 return new StopAnswer(cmd, cmd.getVmName() + " is already stopped", true);
+            }
+            if (!cmd.isForceStop()) {
+                forgetBootArguments(client, location, cmd.getVmName());
             }
             String task = cmd.isForceStop() ? client.stopVm(location.getNode(), location.getVmid())
                     : client.shutdownVm(location.getNode(), location.getVmid(), SHUTDOWN_TIMEOUT_SECONDS);

@@ -21,6 +21,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -395,6 +397,52 @@ public class ProxmoxVmHandlerTest {
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).waitForTask("UPID:pve2:1:2:3:qmshutdown:9204:u:", 600);
         verify(client, never()).stopVm(anyString(), anyLong());
+    }
+
+    private StopCommand namedStop(String name, boolean force) {
+        StopCommand cmd = mock(StopCommand.class);
+        when(cmd.getVmName()).thenReturn(name);
+        when(cmd.isForceStop()).thenReturn(force);
+        return cmd;
+    }
+
+    @Test
+    public void aSystemVmThatIsStoppedGentlyHasItsBootArgumentsEmptiedFirst() {
+        when(client.findVmByName("s-169-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "s-169-VM", NODE, "running"));
+        when(client.agentExec(eq(NODE), eq(9204L), anyList(), any())).thenReturn(77L);
+        when(client.agentExecStatus(NODE, 9204L, 77L)).thenReturn(new ProxmoxApiClient.AgentExecStatus(false, 0, "", ""), new ProxmoxApiClient.AgentExecStatus(true, 0, "", ""));
+        when(client.shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS)).thenReturn("UPID:pve1:1:2:3:qmshutdown:9204:u:");
+
+        assertTrue(handler.stop(namedStop("s-169-VM", false)).getResult());
+
+        InOrder order = inOrder(client);
+        order.verify(client).agentExec(NODE, 9204L, Arrays.asList("/bin/sh", "-c", "rm -f /var/cache/cloud/cmdline && sync"), null);
+        order.verify(client, org.mockito.Mockito.times(2)).agentExecStatus(NODE, 9204L, 77L);
+        order.verify(client).shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS);
+    }
+
+    @Test
+    public void anInstanceAndAForcedStopLeaveTheBootArgumentsAlone() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.shutdownVm(anyString(), anyLong(), anyInt())).thenReturn("UPID:pve1:1:2:3:qmshutdown:9204:u:");
+        when(client.findVmByName("r-5-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9205, "r-5-VM", NODE, "running"));
+        when(client.stopVm(NODE, 9205L)).thenReturn("UPID:pve1:1:2:3:qmstop:9205:u:");
+
+        assertTrue(handler.stop(namedStop("i-2-10-VM", false)).getResult());
+        assertTrue(handler.stop(namedStop("r-5-VM", true)).getResult());
+
+        verify(client, never()).agentExec(anyString(), anyLong(), anyList(), any());
+    }
+
+    @Test
+    public void aSystemVmWhoseAgentCannotEmptyTheBootArgumentsIsStoppedAnyway() {
+        when(client.findVmByName("v-190-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "v-190-VM", NODE, "running"));
+        when(client.agentExec(anyString(), anyLong(), anyList(), any())).thenThrow(new ProxmoxApiException("QEMU guest agent is not running", 500, null));
+        when(client.shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS)).thenReturn("UPID:pve1:1:2:3:qmshutdown:9204:u:");
+
+        assertTrue(handler.stop(namedStop("v-190-VM", false)).getResult());
+
+        verify(client).shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS);
     }
 
     @Test
