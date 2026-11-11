@@ -273,6 +273,27 @@ public class ProxmoxSystemVmsTest {
     }
 
     @Test
+    public void whenTheLoginFailsTheVmIsAskedThroughTheGuestAgentWhatItLooksLike() {
+        shellFailure = new ProxmoxSshException("no answer");
+        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.DIAGNOSE), any(), any())).thenReturn(new ExecutionResult(true, "--- addresses\nlo UNKNOWN"));
+
+        String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        assertTrue(problem, problem.contains("no answer"));
+        verify(deployer).run(eq(IP), eq(ProxmoxSystemVms.DIAGNOSE), any(), any());
+    }
+
+    @Test
+    public void aGuestAgentThatCannotAnswerTheDiagnosisDoesNotChangeTheReason() {
+        shellFailure = new ProxmoxSshException("no answer");
+        when(deployer.run(eq(IP), eq(ProxmoxSystemVms.DIAGNOSE), any(), any())).thenThrow(new ProxmoxApiException("agent gone", 500, null));
+
+        String problem = systemVms.afterStart(client, router(), "pve1", 9300L);
+
+        assertTrue(problem, problem.contains("no answer") && !problem.contains("agent gone"));
+    }
+
+    @Test
     public void aMissingPatchFileFailsTheStartWithItsNameAndDirectory() {
         files = new ProxmoxPatchFiles(folder.getRoot().toPath().resolve("nowhere"));
 

@@ -23,6 +23,8 @@ import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * A login in a system VM or router over SSH, as KVM does it from the host, through the Proxmox node that the VM runs on: the control address of the
@@ -35,6 +37,8 @@ public final class TunnelVmShell implements ProxmoxVmShell {
     public static final int VM_SSH_PORT = 3922;
     static final int CONNECT_TIMEOUT_MS = 10_000;
     static final long RETRY_MILLIS = 2000;
+
+    private static final Logger LOGGER = LogManager.getLogger(TunnelVmShell.class);
 
     private final ProxmoxSsh node;
     private final SshLink link;
@@ -65,6 +69,7 @@ public final class TunnelVmShell implements ProxmoxVmShell {
         }
         long deadline = clock.getAsLong() + waitSeconds * 1000L;
         String last;
+        boolean first = true;
         while (true) {
             SshLink link = links.apply(localPort);
             try {
@@ -74,7 +79,11 @@ public final class TunnelVmShell implements ProxmoxVmShell {
                 }
                 last = "the VM did not accept the management server's key";
             } catch (IOException e) {
-                last = e.getMessage();
+                last = describe(e);
+            }
+            if (first) {
+                first = false;
+                LOGGER.info("Not logged in to the system VM at {} through Proxmox node {} yet ({}), trying again for up to {} s", vmAddress, node, last, waitSeconds);
             }
             link.close();
             if (clock.getAsLong() >= deadline) {
@@ -84,6 +93,18 @@ public final class TunnelVmShell implements ProxmoxVmShell {
             }
             pauser.accept(RETRY_MILLIS);
         }
+    }
+
+    /** The message of an exception with those of its causes (Trilead says only "a problem while connecting" and keeps the reason in the cause). */
+    static String describe(Throwable error) {
+        StringBuilder text = new StringBuilder();
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            String message = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            if (text.indexOf(message) < 0) {
+                text.append(text.length() == 0 ? "" : ": ").append(message);
+            }
+        }
+        return text.toString();
     }
 
     @Override

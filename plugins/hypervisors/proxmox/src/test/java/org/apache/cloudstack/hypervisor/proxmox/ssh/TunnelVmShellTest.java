@@ -148,4 +148,13 @@ public class TunnelVmShellTest {
         assertTrue(vmLinks.get(0).closed);
         assertTrue(nodeLink.closed);
     }
+
+    @Test
+    public void theReasonBehindAGenericConnectionErrorIsPartOfTheMessage() {
+        IOException error = new IOException("There was a problem while connecting to 127.0.0.1:33667", new java.net.ConnectException("Connection refused"));
+
+        assertEquals("There was a problem while connecting to 127.0.0.1:33667: Connection refused", TunnelVmShell.describe(error));
+        assertEquals("boom", TunnelVmShell.describe(new IOException("boom")));
+        assertEquals("IOException", TunnelVmShell.describe(new IOException()));
+    }
 }

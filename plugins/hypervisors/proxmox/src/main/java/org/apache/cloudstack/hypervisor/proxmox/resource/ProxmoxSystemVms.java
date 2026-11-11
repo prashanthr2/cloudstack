@@ -69,6 +69,9 @@ public class ProxmoxSystemVms {
     /** How long the VM is given to open its SSH port after it has its boot arguments (it waits two minutes for the patch files itself). */
     static final int SHELL_WAIT_SECONDS = 120;
     static final int COMMAND_TIMEOUT_MS = 30_000;
+    /** What to look at in a VM that could not be logged in to: its addresses, what listens, the units that bring up the network and sshd, and its own log. */
+    static final String DIAGNOSE = "echo '--- addresses'; ip -br addr; echo '--- listening'; ss -ltn; echo '--- units'; "
+            + "systemctl is-active ssh cloud-early-config cloud; echo '--- cloud.log'; tail -n 25 /var/log/cloud.log";
     static final int UPLOAD_TIMEOUT_MS = 300_000;
 
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxSystemVms.class);
@@ -149,7 +152,18 @@ public class ProxmoxSystemVms {
             LOGGER.info("Gave {} to {} over SSH in {} s", names, vm.getName(), seconds(begin, clock.getAsLong()));
             return null;
         } catch (ProxmoxSshException e) {
+            logGuestState(vm, controlIp);
             return String.format("Unable to give the patch files to %s over SSH: %s", vm.getName(), e.getMessage());
+        }
+    }
+
+    /** The guest agent still answers when the SSH login does not: its report of the VM goes to the log, to tell a VM that did not come up from a tunnel that did not work. */
+    private void logGuestState(VirtualMachineTO vm, String controlIp) {
+        try {
+            ExecutionResult state = deployer.run(controlIp, DIAGNOSE, null, Duration.standardSeconds(30));
+            LOGGER.error("The SSH login to {} failed; what the VM reports through its guest agent (success {}):\n{}", vm.getName(), state.isSuccess(), state.getDetails());
+        } catch (RuntimeException e) {
+            LOGGER.error("The SSH login to {} failed and the guest agent could not tell why: {}", vm.getName(), e.getMessage());
         }
     }
 
