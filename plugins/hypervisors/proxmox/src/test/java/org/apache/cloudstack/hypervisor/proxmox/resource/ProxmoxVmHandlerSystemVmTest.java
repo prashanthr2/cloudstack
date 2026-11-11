@@ -64,7 +64,7 @@ public class ProxmoxVmHandlerSystemVmTest {
         handler.setControlBridge(() -> "cloud0");
         when(client.findVm(9300L)).thenReturn(new ProxmoxApiClient.VmLocation(9300, "s-1-VM", NODE, "stopped"));
         when(client.startVm(NODE, 9300L)).thenReturn("UPID:pve1:1:2:3:qmstart:9300:u:");
-        when(client.getVmStatus(NODE, 9300L)).thenReturn("running");
+        when(client.getVmStatus(NODE, 9300L)).thenReturn("stopped", "running");
         when(client.listBridges(NODE)).thenReturn(Collections.singletonList(new ProxmoxApiClient.NodeBridge("cloud0", true, false)));
     }
 

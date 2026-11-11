@@ -298,7 +298,7 @@ public class ProxmoxVmHandlerIsoTest {
         when(cmd.getVirtualMachine()).thenReturn(vm);
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, VM, NODE, "stopped"));
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
         return cmd;
     }
 

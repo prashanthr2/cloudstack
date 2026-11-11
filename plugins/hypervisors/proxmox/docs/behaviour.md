@@ -259,6 +259,8 @@ resource does for each command:
 | `DeleteCommand`, root volume | Stops the VM if it is running and destroys it with `purge`; the disk it owns goes with it. A VM that is already gone is success | `Answer` |
 | `DestroyCommand` (core's eviction of an unused template from a pool; the old `DeleteCommand` row for a template on primary no longer applies) | Destroys the template VM found by the VM id in the stored path (checked as for a deploy). Proxmox refuses while linked clones depend on it, which is answered as a failure with Proxmox's text, so core keeps the `template_spool_ref` row and tries again at the next cycle. A template VM that is gone (or whose id another VM has now, which is left alone), and a template of the old `cst-` form, are a success that does nothing | `Answer` |
 
+**Which state the start and the stop go by (2026-11-11).** Both look the VM up in the cluster list (`/cluster/resources`), which Proxmox refreshes only every ten seconds or so, so a VM that has just been stopped or started still shows its old state there. They therefore take the state from the VM's own node (`status/current`) before they decide that the VM is "already running" (start: nothing to do) or "already stopped" (stop: nothing to do); the cluster list only gives the node and the id. Found on the lab: a console proxy stopped at 22:20:12 and started at 22:20:15 was never started, the start answered success on the stale list, and the check after it pinged a stopped VM for 120 s until core destroyed the proxy and made a new one.
+
 Details that are easy to get wrong:
 
 - **The VM is created at root-volume time, on whichever node got the command.** CloudStack picks a random host of the pool for the volume

@@ -353,7 +353,7 @@ public class ProxmoxVmHandlerMigrationTest {
     public void aStopWaitsUntilTheVmIsReallyStoppedAndFailsIfItNeverIs() {
         when(client.findVmByName(VM)).thenReturn(vm(NODE, "running"));
         when(client.shutdownVm(anyString(), anyLong(), anyInt())).thenReturn("UPID:pve1:1:2:3:hastop:9204:u:");
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("running", "running", "stopped");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("running", "running", "running", "stopped");
 
         assertTrue(handler.stop(stop()).getResult());
         assertEquals(2, pauses);
@@ -372,7 +372,7 @@ public class ProxmoxVmHandlerMigrationTest {
         when(cmd.getVirtualMachine()).thenReturn(machine);
         when(client.findVm(9204L)).thenReturn(vm(NODE, "stopped"));
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
         return cmd;
     }
 
@@ -439,7 +439,7 @@ public class ProxmoxVmHandlerMigrationTest {
     @Test
     public void startingWaitsUntilTheVmIsRunningOnThisNode() {
         StartCommand cmd = start(false);
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "stopped", "running");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "stopped", "stopped", "running");
 
         assertTrue(handler.start(cmd).getResult());
         assertEquals(2, pauses);

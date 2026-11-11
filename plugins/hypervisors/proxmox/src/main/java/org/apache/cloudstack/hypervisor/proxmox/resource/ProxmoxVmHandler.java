@@ -226,6 +226,18 @@ class ProxmoxVmHandler {
         throw new ProxmoxApiException(String.format("Proxmox VM %d did not %s within %d seconds", vmid, what, timeoutSeconds));
     }
 
+    /**
+     * The VM as the cluster list shows it, with the state that its node reports now. Proxmox refreshes the cluster list (/cluster/resources) only
+     * every ten seconds or so, so a VM that has just been stopped or started still shows its old state there, and a start that follows a stop
+     * at once would be taken for "already running" and not done (lab 2026-11-11: a console proxy stopped at 22:20:12 and started at 22:20:15
+     * was never started). The status of the node itself is current.
+     */
+    private static ProxmoxApiClient.VmLocation withLiveStatus(ProxmoxApiClient client, ProxmoxApiClient.VmLocation location) {
+        String status = client.getVmStatus(location.getNode(), location.getVmid());
+        return status == null || status.equals(location.getStatus())
+                ? location : new ProxmoxApiClient.VmLocation(location.getVmid(), location.getName(), location.getNode(), status);
+    }
+
     private static boolean isStopped(ProxmoxApiClient.VmLocation location) {
         return location == null || !location.isRunning();
     }
@@ -505,6 +517,7 @@ class ProxmoxVmHandler {
             if (location == null) {
                 return new StartAnswer(cmd, "Proxmox has no VM " + vmid + " for " + vm.getName());
             }
+            location = withLiveStatus(client, location);
             if (location.isRunning()) {
                 return new StartAnswer(cmd);
             }
@@ -791,6 +804,7 @@ class ProxmoxVmHandler {
                 return new StopAnswer(cmd, cmd.getVmName() + " is running on node " + location.getNode() + ", the source of a failed migration; "
                         + "it was not touched", true);
             }
+            location = withLiveStatus(client, location);
             if (!location.isRunning()) {
                 return new StopAnswer(cmd, cmd.getVmName() + " is already stopped", true);
             }

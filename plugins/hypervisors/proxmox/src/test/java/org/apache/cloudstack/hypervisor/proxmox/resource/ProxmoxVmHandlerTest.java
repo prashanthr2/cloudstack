@@ -243,7 +243,7 @@ public class ProxmoxVmHandlerTest {
     public void aVmOnThisNodeIsConfiguredAndStarted() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
 
         Answer answer = handler.start(startCommand("9204/vm-9204-disk-0.qcow2"));
 
@@ -265,7 +265,7 @@ public class ProxmoxVmHandlerTest {
     public void aVmThatIsOnAnotherNodeIsMovedHereBeforeItIsStarted() {
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", "pve2", "stopped"))
                 .thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
-        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
         when(client.migrateVm("pve2", 9204L, NODE)).thenReturn("UPID:pve2:1:2:3:qmigrate:9204:u:");
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
 
@@ -300,6 +300,53 @@ public class ProxmoxVmHandlerTest {
         assertTrue(handler.start(startCommand("9204/vm-9204-disk-0.qcow2")).getResult());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
         verify(client, never()).startVm(anyString(), anyLong());
+    }
+
+    @Test
+    public void aVmThatTheClusterListStillShowsAsRunningIsStartedWhenItsNodeSaysItIsStopped() {
+        // the cluster list is refreshed only every ten seconds: a VM stopped a moment ago still shows as running there
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
+        when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
+
+        assertTrue(handler.start(startCommand("9204/vm-9204-disk-0.qcow2")).getResult());
+
+        verify(client).startVm(NODE, 9204L);
+    }
+
+    @Test
+    public void aVmThatItsNodeSaysIsRunningIsNotStartedAgain() {
+        when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("running");
+
+        assertTrue(handler.start(startCommand("9204/vm-9204-disk-0.qcow2")).getResult());
+
+        verify(client, never()).startVm(anyString(), anyLong());
+        verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
+    }
+
+    @Test
+    public void aVmThatTheClusterListShowsAsStoppedIsStillStoppedWhenItsNodeSaysItIsRunning() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "stopped"));
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("running", "stopped");
+        when(client.shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS)).thenReturn("UPID:pve1:1:2:3:qmshutdown:9204:u:");
+
+        Answer answer = handler.stop(stopCommand(false));
+
+        assertTrue(answer.getDetails(), answer.getResult());
+        verify(client).shutdownVm(NODE, 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS);
+    }
+
+    @Test
+    public void aVmThatTheClusterListShowsAsRunningIsAlreadyStoppedWhenItsNodeSaysSo() {
+        when(client.findVmByName("i-2-10-VM")).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
+        when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped");
+
+        Answer answer = handler.stop(stopCommand(false));
+
+        assertTrue(answer.getDetails(), answer.getResult() && answer.getDetails().contains("already stopped"));
+        verify(client, never()).shutdownVm(anyString(), anyLong(), anyInt());
+        verify(client, never()).stopVm(anyString(), anyLong());
     }
 
     @Test
