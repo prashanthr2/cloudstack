@@ -7,6 +7,11 @@ Last updated 2026-11-17 (system VM, router, VPC and patching items closed; resta
 
 None at the moment.
 
+## Scope of the pull request (decided 2026-11-17)
+
+- **Before the pull request:** the config drive (userdata, both settings: see "Later work") and the template VM that lives on one node (a node in maintenance breaks deploys from its templates).
+- **Not in this pull request, stay listed:** everything else under "Later work", including the live patch of a running system VM (`PatchSystemVmCommand`), application-consistent snapshots and `quiescevm`, template from a volume snapshot, backup, and the storage and ISO leftovers.
+
 ## To verify on the lab
 
 | # | Item | Notes |
