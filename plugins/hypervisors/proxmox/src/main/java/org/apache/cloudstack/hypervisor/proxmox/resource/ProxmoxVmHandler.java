@@ -608,7 +608,8 @@ class ProxmoxVmHandler {
 
     /**
      * The CD-ROM drives of a start command: for every ISO disk (CloudStack sends one per slot, an empty one where nothing is attached) the drive and
-     * its value; the ISOs get their storage entry first.
+     * its value; the ISOs get their storage entry first. A slot can be listed twice, the config drive of the instance (slot 4) and then the empty
+     * slot, so an empty entry never replaces an ISO.
      */
     private Map<String, String> cdromDrives(ProxmoxApiClient client, VirtualMachineTO vm) {
         Map<String, String> drives = new LinkedHashMap<>();
@@ -620,8 +621,12 @@ class ProxmoxVmHandler {
                 continue;
             }
             TemplateObjectTO iso = disk.getData() instanceof TemplateObjectTO ? (TemplateObjectTO) disk.getData() : null;
-            drives.put(ProxmoxVmConfig.cdromDrive(disk.getDiskSeq()),
-                    iso == null || StringUtils.isBlank(iso.getPath()) ? ProxmoxVmConfig.EMPTY_CDROM : ProxmoxVmConfig.cdromValue(isoVolume(iso)));
+            String drive = ProxmoxVmConfig.cdromDrive(disk.getDiskSeq());
+            if (iso == null || StringUtils.isBlank(iso.getPath())) {
+                drives.putIfAbsent(drive, ProxmoxVmConfig.EMPTY_CDROM);
+            } else {
+                drives.put(drive, ProxmoxVmConfig.cdromValue(isoVolume(iso)));
+            }
         }
         return drives;
     }

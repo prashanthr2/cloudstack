@@ -324,6 +324,17 @@ public class ProxmoxVmHandlerIsoTest {
     }
 
     @Test
+    public void anEmptySlotListedAfterTheConfigDriveDoesNotReplaceIt() {
+        TemplateObjectTO empty = mock(TemplateObjectTO.class);
+        StartCommand cmd = startWithIsos(null, isoDisk(iso(RELATIVE), 4), isoDisk(empty, 3), isoDisk(empty, 4));
+
+        assertTrue(handler.start(cmd).getResult());
+        Map<String, String> options = startOptions();
+        assertEquals("none,media=cdrom", options.get("ide2"));
+        assertEquals(ISO_VOLUME + ",media=cdrom", options.get("ide3"));
+    }
+
+    @Test
     public void withoutABootableIsoTheVmBootsFromItsDisk() {
         StartCommand cmd = startWithIsos(null, isoDisk(iso(RELATIVE), 3));
 
