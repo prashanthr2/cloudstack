@@ -285,6 +285,7 @@ ssh -i /etc/pve/priv/cloudstack_systemvm -p 3922 root@<control address of the VM
 - **The SSH login** is kept with each host, in `host_details`: `sshuser`, `sshpassword` (encrypted by the plugin when the management server's database encryption is on, plain text otherwise; absent for a login by key) and `sshfingerprint`
   (the node's SSH host key). The plugin uses it for what the API cannot do (see design-phase10-ssh-access.md section 1), and to remove the token when the last host
   of a cluster is deleted.
+- **Encryption.** Both secrets (the token secret and the SSH password) are encrypted only when the management server runs with database encryption, which is how CloudStack treats the passwords of every other hypervisor (the host password of a KVM host in `host_details` and the `ssh.privatekey` setting are in the same position); production should turn database encryption on.
 
 ### Changing the SSH login of hosts that are already added
 
