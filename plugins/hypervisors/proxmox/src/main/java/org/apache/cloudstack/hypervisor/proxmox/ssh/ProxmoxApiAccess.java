@@ -69,13 +69,13 @@ public final class ProxmoxApiAccess {
      * root path without propagation, so that turning on the setting proxmox.ha.manage later needs no new token: HA checks the root path itself, while a
      * console on a node is checked on the node's own path, which that grant does not reach. The right to change a node's
      * network is given per node, with {@link #grantNode}, as nodes are added.
+     * A token that is left from an earlier cluster of the same name has a secret nobody has: it is replaced.
      */
     public static Token createClusterToken(ProxmoxSsh ssh, String clusterName) {
         ensure(ssh, "pveum user add " + USER + " --comment 'CloudStack'", "already exists");
         ensure(ssh, "pveum role add " + NET_ROLE + " --privs 'Sys.Modify'", "already exists");
         ensure(ssh, "pveum role add " + HA_ROLE + " --privs 'Sys.Audit Sys.Console'", "already exists");
         String name = tokenName(clusterName);
-        // a token that is left from an earlier cluster of the same name has a secret nobody has: it is replaced
         ssh.sudo("pveum user token remove " + USER + " " + name, null, ProxmoxSsh.DEFAULT_COMMAND_TIMEOUT_MS);
         Token token = parse(ssh.sudoOrFail("pveum user token add " + USER + " " + name + " --privsep 1 --output-format json"));
         String id = token.getId();

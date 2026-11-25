@@ -68,12 +68,14 @@ public class TrileadSshLink implements SshLink {
         connection.connect(verifier, timeoutMillis, 0, timeoutMillis);
     }
 
+    /**
+     * A key that cannot be read or is not accepted is not fatal: the password is tried next.
+     */
     @Override
     public boolean authenticateWithKey(String user, String privateKeyPem) throws IOException {
         try {
             return connection.authenticateWithPublicKey(user, privateKeyPem.toCharArray(), null);
         } catch (IOException e) {
-            // a key that cannot be read or is not accepted is not fatal: the password is tried next
             return false;
         }
     }
@@ -83,6 +85,9 @@ public class TrileadSshLink implements SshLink {
         return connection.authenticateWithPassword(user, password);
     }
 
+    /**
+     * The exit status can arrive after the output ends.
+     */
     @Override
     public ExecResult exec(String command, byte[] stdin, int timeoutMillis) throws IOException {
         Session session = connection.openSession();
@@ -100,7 +105,6 @@ public class TrileadSshLink implements SshLink {
             if ((conditions & ChannelCondition.TIMEOUT) != 0) {
                 throw new IOException("the command did not finish within " + timeoutMillis / 1000 + " seconds");
             }
-            // the exit status can arrive after the output ends
             session.waitForCondition(ChannelCondition.EXIT_STATUS, 5000);
             Integer exit = session.getExitStatus();
             return new ExecResult(exit == null ? -1 : exit, read(out), read(err));

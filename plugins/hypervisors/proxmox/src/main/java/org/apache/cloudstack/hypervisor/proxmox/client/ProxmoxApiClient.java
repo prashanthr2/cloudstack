@@ -972,7 +972,10 @@ public class ProxmoxApiClient implements Closeable {
         }
     }
 
-    /** The attributes of a disk image ({@code volid} is "&lt;storage entry&gt;:&lt;path&gt;"), or null when the entry has no such image. */
+    /**
+     * The attributes of a disk image ({@code volid} is "&lt;storage entry&gt;:&lt;path&gt;"), or null when the entry has no such image.
+     * A volume that does not exist is answered with an error; a refusal (401, 403) is not "no image".
+     */
     public ImageInfo getImageInfo(String node, String volid) {
         try {
             JsonNode data = get("/nodes/" + node + "/storage/" + storageOf(volid) + "/content/" + encodeVolume(volid));
@@ -981,7 +984,6 @@ public class ProxmoxApiClient implements Closeable {
             }
             return new ImageInfo(data.path("size").asLong(0), data.path("used").asLong(0), data.path("format").asText(null), data.path("path").asText(null));
         } catch (ProxmoxApiException e) {
-            // a volume that does not exist is answered with an error; a refusal (401, 403) is not "no image"
             if (e.getStatusCode() == 500 || e.getStatusCode() == 404) {
                 return null;
             }
@@ -1044,11 +1046,14 @@ public class ProxmoxApiClient implements Closeable {
         return taskId(post("/nodes/" + node + "/qemu/" + vmid + "/status/start", null));
     }
 
-    /** Hard stop, like pulling the power. */
+    /**
+     * Hard stop, like pulling the power.
+     * A graceful shutdown that is still running (started in Proxmox, not by CloudStack, which serialises the jobs of a VM) holds the VM's lock,
+     * and a stop then fails with "can't lock file ... got timeout"; "overrule-shutdown" aborts that shutdown first. Proxmox refuses the option for
+     * a VM under HA ("Not applicable for HA resources"; the stop is then only a request to the HA manager).
+     */
     public String stopVm(String node, long vmid) {
         String path = "/nodes/" + node + "/qemu/" + vmid + "/status/stop";
-        // A graceful shutdown that is still running (started in Proxmox, not by CloudStack, which serialises the jobs of a VM) holds the VM's lock, and a
-        // stop then fails with "can't lock file ... got timeout" (lab 2026-10-21); "overrule-shutdown" aborts that shutdown first.
         Map<String, String> form = new LinkedHashMap<>();
         form.put("overrule-shutdown", "1");
         try {
@@ -1057,7 +1062,6 @@ public class ProxmoxApiClient implements Closeable {
             if (e.getStatusCode() != 400) {
                 throw e;
             }
-            // Proxmox refuses the option for a VM under HA ("Not applicable for HA resources"; the stop is then only a request to the HA manager)
             return taskId(post(path, null));
         }
     }
@@ -1137,7 +1141,10 @@ public class ProxmoxApiClient implements Closeable {
         }
     }
 
-    /** What Proxmox says about moving a VM to a node: the reasons it cannot be done (none when it can). */
+    /**
+     * What Proxmox says about moving a VM to a node: the reasons it cannot be done (none when it can).
+     * Every node is listed in not_allowed_nodes, with an empty entry when nothing is wrong, so only a reason counts.
+     */
     public List<String> getMigrationProblems(String node, long vmid, String target) {
         List<String> problems = new ArrayList<>();
         JsonNode data = get("/nodes/" + node + "/qemu/" + vmid + "/migrate?target=" + target);
@@ -1145,7 +1152,6 @@ public class ProxmoxApiClient implements Closeable {
         for (JsonNode entry : data.path("allowed_nodes")) {
             allowed |= target.equals(entry.isTextual() ? entry.asText() : entry.path("node").asText());
         }
-        // every node is listed in not_allowed_nodes, with an empty entry when nothing is wrong, so only a reason counts
         JsonNode reasons = data.path("not_allowed_nodes").path(target);
         List<String> why = new ArrayList<>();
         reasons.fields().forEachRemaining(field -> {

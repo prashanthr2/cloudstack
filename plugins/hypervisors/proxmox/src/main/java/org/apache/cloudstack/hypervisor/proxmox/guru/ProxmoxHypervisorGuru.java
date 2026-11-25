@@ -96,9 +96,11 @@ public class ProxmoxHypervisorGuru extends HypervisorGuruBase implements Hypervi
         return data != null && data.getHypervisorType() == Hypervisor.HypervisorType.Proxmox;
     }
 
+    /**
+     * Proxmox HA can move a VM between nodes on its own; the power-state report fixes the host.
+     */
     @Override
     public boolean trackVmHostChange() {
-        // Proxmox HA can move a VM between nodes on its own; the power-state report fixes the host.
         return false;
     }
 }

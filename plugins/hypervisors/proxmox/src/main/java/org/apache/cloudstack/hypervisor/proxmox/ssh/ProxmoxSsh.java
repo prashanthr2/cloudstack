@@ -104,7 +104,10 @@ public class ProxmoxSsh implements AutoCloseable {
         }
     }
 
-    /** Runs a command with the rights of root (the login user itself when it is root) and returns the result whatever its exit code. */
+    /**
+     * Runs a command with the rights of root (the login user itself when it is root) and returns the result whatever its exit code.
+     * Sudo reads the password from the first line of standard input, the command's own input follows.
+     */
     public ExecResult sudo(String command, byte[] stdin, int timeoutMillis) {
         if ("root".equals(target.getUser())) {
             return execute(command, stdin, timeoutMillis);
@@ -119,7 +122,6 @@ public class ProxmoxSsh implements AutoCloseable {
         if (sudoWithoutPassword) {
             return execute("sudo -n sh -c " + quote(command), stdin, timeoutMillis);
         }
-        // sudo reads the password from the first line of standard input, the command's own input follows
         byte[] password = (target.getPassword() + "\n").getBytes(StandardCharsets.UTF_8);
         byte[] input = new byte[password.length + (stdin == null ? 0 : stdin.length)];
         System.arraycopy(password, 0, input, 0, password.length);

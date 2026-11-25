@@ -129,6 +129,9 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         }
     }
 
+    /**
+     * One call can carry only so much: the file is appended piece by piece.
+     */
     @Override
     public ExecutionResult createFileInVR(String routerIp, String path, String filename, String content) {
         String file = path.endsWith("/") ? path + filename : path + "/" + filename;
@@ -140,7 +143,6 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
                 client.agentFileWrite(vm.getNode(), vm.getVmid(), file, content);
                 return new ExecutionResult(true, "Created file " + file);
             }
-            // one call can carry only so much: the file is appended piece by piece
             return writeBytes(routerIp, file, data);
         } catch (ProxmoxApiException e) {
             LOGGER.warn("Unable to create the file {} in the VM with the address {}: {}", file, routerIp, e.getMessage());
@@ -169,9 +171,11 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         return "'" + text.replace("'", "'\\''") + "'";
     }
 
+    /**
+     * The address core uses for the router; here it is only the key that finds the VM by name.
+     */
     @Override
     public ExecutionResult prepareCommand(NetworkElementCommand cmd) {
-        // the address core uses for the router; here it is only the key that finds the VM by name
         cmd.setRouterAccessIp(cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP));
         register(cmd.getRouterAccessIp(), cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME));
         try {
@@ -235,6 +239,9 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         return new ExecutionResult(true, null);
     }
 
+    /**
+     * The guest sees it a moment later; the scripts that follow need it.
+     */
     private ExecutionResult plug(ProxmoxApiClient client, ProxmoxApiClient.VmLocation vm, String routerIp, List<ProxmoxRouterNics.Nic> nics, IpAddressTO ip) {
         String bridge = ip.getNetworkName();
         if (StringUtils.isBlank(bridge)) {
@@ -248,12 +255,14 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         net.append(",firewall=0");
         client.updateVmConfig(vm.getNode(), vm.getVmid(), java.util.Collections.singletonMap("net" + ProxmoxRouterNics.nextIndex(nics), net.toString()));
         LOGGER.info("Plugged a network interface with the MAC address {} into {}", ip.getVifMacAddress(), vm.getName());
-        // the guest sees it a moment later; the scripts that follow need it
         String wait = "for i in $(seq 1 30); do ip -o link | grep -qi " + ip.getVifMacAddress() + " && exit 0; sleep 1; done; exit 1";
         ExecutionResult seen = run(routerIp, wait, null, Duration.standardSeconds(60));
         return seen.isSuccess() ? seen : new ExecutionResult(false, "The new interface " + ip.getVifMacAddress() + " did not show up in " + vm.getName());
     }
 
+    /**
+     * A tier that was just plugged shows up in the guest a moment later; the configuration that follows needs it.
+     */
     private ExecutionResult prepareGuestNetwork(SetupGuestNetworkCommand cmd) {
         NicTO nic = cmd.getNic();
         ProxmoxApiClient client = clients.get();
@@ -261,7 +270,6 @@ public class ProxmoxRouterDeployer implements VirtualRouterDeployer {
         if (ProxmoxRouterNics.numberOf(nics(client, vm), nic.getMac()) == null) {
             return new ExecutionResult(false, "Can not find nic with mac " + nic.getMac() + " for VM " + vm.getName());
         }
-        // a tier that was just plugged shows up in the guest a moment later; the configuration that follows needs it
         ExecutionResult seen = run(cmd.getRouterAccessIp(), "for i in $(seq 1 30); do ip -o link | grep -qi " + nic.getMac() + " && exit 0; sleep 1; done; exit 1", null,
                 Duration.standardSeconds(60));
         return seen.isSuccess() ? seen : new ExecutionResult(false, "The interface " + nic.getMac() + " did not show up in " + vm.getName());

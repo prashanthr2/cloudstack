@@ -235,6 +235,7 @@ public class ProxmoxResource implements ServerResource {
         return type;
     }
 
+    /** Reports the node to core. The number of CD-ROM drives is given because IDE has four of them; without it core allows one CD-ROM per VM. */
     @Override
     public StartupCommand[] initialize() {
         ProxmoxApiClient.NodeStatus status;
@@ -259,7 +260,6 @@ public class ProxmoxResource implements ServerResource {
         cmd.setVersion(ProxmoxResource.class.getPackage().getImplementationVersion());
         Map<String, String> hostDetails = new HashMap<>();
         hostDetails.put(DETAIL_NODE, node);
-        // IDE has four drives; without this core allows one CD-ROM per VM
         hostDetails.put(Host.HOST_CDROM_MAX_COUNT, Integer.toString(ProxmoxVmConfig.CDROM_DRIVES.length));
         cmd.setHostDetails(hostDetails);
         return new StartupCommand[] {cmd};
@@ -294,6 +294,12 @@ public class ProxmoxResource implements ServerResource {
         return report;
     }
 
+    /**
+     * Answers a command of core. CreateStoragePoolCommand does nothing, as on KVM: the storage entry is created, with the pool's mount options, when the
+     * pool is connected to a host (ModifyStoragePoolCommand), which follows for every host. DestroyCommand is core's eviction of an unused template from a
+     * pool, which removes the template VM that caches it. StopCommand and RebootRouterCommand are tested before RebootCommand, because both are
+     * RebootCommands.
+     */
     @Override
     public Answer executeRequest(Command cmd) {
         try {
@@ -312,8 +318,6 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof UpdateHostPasswordCommand) {
                 return execute((UpdateHostPasswordCommand) cmd);
             } else if (cmd instanceof CreateStoragePoolCommand) {
-                // As on KVM nothing is done here: the storage entry is created, with the pool's mount options, when the
-                // pool is connected to a host (ModifyStoragePoolCommand), which follows for every host.
                 return new Answer(cmd, true, "The Proxmox storage entry is created when the pool is connected to the hosts");
             } else if (cmd instanceof ModifyStoragePoolCommand) {
                 return execute((ModifyStoragePoolCommand) cmd);
@@ -339,7 +343,6 @@ public class ProxmoxResource implements ServerResource {
                 }
                 return vmHandler.createObject((CreateObjectCommand) cmd);
             } else if (cmd instanceof DestroyCommand) {
-                // core's eviction of an unused template from a pool: the template VM that caches it
                 return templates.destroy((DestroyCommand) cmd);
             } else if (cmd instanceof RevertSnapshotCommand) {
                 return volumeSnapshots.revert((RevertSnapshotCommand) cmd);
@@ -368,14 +371,12 @@ public class ProxmoxResource implements ServerResource {
             } else if (cmd instanceof StartCommand) {
                 return vmHandler.start((StartCommand) cmd);
             } else if (cmd instanceof StopCommand) {
-                // before RebootCommand: a StopCommand is a RebootCommand
                 return vmHandler.stop((StopCommand) cmd);
             } else if (cmd instanceof PlugNicCommand) {
                 return vmHandler.plugNic((PlugNicCommand) cmd);
             } else if (cmd instanceof UnPlugNicCommand) {
                 return vmHandler.unplugNic((UnPlugNicCommand) cmd);
             } else if (cmd instanceof RebootRouterCommand) {
-                // before RebootCommand: a RebootRouterCommand is a RebootCommand
                 return execute((RebootRouterCommand) cmd);
             } else if (cmd instanceof NetworkUsageCommand) {
                 return ProxmoxNetworkUsage.execute((NetworkUsageCommand) cmd, routerDeployer);
@@ -464,7 +465,8 @@ public class ProxmoxResource implements ServerResource {
     /**
      * Sent after updateHostPassword with update_passwd_on_host. For Proxmox the username and password of a host are its SSH login (the API token is made
      * by the plugin and kept with the cluster, and is not changed here). Nothing is changed on the node: the login is checked with the node, so that a
-     * wrong password is reported now and not when the first command that needs a shell fails. The login is stored by CloudStack before this command.
+     * wrong password is reported now and not when the first command that needs a shell fails. The login is stored by CloudStack before this command,
+     * and kept in the resource so that the commands on the node use it from now on, before the next connect rebuilds it from the host details.
      */
     private Answer execute(UpdateHostPasswordCommand cmd) {
         if (StringUtils.isAnyBlank(nodeIp, sshFingerprint)) {
@@ -473,7 +475,6 @@ public class ProxmoxResource implements ServerResource {
         SshTarget target = new SshTarget(nodeIp, ProxmoxSsh.DEFAULT_PORT, cmd.getUsername(), null, cmd.getNewPassword(), sshFingerprint);
         try (ProxmoxSsh ssh = openSsh(target)) {
             logger.info("The SSH login {} works on Proxmox node {}", cmd.getUsername(), node);
-            // the login that the commands on the node use from now on, before the next connect rebuilds it from the host details
             sshUser = cmd.getUsername();
             sshPassword = cmd.getNewPassword();
             return new Answer(cmd, true, "The SSH login " + cmd.getUsername() + " works on Proxmox node " + node);
@@ -507,7 +508,7 @@ public class ProxmoxResource implements ServerResource {
     /**
      * Connects this node to an NFS primary storage pool. The storage entry is cluster-wide, so the first call (from whichever host
      * CloudStack asks first) creates it and the others find it; each call then waits until this node has it mounted and reports
-     * the capacity.
+     * the capacity. A remove leaves the entry in place: it belongs to the whole Proxmox cluster and is removed by DeleteStoragePoolCommand.
      */
     private Answer execute(ModifyStoragePoolCommand cmd) {
         StorageFilerTO pool = cmd.getPool();
@@ -515,7 +516,6 @@ public class ProxmoxResource implements ServerResource {
             return new ModifyStoragePoolAnswer(cmd, false, "Only NFS primary storage is supported for Proxmox, not " + pool.getType());
         }
         if (!cmd.getAdd()) {
-            // The entry belongs to the whole Proxmox cluster and is removed by DeleteStoragePoolCommand.
             return new ModifyStoragePoolAnswer(cmd, true, "The Proxmox storage entry is cluster-wide and is left in place");
         }
         String id = ProxmoxStorageNames.storageId(pool.getUuid());
@@ -543,7 +543,7 @@ public class ProxmoxResource implements ServerResource {
     }
 
     /**
-     * Makes sure the cluster has the storage entry for a pool.
+     * Makes sure the cluster has the storage entry for a pool. Another host's command may have created the entry a moment ago, so a failed create is followed by a lookup.
      *
      * @return null when the entry exists with the expected server and export, otherwise the reason it cannot be used
      */
@@ -555,7 +555,6 @@ public class ProxmoxResource implements ServerResource {
                 logger.info("Created Proxmox storage {} for {}:{}", id, server, export);
                 return null;
             } catch (ProxmoxApiException e) {
-                // another host's command may have created it a moment ago
                 existing = client.findStorage(id);
                 if (existing == null) {
                     throw e;

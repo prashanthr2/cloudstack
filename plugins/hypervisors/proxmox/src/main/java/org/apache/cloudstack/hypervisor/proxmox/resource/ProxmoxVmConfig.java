@@ -89,6 +89,7 @@ public final class ProxmoxVmConfig {
     /**
      * As above, for a system VM or router also with the guest agent switched on (its boot arguments and its commands go through it) and with the
      * control NIC on {@code controlBridge}, the node's host-only bridge (core gives that NIC no bridge name; on KVM it is {@code cloud0}).
+     * CloudStack sizes the VM; Proxmox's memory ballooning would let it shrink below that.
      */
     public static Map<String, String> startOptions(VirtualMachineTO vm, long hostCpuCapacityMhz, Map<String, String> cdroms, String rootDrive,
             String controlBridge) {
@@ -103,7 +104,6 @@ public final class ProxmoxVmConfig {
             options.put("cpuunits", Integer.toString(cpuUnits));
         }
         options.put("memory", Long.toString(Math.max(1, vm.getMaxRam() / MIB)));
-        // CloudStack sizes the VM; Proxmox's memory ballooning would let it shrink below that
         options.put("balloon", "0");
         options.put("ostype", StringUtils.defaultIfBlank(vm.getPlatformEmulator(), DEFAULT_OS_TYPE));
         String smbios = smbios(vm);
@@ -291,13 +291,15 @@ public final class ProxmoxVmConfig {
         return options.toString();
     }
 
+    /**
+     * The unit of the base limit decides the name of the burst: "mbps_rd" has "mbps_rd_max", "iops_rd" has "iops_rd_max".
+     */
     private static void appendLimit(StringBuilder options, String name, Long rate, Long burst, Long burstSeconds, boolean bytesToMegabytes) {
         if (rate == null || rate <= 0) {
             return;
         }
         options.append(',').append(name).append('=').append(limitValue(rate, bytesToMegabytes));
         if (burst != null && burst >= rate) {
-            // the unit of the base limit decides the name of the burst: "mbps_rd" has "mbps_rd_max", "iops_rd" has "iops_rd_max"
             options.append(',').append(name).append("_max=").append(limitValue(burst, bytesToMegabytes));
             if (burstSeconds != null && burstSeconds > 0) {
                 options.append(',').append(name).append("_max_length=").append(burstSeconds);
@@ -447,7 +449,10 @@ public final class ProxmoxVmConfig {
         return netOption(nic, model, nic.getName());
     }
 
-    /** As above on the given bridge (the control NIC's is not the traffic label). */
+    /**
+     * As above on the given bridge (the control NIC's is not the traffic label).
+     * CloudStack's rate is in megabits per second, Proxmox's in megabytes per second.
+     */
     static String netOption(NicTO nic, String model, String bridge) {
         if (StringUtils.isBlank(bridge)) {
             throw new ProxmoxApiException(String.format("NIC %d (MAC %s) has no bridge: set the KVM traffic label of the physical network to "
@@ -460,7 +465,6 @@ public final class ProxmoxVmConfig {
         }
         Integer rateMbps = nic.getNetworkRateMbps();
         if (rateMbps != null && rateMbps > 0) {
-            // CloudStack's rate is in megabits per second, Proxmox's in megabytes per second
             option.append(",rate=").append(Math.max(1, rateMbps / 8));
         }
         return option.append(",firewall=0").toString();

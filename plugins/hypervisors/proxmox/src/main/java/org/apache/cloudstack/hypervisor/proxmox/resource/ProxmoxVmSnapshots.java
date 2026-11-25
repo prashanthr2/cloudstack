@@ -145,6 +145,7 @@ class ProxmoxVmSnapshots {
      * instance and sends nothing, and the snapshots of a data disk are inside the disk's own file, which is kept (the disk is detached and goes on
      * to live on), so they would stay in it for good. A snapshot that cannot be removed from a disk that is gone already is removed from the
      * configuration anyway. A failure is logged and does not stop the destroy: what is left is only space in a data volume.
+     * Children before parents: Proxmox lists parents first.
      */
     void deleteAll(ProxmoxApiClient client, ProxmoxApiClient.VmLocation vm) {
         List<String> names;
@@ -154,7 +155,6 @@ class ProxmoxVmSnapshots {
             LOGGER.warn("The snapshots of Proxmox VM {} could not be listed before it is destroyed, those in its data volumes stay: {}", vm.getVmid(), e.getMessage());
             return;
         }
-        // children before parents: Proxmox lists parents first
         for (int i = names.size() - 1; i >= 0; i--) {
             try {
                 client.waitForTask(client.deleteSnapshot(vm.getNode(), vm.getVmid(), names.get(i), true), taskTimeoutSeconds.getAsInt());

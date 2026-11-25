@@ -98,11 +98,11 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
     /**
      * The identity of a Proxmox cluster as kept in the CloudStack cluster's GUID, so that nodes of a different Proxmox
      * cluster cannot be added to the same CloudStack cluster (XenServer does the same with the pool UUID).
+     * A standalone node has no cluster name; its own name identifies it.
      */
     protected String getClusterIdentity(String proxmoxClusterName, List<ProxmoxApiClient.NodeInfo> nodes) {
         String name = proxmoxClusterName;
         if (name == null || name.isEmpty()) {
-            // a standalone node has no cluster name; its own name identifies it
             name = nodes.get(0).getName();
         }
         return CLUSTER_GUID_PREFIX + name;
@@ -156,10 +156,19 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         }
     }
 
+    /**
+     * One API token serves the whole Proxmox cluster, and the plugin keeps it with the CloudStack cluster (cluster_details, the secret encrypted
+     * like a host's); a host added later in the cluster reads it from there. Only the first host of a cluster makes it over SSH. The token of the
+     * cluster was removed or its secret changed: make a new one (the other hosts take it up when they reconnect). Any node answers for the whole
+     * cluster, so remember every node's address: the one given first, then the others, to carry on when the node used for the API goes down. The
+     * same login must work on every node: the host key of each node is kept, and a node that refuses the login is not added. The resource checks a
+     * new SSH login against it (updateHostPassword with update_passwd_on_host); a resource that is rebuilt after a restart gets it from the host
+     * details. Host details are kept for a host and the resource is rebuilt from them after a management server restart, together with the
+     * cluster's token (buildConfigParams). The SSH password is not under the name "password", which is the one core encrypts, so the plugin
+     * encrypts it itself.
+     */
     private Map<? extends ServerResource, Map<String, String>> discover(long dcId, Long podId, Long clusterId, URI uri, String endpoint, ClusterVO cluster,
             ProxmoxSsh ssh, String username, String password, String privateKey) throws DiscoveryException {
-        // One API token serves the whole Proxmox cluster, and the plugin keeps it with the CloudStack cluster (cluster_details, the secret encrypted like
-        // a host's); a host added later in the cluster reads it from there. Only the first host of a cluster makes it over SSH.
         String tokenId = clusterDetailsDao.findDetail(cluster.getId(), "username") == null ? null : clusterDetailsDao.findDetail(cluster.getId(), "username").getValue();
         String tokenSecret = clusterDetailsDao.findDetail(cluster.getId(), "password") == null ? null : clusterDetailsDao.findDetail(cluster.getId(), "password").getValue();
         List<ProxmoxApiClient.NodeInfo> nodes;
@@ -181,7 +190,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 break;
             } catch (ProxmoxApiException e) {
                 if (!madeToken && attempt == 1 && e.getStatusCode() == 401) {
-                    // the token of the cluster was removed or its secret changed: make a new one (the other hosts take it up when they reconnect)
                     logger.warn("The API token {} of this cluster is not accepted by Proxmox any more: making a new one", tokenId);
                     tokenId = null;
                     tokenSecret = null;
@@ -203,8 +211,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
 
         installSystemVmLoginKey(ssh);
 
-        // Any node answers for the whole cluster, so remember every node's address: the one given first, then the
-        // others, to carry on when the node used for the API goes down.
         Set<String> endpointSet = new LinkedHashSet<>();
         endpointSet.add(endpoint);
         int apiPort = URI.create(endpoint).getPort();
@@ -226,7 +232,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 logger.info("Skipping Proxmox node {}: it is already added", nodeInfo.getName());
                 continue;
             }
-            // the same login must work on every node: the host key of each node is kept, and a node that refuses the login is not added
             String fingerprint;
             boolean loginNode = uri.getHost().equals(nodeInfo.getIp());
             if (loginNode) {
@@ -252,8 +257,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
             params.put(ProxmoxResource.DETAIL_NODE_IP, nodeInfo.getIp());
             params.put(ProxmoxResource.DETAIL_ENDPOINT, endpoint);
             params.put(ProxmoxResource.DETAIL_ENDPOINTS, endpoints);
-            // the resource checks a new SSH login against it (updateHostPassword with update_passwd_on_host); a resource that is rebuilt after a restart
-            // gets it from the host details
             params.put(ProxmoxResource.DETAIL_SSH_FINGERPRINT, fingerprint);
             putSshLogin(params, username, password, privateKey);
 
@@ -265,8 +268,6 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
                 logger.error("Unable to configure the resource for Proxmox node {}: {}", nodeInfo.getName(), e.getMessage());
                 continue;
             }
-            // Host details are kept for a host and the resource is rebuilt from them after a management server restart, together with the cluster's
-            // token (buildConfigParams). The SSH password is not under the name "password", which is the one core encrypts, so the plugin encrypts it itself.
             Map<String, String> details = new HashMap<>();
             details.put("guid", guid);
             details.put(ProxmoxResource.DETAIL_NODE, nodeInfo.getName());
@@ -349,19 +350,20 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         _clusterDao.update(cluster.getId(), cluster);
     }
 
-    /** The resource of a host is rebuilt from its details and the token of its cluster, which is kept with the cluster and not with each host. */
+    /**
+     * The resource of a host is rebuilt from its details and the token of its cluster, which is kept with the cluster and not with each host.
+     * The token is the cluster's. A host's own username and password are then an SSH login that updateHostPassword stored (core keeps it under
+     * those names), never the token. A host added before the token moved to the cluster has its own token and keeps it.
+     */
     @Override
     protected HashMap<String, Object> buildConfigParams(HostVO host) {
         HashMap<String, Object> params = super.buildConfigParams(host);
         if (host.getClusterId() != null) {
             Map<String, String> clusterDetails = clusterDetailsDao.findDetails(host.getClusterId());
             if (clusterDetails.get("username") != null && clusterDetails.get("password") != null) {
-                // The token is the cluster's. A host's own username and password are then an SSH login that updateHostPassword stored (core keeps it
-                // under those names), never the token.
                 params.put("username", clusterDetails.get("username"));
                 params.put("password", clusterDetails.get("password"));
             }
-            // a host added before the token moved to the cluster has its own token and keeps it
         }
         String[] login = sshLoginOf(host.getDetails());
         putSshLogin(params, login[0], login[1], _configDao.getValue("ssh.privatekey"));
@@ -464,9 +466,11 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         }
     }
 
+    /**
+     * The first adapter that answers ends the dispatch, so an answer for another hypervisor's host would hide it from its own adapter.
+     */
     @Override
     public DeleteHostAnswer deleteHost(HostVO host, boolean isForced, boolean isForceDeleteStorage) throws UnableDeleteHostException {
-        // the first adapter that answers ends the dispatch, so an answer for another hypervisor's host would hide it from its own adapter
         if (host.getType() != com.cloud.host.Host.Type.Routing || host.getHypervisorType() != Hypervisor.HypervisorType.Proxmox) {
             return null;
         }
@@ -494,12 +498,14 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
         return new String[] {details.get(ProxmoxResource.DETAIL_SSH_USER), StringUtils.isEmpty(encrypted) ? null : DBEncryptionUtil.decrypt(encrypted)};
     }
 
+    /**
+     * Every host of the cluster counts, also one that is in maintenance or not connected (the list of running hosts would not show it).
+     */
     void revokeToken(HostVO host) {
         if (host.getHypervisorType() != Hypervisor.HypervisorType.Proxmox || host.getClusterId() == null) {
             return;
         }
         try {
-            // every host of the cluster counts, also one that is in maintenance or not connected (the list of running hosts would not show it)
             for (Long otherId : _hostDao.listIdsByClusterId(host.getClusterId())) {
                 if (otherId != host.getId()) {
                     return;

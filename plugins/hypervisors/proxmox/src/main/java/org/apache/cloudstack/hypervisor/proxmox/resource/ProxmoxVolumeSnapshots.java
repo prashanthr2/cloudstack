@@ -155,6 +155,8 @@ class ProxmoxVolumeSnapshots {
     /**
      * Copies the snapshot to secondary storage and then removes it from primary, as KVM does (also when the copy failed), so that nothing stays in the
      * volume's file or in the VM's snapshot list.
+     * Read-write: the copy is written into the snapshot folder of the store. -U: a running instance has the file open; what is read is a snapshot,
+     * which is never written.
      */
     Answer backup(CopyCommand cmd) {
         SnapshotObjectTO source = (SnapshotObjectTO) cmd.getSrcTO();
@@ -173,13 +175,11 @@ class ProxmoxVolumeSnapshots {
             final String snapshotName = name;
             return withLock(volume.getPath(), () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    // read-write: the copy is written into the snapshot folder of the store
                     return secondary.withMount(ssh, (NfsTO) target.getDataStore(), false, mount -> {
                         String copy = mount + "/" + folder + "/" + copyName;
                         requireFile(ssh, file);
                         runOrFail(ssh, "create the snapshot folder", "mkdir -p " + ProxmoxSsh.quote(mount + "/" + folder));
                         try {
-                            // -U: a running instance has the file open; what is read is a snapshot, which is never written
                             ExecResult converted = ssh.sudo("qemu-img convert -O qcow2" + (isOfVm(snapshotName) ? " -U" : "") + " -l snapshot.name="
                                     + ProxmoxSsh.quote(snapshotName) + " " + ProxmoxSsh.quote(file) + " " + ProxmoxSsh.quote(copy), null, timeoutMillis(cmd.getWait()));
                             if (!converted.isSuccess()) {
@@ -232,6 +232,7 @@ class ProxmoxVolumeSnapshots {
     /**
      * Makes a data volume of the backup on secondary storage: a file named like any data volume, written under a
      * temporary name and moved into place when it is complete. A copy that is not the size CloudStack records for the volume is brought to it.
+     * Read-only: the backup is only read.
      */
     Answer createVolume(CopyCommand cmd) {
         SnapshotObjectTO source = (SnapshotObjectTO) cmd.getSrcTO();
@@ -250,7 +251,6 @@ class ProxmoxVolumeSnapshots {
             String file = ProxmoxStorageNames.mountPath(pool) + "/images/" + path;
             return withLock(path, () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    // read-only: the backup is only read
                     return secondary.withMount(ssh, (NfsTO) source.getDataStore(), true, mount -> {
                         String from = mount + "/" + backup;
                         requireFile(ssh, from);
@@ -291,6 +291,7 @@ class ProxmoxVolumeSnapshots {
      * recorded for the volume to the size of the snapshot ({@code SnapshotManagerImpl.updateVolumeSizeAndPrimaryStorageCount}), so a volume that was grown
      * after the snapshot is the smaller size again, as with KVM. Growing the file to the size CloudStack has before the revert would leave the file bigger
      * than the database says (lab, 2026-11-05).
+     * Read-only: the backup is only read.
      */
     Answer revert(RevertSnapshotCommand cmd) {
         SnapshotObjectTO snapshot = cmd.getData();
@@ -307,7 +308,6 @@ class ProxmoxVolumeSnapshots {
             }
             return withLock(volume.getPath(), () -> {
                 try (ProxmoxSsh ssh = logins.get()) {
-                    // read-only: the backup is only read
                     secondary.withMount(ssh, (NfsTO) snapshot.getDataStore(), true, mount -> {
                         String from = mount + "/" + backup;
                         requireFile(ssh, from);

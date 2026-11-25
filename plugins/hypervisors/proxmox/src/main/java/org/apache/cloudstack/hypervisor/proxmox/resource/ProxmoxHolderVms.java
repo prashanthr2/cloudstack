@@ -137,13 +137,13 @@ final class ProxmoxHolderVms {
     /**
      * Hands the volume that the instance lists as {@code entry} ("unusedN", what Proxmox records when a drive of a running VM is removed,
      * lab M5) to the holder. Both VMs must be on the node. Returns the volume id the volume now has, "&lt;pool&gt;:&lt;holder&gt;/vm-&lt;holder&gt;-disk-&lt;n&gt;.qcow2".
+     * The task may have done its work although it could not be followed: if the holder lists the volume, it is done.
      */
     String handBack(String node, long instanceVmid, String entry, long holderVmid) {
         String holderEntry = freeEntry(client.getVmConfig(node, holderVmid));
         try {
             client.waitForTask(client.reassignDisk(node, instanceVmid, entry, holderVmid, holderEntry), taskTimeoutSeconds.getAsInt());
         } catch (ProxmoxApiException e) {
-            // the task may have done its work although it could not be followed (lab T4): if the holder lists the volume, it is done
             if (volumeIdOf(client.getVmConfig(node, holderVmid).get(holderEntry)) == null) {
                 throw e;
             }
@@ -265,6 +265,7 @@ final class ProxmoxHolderVms {
     /**
      * Deletes a volume that the holder lists: removing its "unusedN" entry removes the file too, and leaves no dangling entry (a plain delete of
      * the image would). Returns false when the holder does not list it.
+     * Proxmox refuses to remove an unused disk of a VM with protection on ("protection mode enabled"), so it is off for this one change.
      */
     boolean deleteListed(ProxmoxApiClient.VmLocation holder, String volumeId) {
         Map<String, String> config = client.getVmConfig(holder.getNode(), holder.getVmid());
@@ -272,7 +273,6 @@ final class ProxmoxHolderVms {
         if (entry == null) {
             return false;
         }
-        // lab M9: Proxmox refuses to remove an unused disk of a VM with protection on ("protection mode enabled"), so it is off for this one change
         client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("protection", "0"));
         try {
             client.updateVmConfig(holder.getNode(), holder.getVmid(), Collections.singletonMap("delete", entry));
