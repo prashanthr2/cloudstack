@@ -176,7 +176,6 @@ public class ProxmoxVmConfigTest {
         assertEquals(0L, ProxmoxVmConfig.diskSizeBytes("a:b,size=big"));
     }
 
-    // ---- ISOs (Phase 6) ----
 
     @Test
     public void cdromSlotsMapToIdeDrivesStartingWithIde2() {
@@ -314,7 +313,6 @@ public class ProxmoxVmConfigTest {
         assertEquals("order=scsi0", ProxmoxVmConfig.startOptions(vm, 0, new java.util.LinkedHashMap<>()).get("boot"));
     }
 
-    // ---- data volumes (Phase 7) ----
 
     @Test
     public void theHolderOfAnAccountsDataVolumesIsTheBaseAndTheAccountId() {

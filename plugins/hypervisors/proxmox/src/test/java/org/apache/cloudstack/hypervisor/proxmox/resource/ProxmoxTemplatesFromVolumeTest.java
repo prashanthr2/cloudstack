@@ -43,7 +43,7 @@ import com.cloud.agent.api.to.NfsTO;
 import com.cloud.storage.DataStoreRole;
 import com.cloud.storage.Storage;
 
-/** Step 4 of design-phase11: a template on the secondary store made from a volume. */
+/** A template on the secondary store made from a volume. */
 public class ProxmoxTemplatesFromVolumeTest {
     private static final String POOL_UUID = "7fd5565c-6c1e-3032-81ec-d404812915ab";
     private static final String TEMPLATE_UUID = "3f8302d1-fa8e-4606-8aae-0e225e2e81cd";

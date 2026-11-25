@@ -21,8 +21,7 @@ import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * The key pair that lets an administrator log in to a system VM or router from the Proxmox node it runs on (requirements.md, "Logging in to a system
- * VM from a node"). The pair lives in {@value #PRIVATE_KEY}, in Proxmox's cluster-wide private directory, so the private key is on every node; the
+ * The key pair that lets an administrator log in to a system VM or router from the Proxmox node it runs on. The pair lives in {@value #PRIVATE_KEY}, in Proxmox's cluster-wide private directory, so the private key is on every node; the
  * public key goes into the setting proxmox.systemvm.ssh.key, which the plugin adds to every system VM it starts. Add Host makes the pair when it is
  * missing and adds the public key to the setting, so that the administrator does not have to.
  */

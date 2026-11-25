@@ -23,7 +23,7 @@ import java.util.function.Supplier;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * SSH access to one Proxmox node, for the commands the API cannot run (design-phase10-ssh-access.md). A login is made as the user of the
+ * SSH access to one Proxmox node, for the commands the API cannot run. A login is made as the user of the
  * {@link SshTarget}: a private key first, then the password. The host key is compared with the fingerprint kept for the node, and a changed key
  * fails the connection. A user other than root runs its commands through {@code sudo}: {@code sudo -n} when that needs no password, otherwise
  * {@code sudo -S} with the login password on standard input.

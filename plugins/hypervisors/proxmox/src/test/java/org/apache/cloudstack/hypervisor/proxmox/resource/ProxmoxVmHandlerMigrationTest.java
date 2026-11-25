@@ -54,7 +54,7 @@ import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.storage.Volume;
 import com.cloud.vm.VirtualMachine;
 
-/** Phase 5: moving a VM between nodes, leaving the source of a failed move alone, waiting for the real state, and Proxmox HA. */
+/** Moving a VM between nodes, leaving the source of a failed move alone, waiting for the real state, and Proxmox HA. */
 public class ProxmoxVmHandlerMigrationTest {
     private static final String NODE = "pve1";
     private static final String VM = "i-2-10-VM";

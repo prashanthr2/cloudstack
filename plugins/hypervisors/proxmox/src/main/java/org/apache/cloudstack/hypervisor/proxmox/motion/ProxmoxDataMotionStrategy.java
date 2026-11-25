@@ -53,7 +53,7 @@ import com.cloud.utils.exception.CloudRuntimeException;
  * leaves a disk on shared (NFS) storage where it is, so this does it in two steps with commands the plugin understands already: every volume that
  * changes primary storage is moved while the instance runs (the live move of {@link MigrateVolumeCommand}), then the instance is moved to the
  * destination node (PrepareForMigrationCommand and MigrateCommand, as for a migration without volumes). The volumes' rows are updated as the live
- * move of a single volume does. Design: docs/design-phase9-storage-migration.md, section 4.3.
+ * move of a single volume does.
  */
 public class ProxmoxDataMotionStrategy implements DataMotionStrategy {
     private static final Logger LOGGER = LogManager.getLogger(ProxmoxDataMotionStrategy.class);

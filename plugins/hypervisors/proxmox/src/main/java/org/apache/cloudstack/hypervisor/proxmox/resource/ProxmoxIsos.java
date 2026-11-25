@@ -43,7 +43,7 @@ import org.apache.logging.log4j.Logger;
 import com.cloud.agent.api.to.NfsTO;
 
 /**
- * An ISO of the secondary store as a CD-ROM of a Proxmox VM (design-phase11-secondary-mounts.md, step 3). Proxmox accepts a CD drive only as a volume of a
+ * An ISO of the secondary store as a CD-ROM of a Proxmox VM. Proxmox accepts a CD drive only as a volume of a
  * storage entry, and the plugin makes no entry that mounts the secondary store (a dead export would hang the nodes' own daemons), so the ISO file is
  * <b>bind-mounted</b> from a short-lived read-only mount of the store onto a file of one small directory entry, {@code csiso-...}, that is {@code shared 1}
  * (the same files on every node, so a VM with an ISO can still migrate online). The bind keeps the NFS mount alive on its own; the directory of the mount is

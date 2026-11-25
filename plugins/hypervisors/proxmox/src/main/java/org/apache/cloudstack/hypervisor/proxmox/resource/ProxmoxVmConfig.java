@@ -204,7 +204,6 @@ public final class ProxmoxVmConfig {
         return null;
     }
 
-    // ---- data volumes (Phase 7): disk images owned by a per-account holder vmid, see design-phase7-data-volumes.md ----
 
     /** The holder of an account's data volumes is this plus the account id; 900000001 to 999999999 are reserved for CloudStack. */
     static final long HOLDER_BASE = 900_000_000L;

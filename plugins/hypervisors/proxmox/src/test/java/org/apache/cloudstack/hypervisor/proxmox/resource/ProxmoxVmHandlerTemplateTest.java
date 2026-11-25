@@ -327,7 +327,6 @@ public class ProxmoxVmHandlerTemplateTest {
         assertFalse(answer.getResult());
         verify(client, never()).cloneVm(anyString(), anyLong(), anyLong(), anyString(), anyBoolean(), anyString(), anyString());
     }
-    // ---- linked clones (design-phase12-linked-clones.md) ----
 
     private static final String LINKED_DISK = POOL + ":9050/base-9050-disk-0.qcow2/9204/vm-9204-disk-0.qcow2,size=5G";
 

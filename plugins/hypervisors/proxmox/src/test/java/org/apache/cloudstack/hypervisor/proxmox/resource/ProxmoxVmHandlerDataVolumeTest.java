@@ -63,7 +63,7 @@ import com.cloud.offering.DiskOffering.DiskCacheMode;
 import com.cloud.storage.Storage;
 import com.cloud.storage.Volume;
 
-/** Phase 7: data volumes, disk images owned by the holder vmid of the account (design-phase7-data-volumes.md). */
+/** Data volumes, disk images owned by the holder vmid of the account. */
 public class ProxmoxVmHandlerDataVolumeTest {
     private static final String NODE = "pve1";
     private static final String VM = "i-2-10-VM";
@@ -413,7 +413,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client).waitForTask("UPID:pve1:1:2:3:imgdel:900000002:u:", 600);
         verify(client, never()).destroyVm(anyString(), anyLong());
         verify(client, never()).stopVm(anyString(), anyLong());
-        // the only VM looked up is the account's holder (Phase 9), never the VM that the path might be taken for
+        // the only VM looked up is the account's holder, never the VM that the path might be taken for
         verify(client).findVm(900000002L);
     }
 
@@ -520,7 +520,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
     }
 
-    // ---- renamed volumes: the alias map of the holder VM (Phase 9) ----
 
     private static final String RENAMED = POOL + ":900000002/vm-900000002-disk-3.qcow2";
 
@@ -580,7 +579,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client).resizeDisk(NODE, 9204L, "scsi1", "5G");
     }
 
-    // ---- copy to another primary storage (Phase 9, detached volume) ----
 
     private static final String OTHER_UUID = "11111111-2222-3333-4444-555555555555";
     private static final String OTHER = "cs-" + OTHER_UUID;
@@ -646,7 +644,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
 
-    // ---- live move of an attached volume, and the way back to the holder (Phase 9) ----
 
     private static final String OWNED_PATH = "9204/vm-9204-disk-2.qcow2";
     private static final String OWNED_ID = POOL + ":" + OWNED_PATH;

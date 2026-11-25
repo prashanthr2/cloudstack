@@ -23,7 +23,7 @@ import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * The aliases of the volumes that the plugin renamed without core being able to hear about it (design-phase9-storage-migration.md, section 10).
+ * The aliases of the volumes that the plugin renamed without core being able to hear about it.
  * Core keeps the path it was given when the volume was made or last moved; Proxmox renames a disk whenever it changes owner, so after the plugin hands
  * a volume to the holder VM at a moment when no answer can carry the new path (the instance was stopped when the volume was detached), the stored
  * path names a file that is gone. The alias says where it went: "old volume id" to "new volume id", kept as lines in the description of the account's

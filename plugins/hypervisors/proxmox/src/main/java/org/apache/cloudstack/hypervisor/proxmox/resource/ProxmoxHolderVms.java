@@ -30,7 +30,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * The holder VM of an account (design-phase9-storage-migration.md, section 6): an empty VM, never started, with the vmid
+ * The holder VM of an account: an empty VM, never started, with the vmid
  * {@link ProxmoxVmConfig#holderVmId(long)} that already owns the account's data volumes. Proxmox hands a disk to another VM only when both
  * are VMs, so a data volume that a live move left owned by an instance goes back to its holder through this VM's "unusedN" entries.
  * It is created on first use with {@code protection=1} (lab M8), and moved to the node of the instance for a hand-over (lab M6).
@@ -119,7 +119,7 @@ final class ProxmoxHolderVms {
     }
 
     /**
-     * Puts a volume that is owned by the account number (every Phase 7 volume) on the holder's list, so that it can be moved. The entry
+     * Puts a volume that is owned by the account number (every data volume) on the holder's list, so that it can be moved. The entry
      * is made at once and an existing one is reused, so a repeated command does nothing more. Returns the entry.
      */
     String adopt(ProxmoxApiClient.VmLocation holder, String volumeId) {
@@ -171,7 +171,6 @@ final class ProxmoxHolderVms {
         return volumeId;
     }
 
-    // ---- aliases of renamed volumes (design-phase9-storage-migration.md, section 10) ----
 
     private String descriptionOf(ProxmoxApiClient.VmLocation holder) {
         return client.getVmConfig(holder.getNode(), holder.getVmid()).get("description");

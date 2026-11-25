@@ -656,7 +656,7 @@ public class ProxmoxApiClient implements Closeable {
         return items;
     }
 
-    /** A console session of a VM: valid for seconds and for one connection (see docs/design-phase4-console.md). */
+    /** A console session of a VM: valid for seconds and for one connection. */
     public static class ConsoleSession {
         private final int port;
         private final String ticket;

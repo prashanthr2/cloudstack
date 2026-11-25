@@ -115,7 +115,7 @@ public class ProxmoxServerDiscoverer extends DiscovererBase implements Discovere
     /**
      * Adding a host: the user name and password (or the management server's key, setting {@code ssh.privatekey}, with no password) are a login on the
      * node, as for a KVM host. Over SSH the plugin makes the API user and one token per node it adds (ProxmoxApiAccess), keeps the host key of each node
-     * and the login, and from then on uses the API with the token. design-phase10-ssh-access.md.
+     * and the login, and from then on uses the API with the token.
      */
     @Override
     public Map<? extends ServerResource, Map<String, String>> find(long dcId, Long podId, Long clusterId, URI uri,

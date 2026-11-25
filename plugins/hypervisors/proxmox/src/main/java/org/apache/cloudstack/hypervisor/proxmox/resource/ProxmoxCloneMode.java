@@ -19,7 +19,7 @@ package org.apache.cloudstack.hypervisor.proxmox.resource;
 import com.cloud.storage.Storage;
 
 /**
- * Whether the root volume of an instance is a linked clone of the template VM or a full copy (design-phase12-linked-clones.md). As on KVM, the provisioning
+ * Whether the root volume of an instance is a linked clone of the template VM or a full copy. As on KVM, the provisioning
  * type of the offering decides first: only a thin volume may be a linked clone, sparse and fat volumes are always a full copy. A thin volume follows the
  * setting {@code proxmox.create.full.clone} of its primary storage. A volume that is bigger than the template is still a linked clone, grown after it is made.
  */

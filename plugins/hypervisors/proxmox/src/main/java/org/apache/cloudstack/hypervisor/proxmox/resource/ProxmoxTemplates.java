@@ -51,8 +51,8 @@ import com.cloud.storage.template.Processor.FormatInfo;
 import com.cloud.storage.template.TemplateLocation;
 
 /**
- * A CloudStack template on a primary storage pool is a Proxmox <b>template VM</b> (design-phase11-secondary-mounts.md, step 2; the base of linked
- * clones in design-phase12-linked-clones.md): made once per pool and template when core copies the template to the pool, cloned for every root volume,
+ * A CloudStack template on a primary storage pool is a Proxmox <b>template VM</b> (the base of linked
+ * clones): made once per pool and template when core copies the template to the pool, cloned for every root volume,
  * and deleted when core evicts the template from the pool.
  * <p>
  * As on KVM, what core keeps in {@code template_spool_ref} ({@code install_path} and {@code local_path}) is the place of the template on the primary
@@ -321,7 +321,7 @@ class ProxmoxTemplates {
 
     /**
      * Makes a template on the secondary store from a volume (core's "Create template" of a volume: a root volume of a stopped instance, or a data volume,
-     * also one made from a snapshot; design-phase11-step4-template-from-volume.md). Over SSH, with the store mounted read-write for this one command:
+     * also one made from a snapshot). Over SSH, with the store mounted read-write for this one command:
      * {@code qemu-img convert} writes the flat qcow2 {@code <template uuid>.qcow2} into the template folder (under a temporary name, then moved), and
      * {@code template.properties} is written last, in the form CloudStack's own {@link TemplateLocation} writes. A failure removes what this call made.
      * Core refuses a volume of a running instance, so the file is not open anywhere.

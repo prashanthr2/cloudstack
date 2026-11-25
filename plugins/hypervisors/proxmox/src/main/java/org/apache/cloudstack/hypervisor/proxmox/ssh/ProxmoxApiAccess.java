@@ -24,10 +24,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Creates and removes the API user and token that the plugin uses, with the node's own tools over SSH (design-phase10-ssh-access.md section 2): the
+ * Creates and removes the API user and token that the plugin uses, with the node's own tools over SSH: the
  * token does not exist yet when a host is added, and Proxmox shows its secret only when it is created. There is one user for CloudStack ({@value #USER})
  * and one token for the Proxmox cluster, with privilege separation; the plugin keeps it with the CloudStack cluster. The roles are the ones
- * requirements.md section 3 prescribes, given to the user and to the token (a separated token only gets what both have).
+ * the plugin needs, given to the user and to the token (a separated token only gets what both have).
  */
 public final class ProxmoxApiAccess {
     public static final String USER = "cloudstack@pve";
@@ -67,7 +67,7 @@ public final class ProxmoxApiAccess {
      * Makes the user and roles when they are missing, replaces the cluster's token with a new one and gives it its rights. Users and tokens belong to the
      * whole Proxmox cluster, so one token serves every node. The role for Proxmox HA ({@code Sys.Audit} and {@code Sys.Console}) is always given, on the
      * root path without propagation, so that turning on the setting proxmox.ha.manage later needs no new token: HA checks the root path itself, while a
-     * console on a node is checked on the node's own path, which that grant does not reach (requirements.md section 3). The right to change a node's
+     * console on a node is checked on the node's own path, which that grant does not reach. The right to change a node's
      * network is given per node, with {@link #grantNode}, as nodes are added.
      */
     public static Token createClusterToken(ProxmoxSsh ssh, String clusterName) {

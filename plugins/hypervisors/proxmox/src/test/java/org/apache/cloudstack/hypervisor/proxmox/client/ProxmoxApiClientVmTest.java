@@ -393,7 +393,6 @@ public class ProxmoxApiClientVmTest {
         client.deleteStorage("cst-2");
     }
 
-    // ---- migration, bridges and HA (Phase 5) ----
 
     @Test
     public void aRunningVmIsMovedWithItsMemory() {
@@ -478,7 +477,6 @@ public class ProxmoxApiClientVmTest {
         assertEquals("DELETE /api2/json/cluster/ha/resources/vm:100", requests.get(requests.size() - 1));
     }
 
-    // ---- ISOs (Phase 6) ----
 
     @Test
     public void theIsoEntryIsASharedDirectoryEntryForIsoFiles() {
@@ -502,7 +500,6 @@ public class ProxmoxApiClientVmTest {
         assertNull(config.get("ide3"));
     }
 
-    // ---- data volumes (Phase 7) ----
 
     private static final String VOLUME = "cs-7fd5:900000002/vm-900000002-abc.qcow2";
     private static final String VOLUME_PATH = "cs-7fd5%3A900000002%2Fvm-900000002-abc.qcow2";

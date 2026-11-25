@@ -39,7 +39,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * The secondary store as the plugin reaches it from a node (design-phase11-secondary-mounts.md): a plain NFS mount made over SSH for one operation, in a
+ * The secondary store as the plugin reaches it from a node: a plain NFS mount made over SSH for one operation, in a
  * directory of its own, and unmounted and removed when the operation is over. It is not a Proxmox storage entry, so Proxmox's own daemons never poll it,
  * and nothing stays mounted that a dead export could hang.
  * <p>

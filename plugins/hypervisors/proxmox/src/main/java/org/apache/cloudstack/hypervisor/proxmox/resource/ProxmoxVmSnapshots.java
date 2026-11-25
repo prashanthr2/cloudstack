@@ -39,7 +39,7 @@ import com.cloud.vm.VirtualMachine;
 import com.cloud.vm.snapshot.VMSnapshot;
 
 /**
- * Instance snapshots (design-phase10-snapshots.md): a CloudStack instance snapshot is a Proxmox snapshot of the VM, which covers every disk in the VM's
+ * Instance snapshots: a CloudStack instance snapshot is a Proxmox snapshot of the VM, which covers every disk in the VM's
  * configuration (data volumes included) and, for a snapshot "with memory", the memory. Proxmox names it after the CloudStack snapshot; the state
  * lives in Proxmox (CloudStack keeps its own list), so nothing is kept in the plugin.
  */

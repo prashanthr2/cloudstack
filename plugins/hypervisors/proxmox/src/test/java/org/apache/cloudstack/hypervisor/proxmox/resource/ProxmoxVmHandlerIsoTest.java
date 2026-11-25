@@ -62,7 +62,7 @@ import com.cloud.agent.api.to.VirtualMachineTO;
 import com.cloud.storage.Volume;
 import com.cloud.template.VirtualMachineTemplate.BootloaderType;
 
-/** Phase 6: ISOs (attach, detach, the drives at start) and the blank root volume of a VM deployed from an ISO. */
+/** ISOs (attach, detach, the drives at start) and the blank root volume of a VM deployed from an ISO. */
 public class ProxmoxVmHandlerIsoTest {
     private static final String NODE = "pve1";
     private static final String VM = "i-2-10-VM";

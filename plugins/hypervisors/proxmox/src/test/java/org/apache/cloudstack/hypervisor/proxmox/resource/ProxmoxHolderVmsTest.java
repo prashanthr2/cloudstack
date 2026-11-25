@@ -39,7 +39,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
-/** Phase 9: the holder VM of an account (design-phase9-storage-migration.md, section 6). */
+/** The holder VM of an account. */
 public class ProxmoxHolderVmsTest {
     private static final String NODE = "pve1";
     private static final long HOLDER = 900000002L;

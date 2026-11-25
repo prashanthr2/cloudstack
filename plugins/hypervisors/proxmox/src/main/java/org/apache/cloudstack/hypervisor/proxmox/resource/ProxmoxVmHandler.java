@@ -94,7 +94,7 @@ import com.cloud.vm.VirtualMachine;
 
 /**
  * Deploying and running a VM on one Proxmox node: getting a template to the primary storage, creating the root volume (which in
- * Proxmox is a VM with its disk, see docs/design-phase3-vm-deployment.md), and start, stop, reboot and delete.
+ * Proxmox is a VM with its disk), and start, stop, reboot and delete.
  * Every method answers with the answer type CloudStack expects for its command, and turns a failed Proxmox call into a failed
  * answer carrying Proxmox's reason.
  */
@@ -160,7 +160,7 @@ class ProxmoxVmHandler {
         this.manageHa = manageHa;
     }
 
-    /** The setting {@code proxmox.create.full.clone} of a primary storage (design-phase12-linked-clones.md). */
+    /** The setting {@code proxmox.create.full.clone} of a primary storage. */
     void setFullClone(LongPredicate fullClone) {
         this.fullClone = fullClone;
     }
@@ -174,12 +174,12 @@ class ProxmoxVmHandler {
         this.systemVms = systemVms;
     }
 
-    /** The template VMs that cache the templates on the pools (design-phase11, step 2). Without it a template cannot be copied to a pool. */
+    /** The template VMs that cache the templates on the pools. Without it a template cannot be copied to a pool. */
     void setTemplates(ProxmoxTemplates templates) {
         this.templates = templates;
     }
 
-    /** The ISOs of the secondary stores as CD-ROMs (design-phase11, step 3). Without it a VM with an ISO cannot be started or get one attached. */
+    /** The ISOs of the secondary stores as CD-ROMs. Without it a VM with an ISO cannot be started or get one attached. */
     void setIsos(ProxmoxIsos isos) {
         this.isos = isos;
     }
@@ -724,7 +724,7 @@ class ProxmoxVmHandler {
 
     /**
      * The volume id that the path of a data volume stands for now. Core keeps the path it was given, and a volume that the plugin handed to the
-     * holder VM when no answer could carry the new path has another one (the alias map, design-phase9-storage-migration.md section 10). The alias
+     * holder VM when no answer could carry the new path has another one (the alias map). The alias
      * map is read first, not only when the image is missing: the old path names the id of an instance that is gone, and Proxmox can give that id to
      * a new VM whose disk would then be taken for the volume.
      */
@@ -875,7 +875,7 @@ class ProxmoxVmHandler {
 
     /**
      * A stop or reboot that arrives on the destination of a migration, for a VM that is running on another node, is what core sends after a
-     * failed migration (it cannot be told from a user's stop by the command, see docs/design-phase5-migration-ha.md); the VM is still
+     * failed migration (it cannot be told from a user's stop by the command); the VM is still
      * running on the source and must be left alone. The mark made by PrepareForMigrationCommand is what tells the two apart, and is used up.
      */
     private boolean leftAloneAsMigrationCleanup(String vmName, ProxmoxApiClient.VmLocation location) {
@@ -1117,9 +1117,8 @@ class ProxmoxVmHandler {
         }
     }
 
-    // ---- Phase 9: disks that an instance owns after a live move, and their way back to the holder ----
 
-    /** The VM that owns the disk of a volume id, or null when a holder VM (a data volume as Phase 7 made it) or nobody does. */
+    /** The VM that owns the disk of a volume id, or null when a holder VM (a data volume as the plugin makes it) or nobody does. */
     private static Long ownerVm(String volumeId) {
         Long vmid = ProxmoxVmConfig.vmIdOfVolumePath(volumeId);
         return vmid == null || ProxmoxVmConfig.isReservedVmId(vmid) ? null : vmid;
@@ -1579,7 +1578,7 @@ class ProxmoxVmHandler {
         String volumeId = requested;
         ProxmoxApiClient client = clients.get();
         ProxmoxHolderVms holders = new ProxmoxHolderVms(client, taskTimeoutSeconds);
-        // a volume that the account's holder VM lists (it was moved or handed over, Phase 9) goes with its entry, which leaves no dangling one;
+        // a volume that the account's holder VM lists (it was moved or handed over) goes with its entry, which leaves no dangling one;
         // a volume that was renamed without core hearing of it is found through the alias map
         ProxmoxApiClient.VmLocation holder = isHolderAccount(volume.getAccountId()) ? client.findVm(ProxmoxVmConfig.holderVmId(volume.getAccountId())) : null;
         if (holder != null) {

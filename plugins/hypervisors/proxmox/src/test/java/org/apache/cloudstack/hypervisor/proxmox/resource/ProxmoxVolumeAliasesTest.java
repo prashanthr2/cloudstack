@@ -28,7 +28,7 @@ import java.util.Map;
 import org.apache.cloudstack.hypervisor.proxmox.client.ProxmoxApiException;
 import org.junit.Test;
 
-/** Phase 9: the alias map of renamed volumes (design-phase9-storage-migration.md, section 10). */
+/** The alias map of renamed volumes. */
 public class ProxmoxVolumeAliasesTest {
     private static final String TEXT = "Holds the data volumes of CloudStack account 2.";
     private static final String OLD = "cs-7fd5565c:9101/vm-9101-disk-0.qcow2";

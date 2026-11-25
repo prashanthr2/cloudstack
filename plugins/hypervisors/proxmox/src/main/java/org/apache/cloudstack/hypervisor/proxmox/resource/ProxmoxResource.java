@@ -111,7 +111,7 @@ public class ProxmoxResource implements ServerResource {
     public static final String DETAIL_NODE_IP = "nodeip";
     public static final String DETAIL_ENDPOINT = "endpoint";
     public static final String DETAIL_ENDPOINTS = "endpoints";
-    /** The SSH login for the commands the API cannot run (design-phase10-ssh-access.md). The password is kept encrypted by the plugin: only "password" is encrypted by core. */
+    /** The SSH login for the commands the API cannot run. The password is kept encrypted by the plugin: only "password" is encrypted by core. */
     public static final String DETAIL_SSH_USER = "sshuser";
     public static final String DETAIL_SSH_PASSWORD = "sshpassword";
     public static final String DETAIL_SSH_FINGERPRINT = "sshfingerprint";

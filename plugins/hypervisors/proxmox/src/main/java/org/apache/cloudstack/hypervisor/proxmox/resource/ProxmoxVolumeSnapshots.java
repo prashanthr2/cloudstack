@@ -54,7 +54,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Volume snapshots (design-phase10-volume-snapshots.md): CloudStack's snapshot of one volume, copied to the secondary store. Proxmox has no API for
+ * Volume snapshots: CloudStack's snapshot of one volume, copied to the secondary store. Proxmox has no API for
  * it, so the work is {@code qemu-img} on the node, over the SSH login of the host. A snapshot is an internal qcow2 snapshot of the volume's file that
  * lives only until it is backed up (as for KVM); the backup is a converted copy of it on secondary storage, which the plugin mounts for the one
  * operation (read-write to write the copy, read-only to read it; {@link ProxmoxSecondaryMounts}).
@@ -240,7 +240,7 @@ class ProxmoxVolumeSnapshots {
     // ---- volume from snapshot ----
 
     /**
-     * Makes a data volume of the backup on secondary storage: a file named like any data volume (design: behaviour.md, data volumes), written under a
+     * Makes a data volume of the backup on secondary storage: a file named like any data volume, written under a
      * temporary name and moved into place when it is complete. A copy that is not the size CloudStack records for the volume is brought to it.
      */
     Answer createVolume(CopyCommand cmd) {
