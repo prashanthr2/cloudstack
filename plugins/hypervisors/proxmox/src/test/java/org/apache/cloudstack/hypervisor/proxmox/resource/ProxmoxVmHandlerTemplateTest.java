@@ -198,7 +198,7 @@ public class ProxmoxVmHandlerTemplateTest {
 
     @Test
     public void theDiskIsGrownFromTheSizeOfTheImageNotFromTheRoundedSizeInTheConfiguration() {
-        // the clone's configuration says 5G (the blank disk of the template VM, rounded up) while the image is 4.88 GiB: the volume of 5 GiB must be grown
+        // the configuration says 5G but the image is 4.88 GiB: the volume of 5 GiB must be grown
         templateVmExistsAndCloneGets(9204, POOL + ":9204/vm-9204-disk-0.qcow2,size=5G");
         when(client.getImageInfo(NODE, POOL + ":9204/vm-9204-disk-0.qcow2")).thenReturn(new ProxmoxApiClient.ImageInfo(5242880000L, 0, "qcow2", "/x"));
 

@@ -443,7 +443,7 @@ public class ProxmoxTemplatesTest {
 
     @Test
     public void aTemplateVmIsFoundFromItsConfigurationWhenTheClusterListDoesNotShowItsNameAndTemplateFlagYet() {
-        // right after the copy the cluster list has the VM without a name and not as a template (Proxmox's status daemon has not reported it)
+        // right after the copy the cluster list has the VM without a name and not as a template
         when(client.findVmOrTemplateById(9050L)).thenReturn(new ProxmoxApiClient.VmLocation(9050, null, "pve2", "unknown", false));
         when(client.getVmConfig("pve2", 9050L)).thenReturn(disk("base", 9050));
 

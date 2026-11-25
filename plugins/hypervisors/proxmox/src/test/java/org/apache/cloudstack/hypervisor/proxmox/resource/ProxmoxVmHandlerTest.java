@@ -300,7 +300,7 @@ public class ProxmoxVmHandlerTest {
 
     @Test
     public void aVmThatTheClusterListStillShowsAsRunningIsStartedWhenItsNodeSaysItIsStopped() {
-        // the cluster list is refreshed only every ten seconds: a VM stopped a moment ago still shows as running there
+        // the cluster list lags: a VM stopped a moment ago still shows as running there
         when(client.findVm(9204L)).thenReturn(new ProxmoxApiClient.VmLocation(9204, "i-2-10-VM", NODE, "running"));
         when(client.getVmStatus(NODE, 9204L)).thenReturn("stopped", "running");
         when(client.startVm(NODE, 9204L)).thenReturn("UPID:pve1:1:2:3:qmstart:9204:u:");
@@ -606,7 +606,7 @@ public class ProxmoxVmHandlerTest {
 
         assertTrue(answer.getDetails(), answer.getResult());
         assertEquals("wss://10.0.32.74:8006/api2/json/nodes/pve2/qemu/9204/vncwebsocket?port=5901&vncticket=t", answer.getUrl());
-        // the node that gets the console call opens the listener the websocket connects to: the call goes to the address in the URL
+        // the call goes to the node whose address is in the websocket URL
         verify(client).atEndpoint("https://10.0.32.74:8006");
     }
 

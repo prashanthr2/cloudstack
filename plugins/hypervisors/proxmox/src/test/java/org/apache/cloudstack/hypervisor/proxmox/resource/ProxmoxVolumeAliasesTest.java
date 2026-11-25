@@ -81,7 +81,7 @@ public class ProxmoxVolumeAliasesTest {
 
     @Test
     public void anAliasThatStartsAtAnIdThatIsInUseAgainIsDropped() {
-        // an earlier volume left "vm-121-disk-1" for the holder; a later volume of the VM is given that name again
+        // a later volume of the VM is given the name an earlier one left for the holder
         String reused = "cs-7fd5565c:121/vm-121-disk-1.qcow2";
         Map<String, String> aliases = ProxmoxVolumeAliases.record(new LinkedHashMap<>(), reused, NEW);
 

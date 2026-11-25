@@ -395,7 +395,7 @@ public class ProxmoxVmConfigTest {
 
         assertEquals(",cache=writethrough,iops_rd=500,iops_wr=250,mbps_rd=20,mbps_wr=1.5", ProxmoxVmConfig.driveOptions(volume));
         when(volume.getCacheMode()).thenReturn(com.cloud.offering.DiskOffering.DiskCacheMode.NONE);
-        // a small limit is kept to six decimals (100 bytes per second is 0.000095 MB/s), not rounded up to a hundredth
+        // a small limit is kept to six decimals, not rounded up to a hundredth
         when(volume.getBytesWriteRate()).thenReturn(100L);
         assertTrue(ProxmoxVmConfig.driveOptions(volume), ProxmoxVmConfig.driveOptions(volume).endsWith(",mbps_wr=0.000095"));
     }

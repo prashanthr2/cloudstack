@@ -130,7 +130,7 @@ public class ProxmoxApiClientVmTest {
         String body = bodies.get(0);
         assertTrue(body, body.contains("vmid=9202"));
         assertTrue(body, body.contains("name=i-2-10-VM"));
-        // commas, colons, slashes and equals signs inside a value must be encoded, or Proxmox reads the option wrongly
+        // commas, colons, slashes and equals signs inside a value must be encoded
         assertTrue(body, body.contains("scsi0=cs-1%3A0%2Cimport-from%3Dcst-2%3Aimport%2Ff.qcow2%2Cformat%3Dqcow2"));
     }
 

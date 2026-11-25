@@ -203,7 +203,7 @@ public class ProxmoxRouterDeployerTest {
         ArgumentCaptor<List<String>> commands = captor();
         ArgumentCaptor<String> inputs = ArgumentCaptor.forClass(String.class);
         verify(client, times(5)).agentExec(eq("pve2"), eq(9300L), commands.capture(), inputs.capture());
-        // an earlier partial file is removed, three pieces are appended to a temporary name, and it is moved into place when complete
+        // a partial file is removed, the pieces go to a temporary name, then it is moved into place
         assertEquals("rm -f '/var/cache/cloud/big.json.part'", commands.getAllValues().get(0).get(2));
         StringBuilder joined = new StringBuilder();
         for (int i = 1; i <= 3; i++) {

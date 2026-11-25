@@ -772,7 +772,7 @@ public class ProxmoxVmHandlerDataVolumeTest {
 
     @Test
     public void anAliasWinsOverAnImageThatNowHasTheOldPathBecauseAnotherVmGotTheOldVmId() {
-        // the volume was handed to the holder when VM 9204 was destroyed; Proxmox then gave 9204 to a new VM whose disk has the old path
+        // VM id 9204 was reused by a new VM whose disk has the path of a volume handed to the holder
         String holderPath = POOL + ":900000002/vm-900000002-disk-0.qcow2";
         Map<String, String> aliases = new HashMap<>();
         aliases.put(OWNED_ID, holderPath);

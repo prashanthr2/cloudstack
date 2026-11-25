@@ -277,7 +277,7 @@ public class ProxmoxVolumeSnapshotsTest {
         assertEquals("qemu-img convert -O qcow2 -l snapshot.name='" + SNAPSHOT + "' '" + FILE + "' '" + directory + "/" + FOLDER + "/" + SNAPSHOT + "'",
                 link.commandsWith("qemu-img convert").get(0));
         assertEquals("qemu-img snapshot -d '" + SNAPSHOT + "' '" + FILE + "'", link.commandsWith("snapshot -d").get(0));
-        // the mount of this one operation is unmounted and removed after the copy, and before the snapshot is removed from primary
+        // the mount is released after the copy, before the snapshot is removed from primary
         String release = link.commandsWith("umount '" + directory + "'").get(0);
         assertTrue(release, release.endsWith("; rmdir '" + directory + "'"));
         assertTrue(link.commands.indexOf(link.commandsWith("qemu-img convert").get(0)) < link.commands.indexOf(release));
@@ -527,7 +527,7 @@ public class ProxmoxVolumeSnapshotsTest {
 
     @Test
     public void aVolumeThatWasGrownSinceTheBackupIsTheSizeOfTheBackupAgainAfterARevert() {
-        // core sets the recorded size of the volume to the size of the snapshot after a revert, so the file must have that size and not the size before
+        // core records the snapshot's size after a revert, so the file must have that size
         virtualSize = GIB;
 
         Answer answer = revert(3 * GIB, null);

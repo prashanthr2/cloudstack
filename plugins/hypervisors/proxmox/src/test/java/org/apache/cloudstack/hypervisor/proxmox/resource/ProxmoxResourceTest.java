@@ -164,7 +164,7 @@ public class ProxmoxResourceTest {
                 new ProxmoxApiClient.VmInfo(101, "i-2-11-VM", "stopped")));
         PingRoutingCommand ping = (PingRoutingCommand) resource.getCurrentStatus(7L);
         Map<String, HostVmStateReportEntry> report = ping.getHostVmStateReport();
-        // a stopped VM (one Proxmox HA has just moved here and not yet started, or one that was created and not started) is not reported as PowerOff
+        // a stopped VM that was moved or created and not started is not reported as PowerOff
         assertEquals(1, report.size());
         assertEquals(VirtualMachine.PowerState.PowerOn, report.get("i-2-10-VM").getState());
         assertEquals(NODE, report.get("i-2-10-VM").getHost());
