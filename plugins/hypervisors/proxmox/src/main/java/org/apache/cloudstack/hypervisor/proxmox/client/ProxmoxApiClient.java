@@ -1298,8 +1298,6 @@ public class ProxmoxApiClient implements Closeable {
         delete("/nodes/" + node + "/network");
     }
 
-    // ---- the QEMU guest agent of a VM, through the API ----
-
     private static String agentPath(String node, long vmid, String call) {
         return "/nodes/" + node + "/qemu/" + vmid + "/agent/" + call;
     }

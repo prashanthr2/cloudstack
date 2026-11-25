@@ -274,8 +274,6 @@ public class ProxmoxRouterDeployerTest {
         assertTrue(deployer.cleanupCommand(cmd).isSuccess());
     }
 
-    // ---- the interfaces of a router
-
     private static final String GUEST_MAC = "02:00:a9:fe:00:01";
     private static final String CONTROL_MAC = "0e:00:a9:fe:a6:57";
     private static final String PUBLIC_MAC = "1e:01:b7:00:00:15";

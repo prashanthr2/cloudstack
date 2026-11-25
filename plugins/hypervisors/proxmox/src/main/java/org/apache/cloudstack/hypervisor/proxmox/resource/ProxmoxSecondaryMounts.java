@@ -202,8 +202,6 @@ class ProxmoxSecondaryMounts {
         return path;
     }
 
-    // ---- the pieces ----
-
     /** The server and the export of the store, after the address has been checked. */
     static String[] address(NfsTO store) {
         URI url;

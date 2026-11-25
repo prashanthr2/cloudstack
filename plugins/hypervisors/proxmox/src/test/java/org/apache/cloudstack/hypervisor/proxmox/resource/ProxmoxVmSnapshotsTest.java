@@ -85,8 +85,6 @@ public class ProxmoxVmSnapshotsTest {
         return cmd;
     }
 
-    // ---- names ----
-
     @Test
     public void aSnapshotNameKeepsWhatProxmoxAcceptsAndFixesTheRest() {
         assertEquals(SNAPSHOT, ProxmoxVmSnapshots.snapshotName(SNAPSHOT));
@@ -97,8 +95,6 @@ public class ProxmoxVmSnapshotsTest {
         assertEquals(40, name.length());
         assertTrue(name, name.startsWith("s") && name.endsWith("bEND"));
     }
-
-    // ---- create ----
 
     @Test
     public void aDiskOnlySnapshotOfARunningVmIsTakenWithoutMemoryAndTheCommandsVolumesAreAnswered() {
@@ -184,8 +180,6 @@ public class ProxmoxVmSnapshotsTest {
         verify(client).waitForTask(UPID, 600);
     }
 
-    // ---- delete ----
-
     private DeleteVMSnapshotCommand delete() {
         return new DeleteVMSnapshotCommand(NAME, target(VMSnapshot.Type.Disk), volumes, "Other");
     }
@@ -230,8 +224,6 @@ public class ProxmoxVmSnapshotsTest {
         assertFalse(answer.getResult());
         assertEquals("can't lock file", answer.getDetails());
     }
-
-    // ---- revert ----
 
     private RevertToVMSnapshotCommand revert(VMSnapshot.Type type) {
         return new RevertToVMSnapshotCommand(NAME, "uuid", target(type), volumes, "Other");
@@ -279,8 +271,6 @@ public class ProxmoxVmSnapshotsTest {
     public void aRollbackOfAVmProxmoxDoesNotHaveFails() {
         assertFalse(snapshots.revert(revert(VMSnapshot.Type.Disk)).getResult());
     }
-
-    // ---- before the VM is destroyed ----
 
     @Test
     public void everySnapshotIsDeletedWithForceChildrenBeforeParents() {

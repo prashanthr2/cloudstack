@@ -93,8 +93,6 @@ class ProxmoxVolumeSnapshots {
         this.taskTimeoutSeconds = taskTimeoutSeconds;
     }
 
-    // ---- what each command is about ----
-
     static boolean isSnapshot(DataTO data) {
         return data instanceof SnapshotObjectTO;
     }
@@ -114,8 +112,6 @@ class ProxmoxVolumeSnapshots {
         }
         return new CopyCmdAnswer("Copying a snapshot to " + (destination == null ? null : destination.getObjectType()) + " is not supported for Proxmox");
     }
-
-    // ---- take ----
 
     /** The snapshot on primary storage. See the class comment for the two ways. */
     Answer take(CreateObjectCommand cmd) {
@@ -155,8 +151,6 @@ class ProxmoxVolumeSnapshots {
         taken.setPath(volume.getPath() + "/" + name);
         return new CreateObjectAnswer(taken);
     }
-
-    // ---- back up ----
 
     /**
      * Copies the snapshot to secondary storage and then removes it from primary, as KVM does (also when the copy failed), so that nothing stays in the
@@ -214,8 +208,6 @@ class ProxmoxVolumeSnapshots {
         }
     }
 
-    // ---- delete ----
-
     /** Deletes a snapshot that is still on primary storage (a backup that failed). One on the secondary store is removed by core with the secondary storage VM. */
     Answer delete(DeleteCommand cmd) {
         SnapshotObjectTO snapshot = (SnapshotObjectTO) cmd.getData();
@@ -236,8 +228,6 @@ class ProxmoxVolumeSnapshots {
             return new Answer(cmd, false, e.getMessage());
         }
     }
-
-    // ---- volume from snapshot ----
 
     /**
      * Makes a data volume of the backup on secondary storage: a file named like any data volume, written under a
@@ -292,8 +282,6 @@ class ProxmoxVolumeSnapshots {
         }
     }
 
-    // ---- revert ----
-
     /**
      * Puts the data of the backup back into the volume: a converted copy next to the file is moved over it when it is complete, so a failure leaves the
      * volume as it was. Core allows it for a stopped instance only; a running one is refused here too, as the file would be replaced under QEMU. The
@@ -343,8 +331,6 @@ class ProxmoxVolumeSnapshots {
             return new Answer(cmd, false, e.getMessage());
         }
     }
-
-    // ---- the pieces ----
 
     /** Copies a backup to {@code target} and brings it to the volume size CloudStack has (when it has one). */
     private void convertTo(ProxmoxSsh ssh, String from, String target, Long wantedSize, long waitSeconds) {
@@ -450,8 +436,6 @@ class ProxmoxVolumeSnapshots {
             }
         }
     }
-
-    // ---- checks, quoting and small helpers ----
 
     private static boolean isOfVm(String snapshotName) {
         return snapshotName.startsWith(VM_SNAPSHOT_PREFIX);

@@ -571,7 +571,6 @@ public class ProxmoxVmConfigTest {
 
         assertEquals("product=Q2xvdWRTdGFjayBQcm94bW94IEh5cGVydmlzb3I=,base64=1", ProxmoxVmConfig.startOptions(vm, 0).get("smbios1"));
     }
-    // ---- linked clones: the disk of a clone names its base, the path CloudStack keeps does not ----
 
     private static final String CLONE_DISK = "cs-pool:8100/base-8100-disk-0.qcow2/8001/vm-8001-disk-0.qcow2,size=100G";
 

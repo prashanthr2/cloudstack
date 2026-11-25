@@ -170,7 +170,6 @@ public class ProxmoxSystemVmsTest {
     public void theControlAddressIsThatOfTheControlNicNotTheFirstNic() {
         assertEquals(IP, ProxmoxSystemVms.controlIp(router()));
     }
-    // ---- after the start
 
     @Test
     public void aRouterGetsItsBootArgumentsThenItsScriptsOverSshAndIsWaitedForUntilItIsSetUp() throws Exception {
@@ -366,8 +365,6 @@ public class ProxmoxSystemVmsTest {
 
         assertTrue(problem, problem.contains("403"));
     }
-
-    // ---- the administrator's login keys
 
     private static final String KEY1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ0example1 cloudstack-systemvm";
     private static final String KEY2 = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQexample2= root@pve1";

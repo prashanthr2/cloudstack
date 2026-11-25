@@ -98,8 +98,6 @@ class ProxmoxTemplates {
         this.pauser = pauser;
     }
 
-    // ---- the path and the name ----
-
     /** Whether the path is that of a template VM's base disk in a pool, the form that this plugin answers a copy with. */
     static boolean isTemplatePath(String path) {
         return path != null && TEMPLATE_PATH.matcher(path).matches();
@@ -138,8 +136,6 @@ class ProxmoxTemplates {
         }
         return poolUuid;
     }
-
-    // ---- copy to primary ----
 
     /** A template VM on the pool and its path. */
     private static final class OnPool {
@@ -317,8 +313,6 @@ class ProxmoxTemplates {
         }
     }
 
-    // ---- a template from a volume ----
-
     /**
      * Makes a template on the secondary store from a volume (core's "Create template" of a volume: a root volume of a stopped instance, or a data volume,
      * also one made from a snapshot). Over SSH, with the store mounted read-write for this one command:
@@ -421,8 +415,6 @@ class ProxmoxTemplates {
         }
     }
 
-    // ---- eviction ----
-
     /**
      * Core's eviction of an unused template from a pool ({@code DestroyCommand} with the stored path): the template VM is destroyed. Proxmox refuses
      * while clones depend on it; that is answered as a failure, so core keeps the row and tries again. A template VM that is gone is a success (nothing
@@ -451,8 +443,6 @@ class ProxmoxTemplates {
             return new Answer(cmd, false, e.getMessage());
         }
     }
-
-    // ---- small helpers ----
 
     private void waitFor(ProxmoxApiClient client, String upid) {
         client.waitForTask(upid, taskTimeoutSeconds.getAsInt());

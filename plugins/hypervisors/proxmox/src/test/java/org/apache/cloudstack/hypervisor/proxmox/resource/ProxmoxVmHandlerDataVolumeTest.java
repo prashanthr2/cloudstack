@@ -114,8 +114,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         return config;
     }
 
-    // ---- create ----
-
     @Test
     public void aDataVolumeIsAnImageOfTheAccountsHolderNamedAfterTheVolumeAndRoundedUpToWholeGib() {
         when(client.getImageInfo(NODE, VOLUME_ID)).thenReturn(null);
@@ -164,8 +162,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("900000005"));
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
-
-    // ---- attach ----
 
     @Test
     public void aDataVolumeIsPutOnTheDriveOfItsDeviceIdAndNeedsTheDriveInTheRunningConfiguration() {
@@ -257,8 +253,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertFalse(noVm.getResult());
     }
 
-    // ---- detach ----
-
     @Test
     public void aDetachRemovesTheDriveThatHoldsTheVolume() {
         theVmIs("running", config("scsi0", "x", "scsi2", VOLUME_ID + ",size=1G"));
@@ -293,8 +287,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("stop the instance"));
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("revert", "sata1"));
     }
-
-    // ---- start ----
 
     private StartCommand start(Map<String, String> details, VolumeObjectTO root, DiskTO... data) {
         DiskTO rootDisk = mock(DiskTO.class);
@@ -396,8 +388,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertFalse(startOptions().containsKey("scsi0"));
     }
 
-    // ---- delete ----
-
     private DeleteCommand delete(VolumeObjectTO volume) {
         return new DeleteCommand(volume);
     }
@@ -460,8 +450,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         verify(client, never()).destroyVm(anyString(), anyLong());
     }
 
-    // ---- resize ----
-
     private ResizeVolumeCommand resize(long current, long wanted, String instance) {
         return new ResizeVolumeCommand(PATH, null, current, wanted, false, instance);
     }
@@ -501,8 +489,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertFalse(notOnTheVm.getResult());
         assertTrue(notOnTheVm.getDetails(), notOnTheVm.getDetails().contains("not on a drive"));
     }
-
-    // ---- statistics ----
 
     @Test
     public void volumeStatsAreTheSizeAndTheUsedSpaceOfEachImageAndAMissingImageIsLeftOut() {
@@ -731,8 +717,6 @@ public class ProxmoxVmHandlerDataVolumeTest {
         assertTrue(answer.getDetails(), answer.getResult());
         verify(client).updateVmConfig(NODE, 9204L, Collections.singletonMap("delete", "unused0"));
     }
-
-    // ---- two volumes of one instance with the same path on different pools (Proxmox numbers disks per storage) ----
 
     private static final String SHARED_PATH = "9204/vm-9204-disk-0.qcow2";
 

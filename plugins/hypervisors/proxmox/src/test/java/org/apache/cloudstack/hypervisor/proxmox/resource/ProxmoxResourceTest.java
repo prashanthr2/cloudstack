@@ -424,8 +424,6 @@ public class ProxmoxResourceTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("delete the host and add it again"));
     }
 
-    // ---- primary storage
-
     private static final String POOL_UUID = "047ccc61-dc29-3d58-9c73-dd1ab2c100cf";
     private static final String STORAGE_ID = "cs-" + POOL_UUID;
 
@@ -597,8 +595,6 @@ public class ProxmoxResourceTest {
 
         assertFalse(answer.getResult());
     }
-
-    // ---- CheckSshCommand: the guest agent of a started system VM
 
     private com.cloud.agent.api.Answer checkSsh() {
         return resource.executeRequest(new com.cloud.agent.api.check.CheckSshCommand("r-58-VM", "169.254.1.1", 3922));

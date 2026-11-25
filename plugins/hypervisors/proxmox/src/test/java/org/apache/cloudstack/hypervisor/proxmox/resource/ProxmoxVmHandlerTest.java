@@ -89,8 +89,6 @@ public class ProxmoxVmHandlerTest {
                 () -> 600);
     }
 
-    // ---- template to primary storage: the template VMs are in ProxmoxTemplatesTest and ProxmoxVmHandlerTemplateTest ----
-
     @Test
     public void copyingSomethingElseIsRefusedWithACopyAnswer() {
         CopyCommand cmd = mock(CopyCommand.class);
@@ -102,8 +100,6 @@ public class ProxmoxVmHandlerTest {
         assertTrue(answer instanceof CopyCmdAnswer);
         assertFalse(answer.getResult());
     }
-
-    // ---- root volume ----
 
     private CopyCommand rootVolumeFromTemplate(Long size) {
         TemplateObjectTO source = mock(TemplateObjectTO.class);
@@ -215,8 +211,6 @@ public class ProxmoxVmHandlerTest {
         assertFalse(answer.getResult());
         verify(client, never()).createVm(anyString(), anyLong(), anyMap());
     }
-
-    // ---- start ----
 
     private StartCommand startCommand(String rootPath) {
         VolumeObjectTO volume = mock(VolumeObjectTO.class);
@@ -377,8 +371,6 @@ public class ProxmoxVmHandlerTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("vmbr9"));
     }
 
-    // ---- stop and reboot ----
-
     private StopCommand stopCommand(boolean force) {
         StopCommand cmd = mock(StopCommand.class);
         when(cmd.getVmName()).thenReturn("i-2-10-VM");
@@ -496,8 +488,6 @@ public class ProxmoxVmHandlerTest {
         assertFalse(handler.reboot(cmd).getResult());
     }
 
-    // ---- delete ----
-
     private DeleteCommand delete(DataTO data) {
         DeleteCommand cmd = mock(DeleteCommand.class);
         when(cmd.getData()).thenReturn(data);
@@ -584,8 +574,6 @@ public class ProxmoxVmHandlerTest {
 
         verify(client, never()).deleteStorage(any());
     }
-
-    // ---- console ----
 
     private GetVmWebsocketConsoleCommand consoleCommand() {
         return new GetVmWebsocketConsoleCommand("i-2-10-VM");

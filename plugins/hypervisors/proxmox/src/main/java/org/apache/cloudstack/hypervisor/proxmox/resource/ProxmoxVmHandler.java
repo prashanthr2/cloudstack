@@ -268,8 +268,6 @@ class ProxmoxVmHandler {
         return location == null || !location.isRunning();
     }
 
-    // ---- copy: template to primary storage, and template to root volume ----
-
     Answer copy(CopyCommand cmd) {
         DataTO src = cmd.getSrcTO();
         DataTO dest = cmd.getDestTO();
@@ -528,8 +526,6 @@ class ProxmoxVmHandler {
             LOGGER.warn("Could not remove the partly created Proxmox VM {}: {}", vmid, e.getMessage());
         }
     }
-
-    // ---- start, stop, reboot ----
 
     Answer start(StartCommand cmd) {
         VirtualMachineTO vm = cmd.getVirtualMachine();
@@ -927,8 +923,6 @@ class ProxmoxVmHandler {
         }
     }
 
-    // ---- ISOs ----
-
     /**
      * The Proxmox volume of an ISO on the secondary store, after its file was bound from the store on this node (ProxmoxIsos). Fails with the reason
      * when that cannot be done, so a start or an attach does not go on without the ISO.
@@ -1013,8 +1007,6 @@ class ProxmoxVmHandler {
             return new Answer(cmd, false, e.getMessage());
         }
     }
-
-    // ---- data volumes ----
 
     /** Attach: an ISO goes into a CD-ROM drive, a data volume becomes a disk drive; anything else is not supported. */
     Answer attach(AttachCommand cmd) {
@@ -1362,8 +1354,6 @@ class ProxmoxVmHandler {
         }
     }
 
-    // ---- migration ----
-
     /**
      * On the destination, before core moves anything: checks that the VM can run here, so that a refusal changes nothing. Proxmox has no
      * per-VLAN object to create, so what must exist is the bridge of every NIC (VLAN-aware for a tagged one).
@@ -1518,8 +1508,6 @@ class ProxmoxVmHandler {
         }
     }
 
-    // ---- delete ----
-
     /**
      * A root volume is deleted by destroying its VM (which removes the disk it owns). Nothing is done for a template on the primary storage
      * (see deleteTemplate).
@@ -1616,8 +1604,6 @@ class ProxmoxVmHandler {
     private Answer deleteTemplate(DeleteCommand cmd, TemplateObjectTO template) {
         return new Answer(cmd, true, "Nothing to remove for the template " + template.getPath() + ": its Proxmox storage entry is shared and is kept");
     }
-
-    // ---- console ----
 
     /**
      * Opens a console on the node that holds the VM and answers with what the console proxy needs: the websocket URL, the header that proves

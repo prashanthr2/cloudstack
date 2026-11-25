@@ -198,8 +198,6 @@ public class ProxmoxTemplatesFromVolumeTest {
         assertTrue(((TemplateObjectTO) answer.getNewData()).getPath(), ((TemplateObjectTO) answer.getNewData()).getPath().matches(FOLDER + "/[0-9a-f-]{36}\\.qcow2"));
     }
 
-    // ---- refusals, before anything is touched ----
-
     @Test
     public void whatIsNotAVolumeOnPrimaryToNfsOrIsNotAProxmoxDiskIsRefusedBeforeAnySshLogin() {
         refused(templates.createFromVolume(volume("104/base-104-disk-0.qcow2"), destination(FOLDER, TEMPLATE_UUID), 3600), "not a Proxmox qcow2 disk");
@@ -215,8 +213,6 @@ public class ProxmoxTemplatesFromVolumeTest {
         refused(templates.createFromVolume(encrypted, destination(FOLDER, TEMPLATE_UUID), 3600), "encrypted");
         assertEquals(0, logins);
     }
-
-    // ---- failures leave nothing ----
 
     @Test
     public void aMissingVolumeFileFailsBeforeAnythingIsWrittenAndTheStoreIsUnmounted() {

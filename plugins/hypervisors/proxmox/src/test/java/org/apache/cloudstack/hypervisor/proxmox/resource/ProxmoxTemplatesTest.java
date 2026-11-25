@@ -156,8 +156,6 @@ public class ProxmoxTemplatesTest {
         return ProxmoxTemplates.vmName(POOL_UUID, SOURCE_KEY);
     }
 
-    // ---- the path and the name ----
-
     @Test
     public void theTemplatePathIsTheBaseDiskOfATemplateVmInThePool() {
         assertTrue(ProxmoxTemplates.isTemplatePath("104/base-104-disk-0.qcow2"));
@@ -221,8 +219,6 @@ public class ProxmoxTemplatesTest {
             }
         }
     }
-
-    // ---- copy to primary ----
 
     @Test
     public void aNewTemplateBecomesATemplateVmWithTheConvertedImageAsItsDisk() {
@@ -419,8 +415,6 @@ public class ProxmoxTemplatesTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("no base disk on the pool"));
     }
 
-    // ---- a template VM that is needed at a deploy ----
-
     @Test
     public void aTemplateVmIsFoundByTheIdInThePathWithoutAnySshLoginOrSecondaryStore() {
         templateVmExists(9050, "pve2");
@@ -496,8 +490,6 @@ public class ProxmoxTemplatesTest {
     public void aPathThatIsNotATemplatePathIsRefusedAtADeploy() {
         templates.requireTemplateVm(POOL_UUID, "cst-3f2a8c1e-0000-3000-8000-000000000000:4/f.qcow2");
     }
-
-    // ---- eviction by core (DestroyCommand) ----
 
     private static DestroyCommand destroyCommand(String poolUuid, String path) {
         VolumeTO volume = mock(VolumeTO.class);

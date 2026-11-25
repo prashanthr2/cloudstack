@@ -109,8 +109,6 @@ public class ProxmoxIsosTest {
         }
     }
 
-    // ---- the name ----
-
     @Test
     public void theNameOfABindIsFromTheStoreAndTheFileAndKeepsTheExtensionProxmoxLists() {
         assertTrue(NAME, NAME.matches("cs-[0-9a-f]{16}\\.iso"));
@@ -145,8 +143,6 @@ public class ProxmoxIsosTest {
 
         assertEquals(java.util.Collections.singletonList("cs-c936cffb-9d93-3547-bae4-9f3b9e5d2c83.iso"), ProxmoxIsos.boundNames(config));
     }
-
-    // ---- making an ISO available ----
 
     @Test
     public void anIsoIsBoundFromAReadOnlyMountThatIsReleasedAtOnceAndTheVolumeIsInTheSharedEntry() {
@@ -251,8 +247,6 @@ public class ProxmoxIsosTest {
         assertTrue(link.commandsWith("mount --bind").get(0).contains("'" + DIRECTORY + "/template/iso/" + NAME + "'"));
     }
 
-    // ---- the binds that no VM names ----
-
     @Test
     public void theBindsThatNoConfigurationOfTheNodeNamesAreRemovedBeforeEveryBindExceptTheOnesJustMade() {
         isos.volume(iso(RELATIVE));
@@ -271,8 +265,6 @@ public class ProxmoxIsosTest {
 
         assertEquals(ENTRY + ":iso/" + NAME, isos.volume(iso(RELATIVE)));
     }
-
-    // ---- release ----
 
     @Test
     public void theBindIsRemovedWhenNoVmConfigurationNamesTheVolume() {

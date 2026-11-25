@@ -80,8 +80,6 @@ public class ProxmoxSecondaryMountsTest {
         return link.commandsWith("mount -t nfs").get(0);
     }
 
-    // ---- the setting ----
-
     @Test
     public void theDefaultOfTheSettingIsTheOneTheMountsUse() {
         assertEquals(ProxmoxConfig.SecondaryMountOptions.defaultValue(), ProxmoxSecondaryMounts.DEFAULT_OPTIONS);
@@ -130,8 +128,6 @@ public class ProxmoxSecondaryMountsTest {
             assertTrue(e.getMessage(), e.getMessage().contains("both soft and hard"));
         }
     }
-
-    // ---- the mount of one operation ----
 
     @Test
     public void theStoreIsMountedInADirectoryOfItsOwnWithTheOptionsAndUnmountedAndRemovedAfterwards() {
@@ -274,8 +270,6 @@ public class ProxmoxSecondaryMountsTest {
         assertTrue(link.commands.isEmpty());
     }
 
-    // ---- directories of operations that did not finish ----
-
     @Test
     public void oldMountDirectoriesAreCleanedUpTheFirstTimeOnly() {
         mounts.withMount(ssh, store(URL, null), true, directory -> null);
@@ -294,8 +288,6 @@ public class ProxmoxSecondaryMountsTest {
 
         assertEquals("done", mounts.withMount(ssh, store(URL, null), true, directory -> "done"));
     }
-
-    // ---- the check of an image ----
 
     private static String info(String format, long size, String extra) {
         return "{\"format\": \"" + format + "\", \"virtual-size\": " + size + (extra.isEmpty() ? "" : ", " + extra) + "}";
@@ -396,8 +388,6 @@ public class ProxmoxSecondaryMountsTest {
             assertTrue(e.getMessage(), e.getMessage().contains("could not be read"));
         }
     }
-
-    // ---- paths ----
 
     @Test
     public void aRelativePathBelowTheStoreIsAccepted() {

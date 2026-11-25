@@ -120,8 +120,6 @@ public class ProxmoxVmHandlerMigrationTest {
         return cmd;
     }
 
-    // ---- PrepareForMigrationCommand ----
-
     @Test
     public void aVmThatCanRunHereIsPreparedWithoutChangingAnything() {
         thePreparedVmCanMove();
@@ -184,8 +182,6 @@ public class ProxmoxVmHandlerMigrationTest {
         assertEquals("HTTP 500", answer.getDetails());
     }
 
-    // ---- MigrateCommand ----
-
     private MigrateCommand migrateTo(String ip) {
         MigrateCommand cmd = mock(MigrateCommand.class);
         when(cmd.getVmName()).thenReturn(VM);
@@ -242,8 +238,6 @@ public class ProxmoxVmHandlerMigrationTest {
         assertTrue(answer.getDetails(), answer.getDetails().contains("3600 seconds"));
     }
 
-    // ---- CheckVirtualMachineCommand ----
-
     private CheckVirtualMachineCommand check() {
         CheckVirtualMachineCommand cmd = mock(CheckVirtualMachineCommand.class);
         when(cmd.getVmName()).thenReturn(VM);
@@ -264,8 +258,6 @@ public class ProxmoxVmHandlerMigrationTest {
         when(client.findVmByName(VM)).thenReturn(null);
         assertEquals(VirtualMachine.PowerState.PowerOff, ((CheckVirtualMachineAnswer) handler.checkVirtualMachine(check())).getState());
     }
-
-    // ---- the clean-up of a failed migration ----
 
     @Test
     public void aStopForTheTargetOfAFailedMoveLeavesTheVmRunningOnTheSourceAlone() {
@@ -347,8 +339,6 @@ public class ProxmoxVmHandlerMigrationTest {
         verify(client).shutdownVm("pve2", 9204L, ProxmoxVmHandler.SHUTDOWN_TIMEOUT_SECONDS);
     }
 
-    // ---- waiting for the real state (an HA request is only queued) ----
-
     @Test
     public void aStopWaitsUntilTheVmIsReallyStoppedAndFailsIfItNeverIs() {
         when(client.findVmByName(VM)).thenReturn(vm(NODE, "running"));
@@ -363,8 +353,6 @@ public class ProxmoxVmHandlerMigrationTest {
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("did not stop within 600 seconds"));
     }
-
-    // ---- Proxmox HA, with proxmox.ha.manage ----
 
     private StartCommand start(boolean ha) {
         VirtualMachineTO machine = machine("vmbr1", null, ha);

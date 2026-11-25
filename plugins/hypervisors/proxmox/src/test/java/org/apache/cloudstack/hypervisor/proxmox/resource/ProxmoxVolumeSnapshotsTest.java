@@ -182,8 +182,6 @@ public class ProxmoxVolumeSnapshotsTest {
         return !link.commandsWith(text).isEmpty();
     }
 
-    // ---- take ----
-
     @Test
     public void aDetachedVolumeGetsAnInternalSnapshotAndTheAnswerNamesIt() {
         Answer answer = take(onPrimary(volume(PATH, GIB, null), null, null));
@@ -263,8 +261,6 @@ public class ProxmoxVolumeSnapshotsTest {
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("encrypted"));
     }
-
-    // ---- back up ----
 
     @Test
     public void aDirectSnapshotIsCopiedToTheWritableMountAndThenRemovedFromPrimary() {
@@ -362,8 +358,6 @@ public class ProxmoxVolumeSnapshotsTest {
         assertFalse(link.commandsWith("mount -t nfs").get(0), link.commandsWith("mount -t nfs").get(0).contains("vers="));
     }
 
-    // ---- delete ----
-
     @Test
     public void aSnapshotThatIsStillInTheFileIsDeleted() {
         snapshotsInFile = "[{\"name\": \"" + SNAPSHOT + "\"}]";
@@ -409,8 +403,6 @@ public class ProxmoxVolumeSnapshotsTest {
         assertFalse(answer.getResult());
         assertTrue(link.commands.isEmpty());
     }
-
-    // ---- volume from snapshot ----
 
     @Test
     public void aVolumeIsMadeUnderATemporaryNameAndMovedIntoPlace() {
@@ -506,8 +498,6 @@ public class ProxmoxVolumeSnapshotsTest {
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("not supported"));
     }
-
-    // ---- revert ----
 
     private Answer revert(Long size, String vmName) {
         SnapshotObjectTO snapshot = onSecondary(volume(PATH, size, vmName), FOLDER + "/" + SNAPSHOT);
@@ -605,8 +595,6 @@ public class ProxmoxVolumeSnapshotsTest {
 
         assertFalse(snapshots.revert(new RevertSnapshotCommand(snapshot, null)).getResult());
     }
-
-    // ---- names ----
 
     @Test
     public void theSnapshotNameIsTheLastPartOfThePath() {

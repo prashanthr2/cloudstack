@@ -135,8 +135,6 @@ public class ProxmoxVmHandlerIsoTest {
         return config;
     }
 
-    // ---- attach ----
-
     @Test
     public void anIsoIsPutInTheDriveOfItsSlotAfterItsFileWasBoundFromTheStoreIntoTheSharedEntry() {
         theVmIs("running", config("ide2", "none,media=cdrom"));
@@ -241,8 +239,6 @@ public class ProxmoxVmHandlerIsoTest {
         assertTrue(handler.detachIso(new DettachCommand(data, VM)) instanceof UnsupportedAnswer);
     }
 
-    // ---- detach ----
-
     @Test
     public void detachingEjectsTheDiscAndKeepsTheDrive() {
         theVmIs("running", config("ide2", ISO_VOLUME + ",media=cdrom,size=350K"));
@@ -276,8 +272,6 @@ public class ProxmoxVmHandlerIsoTest {
         assertTrue(handler.detachIso(new DettachCommand(isoDisk(iso(RELATIVE), 3), VM)).getResult());
         verify(client, never()).updateVmConfig(anyString(), anyLong(), anyMap());
     }
-
-    // ---- the drives at start ----
 
     private StartCommand startWithIsos(BootloaderType bootloader, DiskTO... isos) {
         VolumeObjectTO volume = mock(VolumeObjectTO.class);
@@ -389,8 +383,6 @@ public class ProxmoxVmHandlerIsoTest {
         verify(client, never()).startVm(anyString(), anyLong());
     }
 
-    // ---- the destination of a migration ----
-
     private PrepareForMigrationCommand prepareWithIsos(DiskTO... isos) {
         StartCommand start = startWithIsos(null, isos);
         VirtualMachineTO machine = start.getVirtualMachine();
@@ -473,8 +465,6 @@ public class ProxmoxVmHandlerIsoTest {
         assertTrue(link.commands.isEmpty());
     }
 
-    // ---- a blank root volume ----
-
     private CreateObjectCommand blankRootVolume(Long size, Volume.Type type) {
         PrimaryDataStoreTO pool = mock(PrimaryDataStoreTO.class);
         when(pool.getUuid()).thenReturn("7fd5565c-6c1e-3032-81ec-d404812915ab");
@@ -513,8 +503,6 @@ public class ProxmoxVmHandlerIsoTest {
         Answer noSize = handler.createObject(blankRootVolume(null, Volume.Type.ROOT));
         assertFalse(noSize.getResult());
     }
-
-    // ---- the root disk controller ----
 
     private static final String ROOT_VOLUME = POOL + ":9204/vm-9204-disk-0.qcow2";
 

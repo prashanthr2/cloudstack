@@ -141,8 +141,6 @@ public class ProxmoxVmHandlerTemplateTest {
         when(client.getVmConfig(NODE, vmid)).thenReturn(config);
     }
 
-    // ---- copy to primary ----
-
     @Test
     public void theCopyOfATemplateToAPoolMakesTheTemplateVmAndAnswersThePathCoreKeeps() {
         when(client.nextVmId()).thenReturn(9100L);
@@ -179,8 +177,6 @@ public class ProxmoxVmHandlerTemplateTest {
         assertFalse(answer.getResult());
         assertTrue(answer.getDetails(), answer.getDetails().contains("Connection timed out"));
     }
-
-    // ---- root volume ----
 
     @Test
     public void theRootVolumeIsACloneOfTheTemplateVmMadeOnThisNodeOnThePoolAndNeedsNoSshLogin() {

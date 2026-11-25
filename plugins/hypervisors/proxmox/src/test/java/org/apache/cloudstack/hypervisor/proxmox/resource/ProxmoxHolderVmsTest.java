@@ -248,8 +248,6 @@ public class ProxmoxHolderVmsTest {
         verify(client, never()).updateVmConfig(anyString(), eq(HOLDER), anyMap());
     }
 
-    // ---- aliases ----
-
     private static final String OLD_ID = "cs-7fd5565c:9101/vm-9101-disk-0.qcow2";
     private static final String NEW_ID = "cs-7fd5565c:900000002/vm-900000002-disk-3.qcow2";
 
